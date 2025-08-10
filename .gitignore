@@ -1,0 +1,6 @@
+.zig-cache
+zig-out
+/imgui.ini
+
+/*.h264
+/*.bmp
