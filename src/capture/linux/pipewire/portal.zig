@@ -1,7 +1,7 @@
 const std = @import("std");
 const c = @import("./pipewire_include.zig").c;
 const c_def = @import("./pipewire_include.zig").c_def;
-const CaptureError = @import("../../capture_error.zig").CaptureError;
+const CaptureError = @import("../../capture.zig").CaptureError;
 const TokenManager = @import("./token_manager.zig").TokenManager;
 const UserSettings = @import("../../../user_settings.zig");
 const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
@@ -151,7 +151,7 @@ pub const Portal = struct {
     pub fn selectSource(
         self: *Self,
         source_type: CaptureSourceType,
-    ) !u32 {
+    ) (CaptureError || anyerror)!u32 {
         if (self.session_handle == null) {
             try self.createScreenCastSession();
         }

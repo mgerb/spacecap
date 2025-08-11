@@ -7,7 +7,7 @@ const Chan = @import("../../../channel.zig").Chan;
 const ChanError = @import("../../../channel.zig").ChanError;
 const util = @import("../../../util.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const CaptureError = @import("../../capture_error.zig").CaptureError;
+const CaptureError = @import("../../capture.zig").CaptureError;
 const c = @import("./pipewire_include.zig").c;
 const c_def = @import("./pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
@@ -68,7 +68,7 @@ pub const Pipewire = struct {
     pub fn selectSource(
         self: *Self,
         source_type: CaptureSourceType,
-    ) !void {
+    ) (CaptureError || anyerror)!void {
         const pipewire_node = try self.portal.selectSource(source_type);
         const pipewire_fd = try self.portal.openPipewireRemote();
         errdefer _ = c.close(pipewire_fd);

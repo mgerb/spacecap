@@ -16,7 +16,7 @@ pub const TokenManager = struct {
         }
     };
 
-    pub fn getRequestTokens(allocator: std.mem.Allocator, sender_name: [:0]const u8) !RequestToken {
+    pub fn getRequestTokens(allocator: std.mem.Allocator, sender_name: [:0]const u8) std.mem.Allocator.Error!RequestToken {
         request_counter += 1;
 
         // Generate the token
@@ -47,7 +47,7 @@ pub const TokenManager = struct {
         }
     };
 
-    pub fn getSessionToken(allocator: std.mem.Allocator) !SessionToken {
+    pub fn getSessionToken(allocator: std.mem.Allocator) std.mem.Allocator.Error!SessionToken {
         session_counter += 1;
 
         return SessionToken{
