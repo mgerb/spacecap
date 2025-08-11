@@ -5,12 +5,12 @@ const vk = @import("vulkan");
 const types = @import("../../types.zig");
 const util = @import("../../util.zig");
 const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
-const CaptureError = @import("../capture_error.zig").CaptureError;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
+const Capture = @import("../capture.zig").Capture;
 
 const DWORD = u32;
 
-pub const Capture = struct {
+pub const WindowsCapture = struct {
     const Self = @This();
     const DWORD = u32;
 
@@ -26,24 +26,29 @@ pub const Capture = struct {
         return self;
     }
 
-    pub fn selectSource(self: *Self, source_type: CaptureSourceType) !void {
+    pub fn selectSource(context: *anyopaque, source_type: CaptureSourceType) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = source_type;
     }
 
-    pub fn waitForReady(self: *const Self) !void {
+    pub fn waitForReady(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn nextFrame(self: *Self) !void {
+    pub fn nextFrame(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn closeNextFrameChan(self: *Self) !void {
+    pub fn closeNextFrameChan(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn waitForFrame(self: *const Self) !types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) !types.VkImages {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return .{
             .image = .null_handle,
@@ -51,42 +56,53 @@ pub const Capture = struct {
         };
     }
 
-    pub fn size(self: *const Self) ?types.Size {
+    pub fn size(context: *anyopaque) ?types.Size {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return null;
     }
 
-    pub fn vkImage(self: *const Self) ?vk.Image {
+    pub fn externalWaitSemaphore(context: *anyopaque) ?vk.Semaphore {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return null;
     }
 
-    pub fn vkImageView(self: *const Self) ?vk.ImageView {
-        _ = self;
-        return null;
-    }
-
-    pub fn externalWaitSemaphore(self: *const Self) ?vk.Semaphore {
-        _ = self;
-        return null;
-    }
-
-    pub fn stop(self: *Self) !void {
+    pub fn stop(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn selectedScreenCastIdentifier(self: *Self) ?[]const u8 {
-        _ = self;
-        return null;
-    }
+    // pub fn selectedScreenCastIdentifier(self: *anyopaque) ?[]const u8 {
+    //     const self: *Self = @ptrCast(@alignCast(context));
+    //     _ = self;
+    //     return null;
+    // }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(context: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(context));
         self.allocator.destroy(self);
+    }
+
+    pub fn capture(self: *Self) Capture {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .selectSource = selectSource,
+                .nextFrame = nextFrame,
+                .closeNextFrameChan = closeNextFrameChan,
+                .waitForFrame = waitForFrame,
+                .size = size,
+                .externalWaitSemaphore = externalWaitSemaphore,
+                .stop = stop,
+                .deinit = deinit,
+            },
+        };
     }
 };
 
 /// Capture a screenshot in windows - the caller owns the returned memory
-pub fn windowsCapture(allocator: std.mem.Allocator) CaptureError![]u8 {
+pub fn windowsCapture(allocator: std.mem.Allocator) ![]u8 {
     const win32 = @import("win32");
     const c = win32.everything;
 

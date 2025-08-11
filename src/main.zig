@@ -1,9 +1,15 @@
 const std = @import("std");
 const UI = @import("./ui/ui.zig").UI;
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
-const Capture = @import("./capture/capture.zig").Capture;
+
 const StateActor = @import("./state_actor.zig").StateActor;
 const UserSettings = @import("./user_settings.zig").UserSettings;
+const Util = @import("./util.zig");
+
+const CaptureMethod = if (Util.isLinux())
+    @import("./capture/linux/capture_linux.zig").LinuxPipewireDmaCapture
+else
+    @import("./capture/windows/capture_windows.zig").WindowsCapture;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -23,10 +29,11 @@ pub fn main() !void {
     const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.items);
     defer vulkan.deinit();
 
-    const capture = try Capture.init(allocator, vulkan);
+    const linux_capture = try CaptureMethod.init(allocator, vulkan);
+    var capture = linux_capture.capture();
     defer capture.deinit();
 
-    const state_actor = try StateActor.init(allocator, capture, vulkan);
+    const state_actor = try StateActor.init(allocator, &capture, vulkan);
     defer state_actor.deinit();
 
     const StateThread = struct {

@@ -4,7 +4,7 @@ const vk = @import("vulkan");
 
 const Util = @import("./util.zig");
 const Capture = @import("./capture/capture.zig").Capture;
-const CaptureError = @import("./capture/capture_error.zig").CaptureError;
+const CaptureError = @import("./capture/capture.zig").CaptureError;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
 const Chan = @import("./channel.zig").Chan;
@@ -155,9 +155,10 @@ pub const StateActor = struct {
                     self.allocator.free(old_name);
                     self.state.selected_screen_cast_identifier = null;
                 }
-                if (self.capture.selectedScreenCastIdentifier()) |name| {
-                    self.state.selected_screen_cast_identifier = try self.allocator.dupe(u8, name);
-                }
+                // TODO:
+                // if (self.capture.selectedScreenCastIdentifier()) |name| {
+                //     self.state.selected_screen_cast_identifier = try self.allocator.dupe(u8, name);
+                // }
             },
             .show_demo => {
                 self.mutex.lock();

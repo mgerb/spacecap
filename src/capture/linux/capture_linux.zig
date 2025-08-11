@@ -5,19 +5,20 @@ const vk = @import("vulkan");
 const types = @import("../../types.zig");
 const util = @import("../../util.zig");
 const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
-const CaptureError = @import("../capture_error.zig").CaptureError;
 const Pipewire = @import("./pipewire/pipewire.zig").Pipewire;
 const Chan = @import("../../channel.zig").Chan;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
+const Capture = @import("../capture.zig").Capture;
+const CaptureError = @import("../capture.zig").CaptureError;
 
-pub const Capture = struct {
+pub const LinuxPipewireDmaCapture = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
     pipewire: ?*Pipewire = null,
 
-    pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan) (CaptureError || anyerror)!*Self {
+    pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan) !*Self {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
@@ -27,7 +28,8 @@ pub const Capture = struct {
         return self;
     }
 
-    pub fn selectSource(self: *Self, source_type: CaptureSourceType) !void {
+    pub fn selectSource(context: *anyopaque, source_type: CaptureSourceType) (CaptureError || anyerror)!void {
+        const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
             // to select a new source here.
@@ -47,28 +49,25 @@ pub const Capture = struct {
         try self.pipewire.?.selectSource(source_type);
     }
 
-    pub fn nextFrame(self: *Self) !void {
+    pub fn nextFrame(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         try self.pipewire.?.rx_chan.send(true);
     }
 
-    pub fn closeNextFrameChan(self: *Self) !void {
+    pub fn closeNextFrameChan(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             pipewire.rx_chan.close();
         }
     }
 
-    pub fn waitForFrame(self: *const Self) !types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) !types.VkImages {
+        const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.tx_chan.recv();
     }
 
-    pub fn waitForReady(self: *const Self) !void {
-        _ = self;
-        // pipewire needs to call next frame to prepare for ready
-        // self.pipewire.?.nextFrame();
-        // _ = try self.pipewire.?.frame_chan.recv();
-    }
-
-    pub fn size(self: *const Self) ?types.Size {
+    pub fn size(context: *anyopaque) ?types.Size {
+        const self: *Self = @ptrCast(@alignCast(context));
         return if (self.pipewire.?.info) |info|
             .{
                 .width = info.size.width,
@@ -78,19 +77,13 @@ pub const Capture = struct {
             null;
     }
 
-    pub fn vkImage(self: *const Self) ?vk.Image {
-        return self.pipewire.vk_image;
-    }
-
-    pub fn vkImageView(self: *const Self) ?vk.ImageView {
-        return self.pipewire.vk_image_view;
-    }
-
-    pub fn externalWaitSemaphore(self: *const Self) ?vk.Semaphore {
+    pub fn externalWaitSemaphore(context: *anyopaque) ?vk.Semaphore {
+        const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.vk_foreign_semaphore;
     }
 
-    pub fn stop(self: *Self) !void {
+    pub fn stop(context: *anyopaque) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
             // to select a new source here.
@@ -100,17 +93,34 @@ pub const Capture = struct {
         }
     }
 
-    pub fn selectedScreenCastIdentifier(self: *Self) ?[]const u8 {
-        if (self.pipewire) |pw| {
-            return pw.portal.selected_screen_name;
-        }
-        return null;
-    }
+    // pub fn selectedScreenCastIdentifier(self: *Self) ?[]const u8 {
+    //     if (self.pipewire) |pw| {
+    //         return pw.portal.selected_screen_name;
+    //     }
+    //     return null;
+    // }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(context: *anyopaque) void {
+        const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             pipewire.deinit();
         }
         self.allocator.destroy(self);
+    }
+
+    pub fn capture(self: *Self) Capture {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .selectSource = selectSource,
+                .nextFrame = nextFrame,
+                .closeNextFrameChan = closeNextFrameChan,
+                .waitForFrame = waitForFrame,
+                .size = size,
+                .externalWaitSemaphore = externalWaitSemaphore,
+                .stop = stop,
+                .deinit = deinit,
+            },
+        };
     }
 };
