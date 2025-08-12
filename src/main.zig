@@ -7,7 +7,7 @@ const UserSettings = @import("./user_settings.zig").UserSettings;
 const Util = @import("./util.zig");
 
 const CaptureMethod = if (Util.isLinux())
-    @import("./capture/linux/capture_linux.zig").LinuxPipewireDmaCapture
+    @import("./capture/linux/linux_pipewire_dma_capture.zig").LinuxPipewireDmaCapture
 else
     @import("./capture/windows/capture_windows.zig").WindowsCapture;
 

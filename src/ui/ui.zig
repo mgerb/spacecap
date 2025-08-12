@@ -27,7 +27,9 @@ pub const UI = struct {
     window: ?*c.struct_SDL_Window = null,
     surface: ?c.VkSurfaceKHR = null,
     vulkan_window: c.ImGui_ImplVulkanH_Window = std.mem.zeroes(c.ImGui_ImplVulkanH_Window),
+    descriptor_pool: ?vk.DescriptorPool = null,
     swapchain_rebuild: bool = false,
+    im_texture_ref: ?c.ImTextureRef = null,
 
     /// Init SDL and return new UI instance
     pub fn init(
@@ -136,6 +138,26 @@ pub const UI = struct {
         }
         errdefer c.cImGui_ImplSDL3_Shutdown();
 
+        const pool_size = vk.DescriptorPoolSize{
+            .type = .combined_image_sampler,
+            .descriptor_count = 1,
+        };
+
+        const pool_info = vk.DescriptorPoolCreateInfo{
+            .flags = .{
+                .free_descriptor_set_bit = true,
+            },
+            // NOTE: If we create more textures then this number
+            // needs to increase, otherwise we'll get segfaults.
+            .max_sets = 2,
+            .p_pool_sizes = @ptrCast(&pool_size),
+            .pool_size_count = 1,
+        };
+
+        // used for imgui/vulkan/sdl
+        self.descriptor_pool = try self.vulkan.device.createDescriptorPool(&pool_info, null);
+        errdefer self.vulkan.device.destroyDescriptorPool(self.descriptor_pool.?, null);
+
         var init_info = c.ImGui_ImplVulkan_InitInfo{};
         init_info.Instance = self.vkInstance();
         init_info.PhysicalDevice = self.vkPhysicalDevice();
@@ -237,6 +259,41 @@ pub const UI = struct {
                 }
 
                 try drawLeftColumn(self.allocator, self.state_actor);
+
+                if (self.state_actor.state.image_view) |image_view| {
+                    if (self.state_actor.state.fence) |fence| {
+                        _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), vk.TRUE, std.math.maxInt(u64)) catch unreachable;
+                        // TODO: update if image_view changes
+                        if (self.im_texture_ref == null) {
+                            const sampler = try self.vulkan.device.createSampler(&vk.SamplerCreateInfo{
+                                .mag_filter = .linear,
+                                .min_filter = .linear,
+                                .mipmap_mode = .linear,
+                                .address_mode_u = .clamp_to_edge,
+                                .address_mode_v = .clamp_to_edge,
+                                .address_mode_w = .clamp_to_edge,
+                                .mip_lod_bias = 0.0,
+                                .anisotropy_enable = vk.FALSE,
+                                .max_anisotropy = 1.0,
+                                .compare_enable = vk.FALSE,
+                                .compare_op = .always,
+                                .min_lod = 0,
+                                .max_lod = 0,
+                                .border_color = .int_opaque_black,
+                                .unnormalized_coordinates = vk.FALSE,
+                            }, null);
+
+                            const s: c.VkSampler = @ptrFromInt(@intFromEnum(sampler));
+                            const i: c.VkImageView = @ptrFromInt(@intFromEnum(image_view));
+
+                            const descriptor_set = c.cImGui_ImplVulkan_AddTexture(s, i, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL).?;
+                            self.im_texture_ref = c.ImTextureRef{
+                                ._TexID = @intFromPtr(descriptor_set),
+                            };
+                        }
+                        c.ImGui_Image(self.im_texture_ref.?, c.ImGui_GetContentRegionAvail());
+                    }
+                }
             }
 
             // Rendering
@@ -451,7 +508,7 @@ pub const UI = struct {
     }
 
     fn vkDescriptorPool(self: *const Self) c.VkDescriptorPool {
-        return @ptrFromInt(@intFromEnum(self.vulkan.descriptor_pool));
+        return @ptrFromInt(@intFromEnum(self.descriptor_pool.?));
     }
 
     fn vkQueue(self: *const Self) c.VkQueue {
@@ -463,6 +520,10 @@ pub const UI = struct {
         //TODO: check if this stuff exists first?
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
+
+        if (self.descriptor_pool) |descriptor_pool| {
+            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
+        }
 
         // if (self.vulkan_window) |*vulkan_window| {
         c.cImGui_ImplVulkanH_DestroyWindow(

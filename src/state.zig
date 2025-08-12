@@ -1,3 +1,6 @@
+const vk = @import("vulkan");
+const Capture = @import("./capture/capture.zig").Capture;
+
 const Self = @This();
 
 const ReplayBufferState = struct {
@@ -15,9 +18,14 @@ replay_seconds: u32 = 60,
 fps: u32 = 60,
 bit_rate: u64 = 20_000_000,
 
+capture: ?*Capture = null,
 recording: bool = false,
 has_source: bool = false,
 show_demo: bool = false,
 selected_screen_cast_identifier: ?[]u8 = null,
 
 replay_buffer_state: ReplayBufferState = .{},
+
+semaphore: ?vk.Semaphore = null,
+fence: ?vk.Fence = null,
+image_view: ?vk.ImageView = null,

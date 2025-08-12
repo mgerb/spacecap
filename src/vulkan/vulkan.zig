@@ -92,7 +92,6 @@ pub const Vulkan = struct {
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
     command_pool: vk.CommandPool,
-    descriptor_pool: vk.DescriptorPool,
 
     encoder: ?*Encoder = null,
 
@@ -198,22 +197,6 @@ pub const Vulkan = struct {
         const graphics_queue = Queue.init(device, candidate.queues.graphics_family);
         const video_encode_queue = Queue.init(device, candidate.queues.video_encode_family);
 
-        const pool_size = vk.DescriptorPoolSize{
-            .type = .combined_image_sampler,
-            .descriptor_count = 1,
-        };
-
-        const pool_info = vk.DescriptorPoolCreateInfo{
-            .flags = .{ .free_descriptor_set_bit = true },
-            .max_sets = 1,
-            .p_pool_sizes = @ptrCast(&pool_size),
-            .pool_size_count = 1,
-        };
-
-        // used for sdl window
-        const descriptor_pool = try device.createDescriptorPool(&pool_info, null);
-        errdefer device.destroyDescriptorPool(descriptor_pool, null);
-
         const command_pool = try device.createCommandPool(&.{
             .queue_family_index = graphics_queue.family,
             .flags = .{ .reset_command_buffer_bit = true },
@@ -235,7 +218,6 @@ pub const Vulkan = struct {
             .props = props,
             .mem_props = mem_props,
             .command_pool = command_pool,
-            .descriptor_pool = descriptor_pool,
         };
 
         std.debug.print("Using device: {s}\n", .{self.props.device_name});
@@ -493,8 +475,6 @@ pub const Vulkan = struct {
         if (self.encoder) |encoder| {
             encoder.deinit();
         }
-
-        self.device.destroyDescriptorPool(self.descriptor_pool, null);
 
         if (self.debug_messenger) |debug_messenger| {
             self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);

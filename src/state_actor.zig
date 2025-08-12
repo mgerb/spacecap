@@ -51,7 +51,9 @@ pub const StateActor = struct {
             .capture = capture,
             .vulkan = vulkan,
             .action_chan = ActionChan.init(allocator),
-            .state = .{},
+            .state = .{
+                .capture = capture,
+            },
         };
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -228,10 +230,25 @@ pub const StateActor = struct {
 
             var image_slc = [_]vk.Image{images.image};
             var image_view_slc = [_]vk.ImageView{images.image_view};
+
+            self.mutex.lock();
+            // TODO: triple buffering
+            const copy_values = try self.capture.copyVulkanImage(
+                image_slc[0],
+                self.capture.size().?.width,
+                self.capture.size().?.height,
+                self.capture.externalWaitSemaphore().?,
+            );
+
+            self.state.semaphore = copy_values.semaphore;
+            self.state.fence = copy_values.fence;
+            self.state.image_view = copy_values.image_view;
+            self.mutex.unlock();
+
             try self.vulkan.encoder.?.prepareEncode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
-                .external_wait_semaphore = self.capture.externalWaitSemaphore(),
+                .external_wait_semaphore = copy_values.semaphore,
             });
 
             const encode_result = try self.vulkan.encoder.?.encode(0);
