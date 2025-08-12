@@ -7,6 +7,8 @@ const StateActor = @import("../state_actor.zig").StateActor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
+const drawMainWindow = @import("./draw_main_window.zig").drawMainWindow;
+const VideoDisplay = @import("./video_display.zig").VideoDisplay;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -23,6 +25,7 @@ pub const UI = struct {
     state_actor: *StateActor,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
+    video_display: *VideoDisplay,
 
     window: ?*c.struct_SDL_Window = null,
     surface: ?c.VkSurfaceKHR = null,
@@ -41,6 +44,7 @@ pub const UI = struct {
             .allocator = allocator,
             .state_actor = state_actor,
             .vulkan = vulkan,
+            .video_display = try VideoDisplay.init(allocator, vulkan, WIDTH, HEIGHT),
         };
 
         if (!c.SDL_Init(SDL_INIT_FLAGS)) {
@@ -237,6 +241,7 @@ pub const UI = struct {
                 }
 
                 try drawLeftColumn(self.allocator, self.state_actor);
+                try drawMainWindow(self.video_display, self.state_actor.state.active_image);
             }
 
             // Rendering
@@ -459,6 +464,7 @@ pub const UI = struct {
     }
 
     pub fn deinit(self: *const Self) void {
+        self.video_display.deinit();
 
         //TODO: check if this stuff exists first?
         c.cImGui_ImplVulkan_Shutdown();

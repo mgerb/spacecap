@@ -471,7 +471,7 @@ pub const Pipewire = struct {
                 .storage_bit = true,
                 .color_attachment_bit = true,
                 // NOTE: only used when writing frames to a file for debugging purposes
-                // .transfer_src_bit = true,
+                .transfer_src_bit = true,
             },
             .sharing_mode = .exclusive,
             .initial_layout = .undefined,

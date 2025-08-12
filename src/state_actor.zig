@@ -51,7 +51,9 @@ pub const StateActor = struct {
             .capture = capture,
             .vulkan = vulkan,
             .action_chan = ActionChan.init(allocator),
-            .state = .{},
+            .state = .{
+                .capture = capture,
+            },
         };
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -225,6 +227,13 @@ pub const StateActor = struct {
                 return err;
             };
             const images = try self.capture.waitForFrame();
+
+            {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                self.state.active_image = images.image;
+                self.state.active_image_view = images.image_view;
+            }
 
             var image_slc = [_]vk.Image{images.image};
             var image_view_slc = [_]vk.ImageView{images.image_view};

@@ -157,7 +157,7 @@ pub const Encoder = struct {
 
         try self.allocateIntermediateImage();
         errdefer self.destroyIntermediateImages();
-        std.debug.print("^^^^^ nvidia validation issue here ^^^^^n\n", .{});
+        std.debug.print("^^^^^ nvidia validation issue here ^^^^^\n", .{});
 
         try self.createOutputQueryPool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);
