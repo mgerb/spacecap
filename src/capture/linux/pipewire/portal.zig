@@ -9,7 +9,7 @@ const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
 /// check for specific error codes, otherwise default to return_error
 fn handleGError(err: ?*c.GError, comptime return_error: anyerror!void) !void {
     if (err) |e| {
-        std.debug.print("GError: {}, message: {s}\n", .{ e, e.message });
+        std.log.err("GError: {}, message: {s}\n", .{ e, e.message });
         // This error SHOULD mean that org.freedesktop.portal.Desktop is not available
         if (e.code == c.G_IO_ERROR_INVAL) {
             return CaptureError.portal_service_not_found;
@@ -51,8 +51,6 @@ pub const Portal = struct {
             return error.g_dbus_connection_get_unique_name;
         }
 
-        std.debug.print("name: {s}\n", .{unique_name});
-
         const len = std.mem.len(unique_name);
         const sender_name: [:0]u8 = try allocator.allocSentinel(u8, len - 1, 0);
         std.mem.copyForwards(u8, sender_name, unique_name[1..len]);
@@ -63,8 +61,6 @@ pub const Portal = struct {
             }
         }
         errdefer allocator.free(sender_name);
-
-        std.debug.print("sender_name: {s}\n", .{sender_name});
 
         const screen_cast = c.g_dbus_proxy_new_sync(
             conn,
@@ -80,7 +76,7 @@ pub const Portal = struct {
         errdefer unrefMaybe(screen_cast);
 
         const restore_token = readRestoreTokenFromFile(allocator) catch |_err| blk: {
-            std.debug.print("error reading restore token file: {}\n", .{_err});
+            std.log.err("error reading restore token file: {}\n", .{_err});
             break :blk null;
         };
 
@@ -97,23 +93,21 @@ pub const Portal = struct {
     }
 
     pub fn createScreenCastSession(self: *Self) !void {
-        std.debug.print("create_screen_cast_session\n", .{});
+        std.debug.print("[createScreenCastSession]\n", .{});
 
         const request_tokens = try TokenManager.getRequestTokens(self.allocator, self.sender_name.?);
         defer request_tokens.deinit();
-        std.debug.print("request path: {s}, request token: {s}\n", .{ request_tokens.path, request_tokens.token });
+        std.debug.print("portal request path: {s}, request token: {s}\n", .{ request_tokens.path, request_tokens.token });
 
         const session_token = try TokenManager.getSessionToken(self.allocator);
         defer session_token.deinit();
 
-        std.debug.print("session token: {s}\n", .{session_token.path});
+        std.debug.print("portal session token: {s}\n", .{session_token.path});
 
         var callback = std.mem.zeroes(DBusCallback);
 
         self.callbackRegister(&callback, request_tokens.path, Portal.createSessionCallback);
         defer self.callbackUnregister(&callback);
-
-        std.debug.print("db id: {}\n", .{callback.id});
 
         var builder = std.mem.zeroes(c.GVariantBuilder);
         c.g_variant_builder_init(&builder, c_def.G_VARIANT_TYPE_VARDICT);
@@ -145,7 +139,7 @@ pub const Portal = struct {
         std.mem.copyForwards(u8, session_handle, handle[0..len]);
         self.session_handle = session_handle;
 
-        std.debug.print("session_handle: {?s}\ngdb: {}\n", .{ self.session_handle, callback });
+        std.debug.print("portal session_handle: {?s}\ngdb: {}\n", .{ self.session_handle, callback });
     }
 
     pub fn selectSource(
@@ -184,7 +178,7 @@ pub const Portal = struct {
         const cursor_modes = if (cursor_modes_ != null) c.g_variant_get_uint32(cursor_modes_) else 0;
 
         // NOTE: not supporting mode 4
-        std.debug.print("cursor_mode: {}\n", .{cursor_modes});
+        std.debug.print("portal cursor_mode: {}\n", .{cursor_modes});
         if (cursor_modes & 2 > 0) {
             c.g_variant_builder_add(&builder, "{sv}", "cursor_mode", c.g_variant_new_uint32(2));
         } else if (cursor_modes & 1 > 0) {
@@ -248,7 +242,7 @@ pub const Portal = struct {
         c.g_variant_get(params, "(u@a{sv})", &status, &result);
 
         if (status != 0) {
-            std.debug.print("g_variant_get error: {}\n", .{status});
+            std.log.err("g_variant_get error: {}\n", .{status});
         }
 
         const session_handle_variant = c.g_variant_lookup_value(result, "session_handle", null);
@@ -371,7 +365,7 @@ pub const Portal = struct {
         c.g_variant_get(params, "(u@a{sv})", &status, &result);
 
         if (status != 0) {
-            std.debug.print("g_variant_get error: {}\n", .{status});
+            std.log.err("g_variant_get error: {}\n", .{status});
             callback.cancelled = true;
             return;
         }
@@ -391,7 +385,6 @@ pub const Portal = struct {
                 self.allocator.free(restore_token);
             }
             self.restore_token = new_token;
-            std.debug.print("restore_token: {s}", .{self.restore_token.?});
             writeRestoreTokenToFile(self.allocator, new_token) catch |err| {
                 std.debug.print("write restore_token error: {}\n", .{err});
             };
@@ -402,7 +395,6 @@ pub const Portal = struct {
         var iter: c.GVariantIter = undefined;
         _ = c.g_variant_iter_init(@ptrCast(&iter), streams);
         var count = c.g_variant_iter_n_children(&iter);
-        std.debug.print("count: {}\n", .{count});
 
         if (count != 1) {
             std.debug.print("Received more than one stream, discarding all but last one\n", .{});
@@ -448,7 +440,7 @@ pub const Portal = struct {
                     if (std.fmt.allocPrint(context.portal.allocator, "{s} ({}x{})", .{ type_str, width, height })) |desc| {
                         stream_description = desc;
                     } else |err| {
-                        std.debug.print("Error allocating stream description: {}\n", .{err});
+                        std.log.err("Error allocating stream description: {}\n", .{err});
                         callback.cancelled = true;
                         return;
                     }
@@ -456,7 +448,7 @@ pub const Portal = struct {
                     if (context.portal.allocator.dupe(u8, type_str)) |desc| {
                         stream_description = desc;
                     } else |err| {
-                        std.debug.print("Error allocating stream description: {}\n", .{err});
+                        std.log.err("Error allocating stream description: {}\n", .{err});
                         callback.cancelled = true;
                         return;
                     }
@@ -465,7 +457,7 @@ pub const Portal = struct {
                 if (context.portal.allocator.dupe(u8, "Unknown Stream")) |desc| {
                     stream_description = desc;
                 } else |err| {
-                    std.debug.print("Error allocating stream description: {}\n", .{err});
+                    std.log.err("Error allocating stream description: {}\n", .{err});
                     callback.cancelled = true;
                     return;
                 }
@@ -502,7 +494,7 @@ pub const Portal = struct {
         c.g_variant_get(params, "(u@a{sv})", &status, &result);
 
         if (status != 0) {
-            std.debug.print("g_variant_get error: {}\n", .{status});
+            std.log.err("g_variant_get error: {}\n", .{status});
         }
         callback.opaque_ = @ptrFromInt(1);
         callback.completed = true;

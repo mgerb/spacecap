@@ -30,14 +30,14 @@ zig build run -Dnix
 
 ## Early Screenshot
 
-![screenshot1](./screenshots/screenshot_1.png)
+![screenshot2](./screenshots/screenshot_2.png)
 
 ## Roadmap
 
 - Audio recording
 - Global keybinds
 - Screenshots
-- Show video preview on UI
+- ~~Show video preview on UI~~ - #9
   - Live scrubbing of video preview
 - Video Player
   - Simple video editor (trim start/end)

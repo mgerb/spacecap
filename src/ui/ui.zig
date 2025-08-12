@@ -7,6 +7,8 @@ const StateActor = @import("../state_actor.zig").StateActor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
+const drawVideoPreview = @import("./draw_video_preview.zig").drawVideoPreview;
+const CapturePreviewBuffer = @import("../vulkan/capture_preview_swapchain.zig").CapturePreviewBuffer;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -26,7 +28,7 @@ pub const UI = struct {
 
     window: ?*c.struct_SDL_Window = null,
     surface: ?c.VkSurfaceKHR = null,
-    vulkan_window: c.ImGui_ImplVulkanH_Window = std.mem.zeroes(c.ImGui_ImplVulkanH_Window),
+    descriptor_pool: ?vk.DescriptorPool = null,
     swapchain_rebuild: bool = false,
 
     /// Init SDL and return new UI instance
@@ -48,7 +50,7 @@ pub const UI = struct {
         }
 
         const version = c.SDL_GetVersion();
-        std.debug.print("SDL version: {}\n", .{version});
+        std.log.info("SDL version: {}\n", .{version});
 
         try self.initVulkan();
 
@@ -56,7 +58,7 @@ pub const UI = struct {
     }
 
     /// Caller owns memory
-    /// TODO: check why not returning wayland
+    /// TODO: check why not returning "wayland"
     pub fn getSDLVulkanExtensions(allocator: std.mem.Allocator) !std.ArrayList([*:0]const u8) {
         if (!c.SDL_Init(SDL_INIT_FLAGS)) {
             return error.SDL_initFailure;
@@ -86,7 +88,6 @@ pub const UI = struct {
             return error.SDL_Vulkan_CreateSurfaceFailure;
         }
         self.surface = surface;
-        // errdefer c.SDL_Vulkan_DestroySurface(self.vkInstance(), surface, null);
 
         if (!c.cImGui_ImplVulkan_LoadFunctions(@bitCast(API_VERSION), loader)) {
             return error.ImGuiVulkanLoadFailure;
@@ -96,7 +97,7 @@ pub const UI = struct {
         errdefer c.cImGui_ImplVulkanH_DestroyWindow(
             self.vkInstance(),
             self.vkDevice(),
-            @ptrCast(&self.vulkan_window),
+            @ptrCast(&self.vulkan.window),
             null,
         );
 
@@ -136,6 +137,26 @@ pub const UI = struct {
         }
         errdefer c.cImGui_ImplSDL3_Shutdown();
 
+        const pool_size = vk.DescriptorPoolSize{
+            .type = .combined_image_sampler,
+            .descriptor_count = 1,
+        };
+
+        const pool_info = vk.DescriptorPoolCreateInfo{
+            .flags = .{
+                .free_descriptor_set_bit = true,
+            },
+            // NOTE: If we create more textures then this number
+            // needs to increase, otherwise we'll get segfaults.
+            .max_sets = 10,
+            .p_pool_sizes = @ptrCast(&pool_size),
+            .pool_size_count = 1,
+        };
+
+        // used for imgui/vulkan/sdl
+        self.descriptor_pool = try self.vulkan.device.createDescriptorPool(&pool_info, null);
+        errdefer self.vulkan.device.destroyDescriptorPool(self.descriptor_pool.?, null);
+
         var init_info = c.ImGui_ImplVulkan_InitInfo{};
         init_info.Instance = self.vkInstance();
         init_info.PhysicalDevice = self.vkPhysicalDevice();
@@ -144,10 +165,10 @@ pub const UI = struct {
         init_info.Queue = self.vkQueue();
         init_info.PipelineCache = g_PipelineCache; // TODO: maybe need?
         init_info.DescriptorPool = self.vkDescriptorPool();
-        init_info.RenderPass = self.vulkan_window.RenderPass;
+        init_info.RenderPass = self.vulkan.window.?.RenderPass;
         init_info.Subpass = 0;
         init_info.MinImageCount = MIN_IMAGE_COUNT;
-        init_info.ImageCount = self.vulkan_window.ImageCount;
+        init_info.ImageCount = self.vulkan.window.?.ImageCount;
         init_info.MSAASamples = c.VK_SAMPLE_COUNT_1_BIT;
         init_info.Allocator = null;
         init_info.CheckVkResultFn = check_vk_result;
@@ -177,7 +198,11 @@ pub const UI = struct {
 
         // Main loop
         var done = false;
+        var timer = try std.time.Timer.start();
+        var window_has_focus = true;
+
         while (!done) {
+            timer.reset();
             // Poll and handle events (inputs, window resize, etc.)
             // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
             // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
@@ -186,11 +211,21 @@ pub const UI = struct {
             var event: c.SDL_Event = undefined;
             while (c.SDL_PollEvent(&event)) {
                 _ = c.cImGui_ImplSDL3_ProcessEvent(&event);
-                if (event.type == c.SDL_EVENT_QUIT)
-                    done = true;
-                if (event.type == c.SDL_EVENT_WINDOW_CLOSE_REQUESTED and event.window.windowID == c.SDL_GetWindowID(self.window.?))
-                    done = true;
+                switch (event.type) {
+                    c.SDL_EVENT_QUIT => done = true,
+                    c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
+                        if (event.window.windowID == c.SDL_GetWindowID(self.window.?)) {
+                            done = true;
+                        }
+                    },
+                    c.SDL_EVENT_WINDOW_FOCUS_GAINED => window_has_focus = true,
+                    c.SDL_EVENT_WINDOW_FOCUS_LOST => window_has_focus = false,
+                    else => {},
+                }
             }
+
+            // NOTE: SDL_WINDOW_MINIMIZED - this event does not get invoked on wayland.
+            // TODO: Test this out on windows. We may not want this at all?
             if ((c.SDL_GetWindowFlags(self.window.?) & c.SDL_WINDOW_MINIMIZED) > 0) {
                 c.SDL_Delay(10);
                 continue;
@@ -200,20 +235,28 @@ pub const UI = struct {
             var fb_width: i32 = undefined;
             var fb_height: i32 = undefined;
             if (!c.SDL_GetWindowSize(self.window.?, &fb_width, &fb_height)) return error.SDL_GetWindowSizeFailure;
-            if (fb_width > 0 and fb_height > 0 and (self.swapchain_rebuild or self.vulkan_window.Width != fb_width or self.vulkan_window.Height != fb_height)) {
+            if (fb_width > 0 and fb_height > 0 and
+                (self.swapchain_rebuild or
+                    self.vulkan.window.?.Width != fb_width or
+                    self.vulkan.window.?.Height != fb_height))
+            {
+                // This causes big problems if we don't wait for the GPU to be ready.
+                try self.vulkan.waitForAllFencesBegin();
+                defer self.vulkan.waitForAllFencesEnd();
+
                 c.cImGui_ImplVulkan_SetMinImageCount(MIN_IMAGE_COUNT);
                 c.cImGui_ImplVulkanH_CreateOrResizeWindow(
                     self.vkInstance(),
                     self.vkPhysicalDevice(),
                     self.vkDevice(),
-                    &self.vulkan_window,
+                    &self.vulkan.window.?,
                     self.vulkan.graphics_queue.family,
                     null,
                     fb_width,
                     fb_height,
                     MIN_IMAGE_COUNT,
                 );
-                self.vulkan_window.FrameIndex = 0;
+                self.vulkan.window.?.FrameIndex = 0;
                 self.swapchain_rebuild = false;
             }
 
@@ -222,9 +265,21 @@ pub const UI = struct {
             c.cImGui_ImplSDL3_NewFrame();
             c.ImGui_NewFrame();
 
+            var capture_preview_buffer: ?*CapturePreviewBuffer = null;
+            defer {
+                // First, check if the swapchain has been destroyed. The buffer
+                // gets locked when we call `getMostRecentBuffer`, so we must
+                // unlock it before the next iteration.
+                if (self.vulkan.capture_preview_swapchain != null) {
+                    if (capture_preview_buffer) |buffer| {
+                        buffer.mutex.unlock();
+                    }
+                }
+            }
+
             {
-                self.state_actor.mutex.lock();
-                defer self.state_actor.mutex.unlock();
+                self.state_actor.ui_mutex.lock();
+                defer self.state_actor.ui_mutex.unlock();
 
                 // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
                 if (self.state_actor.state.show_demo) {
@@ -237,16 +292,25 @@ pub const UI = struct {
                 }
 
                 try drawLeftColumn(self.allocator, self.state_actor);
+
+                if (self.state_actor.state.recording) {
+                    if (self.vulkan.capture_preview_swapchain) |capture_preview_swapchain| {
+                        if (capture_preview_swapchain.getMostRecentBuffer()) |buffer| {
+                            capture_preview_buffer = buffer;
+                            try drawVideoPreview(buffer);
+                        }
+                    }
+                }
             }
 
             // Rendering
             c.ImGui_Render();
             const draw_data = c.ImGui_GetDrawData();
             const is_minimized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
-            self.vulkan_window.ClearValue.color.float32[0] = clear_color.x * clear_color.w;
-            self.vulkan_window.ClearValue.color.float32[1] = clear_color.y * clear_color.w;
-            self.vulkan_window.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
-            self.vulkan_window.ClearValue.color.float32[3] = clear_color.w;
+            self.vulkan.window.?.ClearValue.color.float32[0] = clear_color.x * clear_color.w;
+            self.vulkan.window.?.ClearValue.color.float32[1] = clear_color.y * clear_color.w;
+            self.vulkan.window.?.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
+            self.vulkan.window.?.ClearValue.color.float32[3] = clear_color.w;
             if (!is_minimized) {
                 try self.frameRender(draw_data);
             }
@@ -259,17 +323,25 @@ pub const UI = struct {
             if (!is_minimized) {
                 try self.framePresent();
             }
+
+            // Delay until the next frame to maintain desired FPS.
+            // We use mailbox present mode so unlimited FPS can get
+            // pretty high e.g. 2k+
+            const frame_duration_ns: u64 = if (window_has_focus) (1_000_000_000 / 120) else (1_000_000_000 / 30);
+            const elapsed_ns = timer.read();
+            if (elapsed_ns < frame_duration_ns) {
+                const sleep_duration_ns = frame_duration_ns - elapsed_ns;
+                c.SDL_DelayNS(sleep_duration_ns);
+            }
         }
 
         try self.state_actor.dispatch(.exit);
-        // Cleanup
-        try self.vulkan.device.deviceWaitIdle();
     }
 
     fn frameRender(self: *Self, draw_data: *c.ImDrawData) !void {
-        var wd = &self.vulkan_window;
+        var wd = &self.vulkan.window.?;
 
-        var image_acquired_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].ImageAcquiredSemaphore;
+        const image_acquired_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].ImageAcquiredSemaphore;
         var render_complete_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].RenderCompleteSemaphore;
         const result = (self.vulkan.device.acquireNextImageKHR(
             @enumFromInt(@intFromPtr(wd.Swapchain)),
@@ -297,7 +369,6 @@ pub const UI = struct {
         {
             const err = try self.vulkan.device.waitForFences(1, @ptrCast(&fd.Fence), c.VK_TRUE, std.math.maxInt(u64));
             check_vk_result(@intFromEnum(err));
-            try self.vulkan.device.resetFences(1, @ptrCast(&fd.Fence));
         }
 
         {
@@ -336,19 +407,12 @@ pub const UI = struct {
             };
 
             try self.vulkan.device.endCommandBuffer(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
-            self.vulkan.graphics_queue.mutex.lock();
-            defer self.vulkan.graphics_queue.mutex.unlock();
-            try self.vulkan.device.queueSubmit(
-                self.vulkan.graphics_queue.handle,
-                1,
-                @ptrCast(&info),
-                @enumFromInt(@intFromPtr(fd.Fence)),
-            );
+            try self.vulkan.queueSubmit(.graphics, &.{info}, .{ .fence = @enumFromInt(@intFromPtr(fd.Fence.?)) });
         }
     }
 
     fn framePresent(self: *Self) !void {
-        var wd = &self.vulkan_window;
+        var wd = &self.vulkan.window.?;
         if (self.swapchain_rebuild) {
             return;
         }
@@ -360,9 +424,7 @@ pub const UI = struct {
             .p_swapchains = @ptrCast(&wd.Swapchain),
             .p_image_indices = @ptrCast(&wd.FrameIndex),
         };
-        self.vulkan.graphics_queue.mutex.lock();
-        defer self.vulkan.graphics_queue.mutex.unlock();
-        _ = self.vulkan.device.queuePresentKHR(self.vulkan.graphics_queue.handle, @ptrCast(&info)) catch |err| {
+        self.vulkan.queuePresentKHR(&info) catch |err| {
             switch (err) {
                 error.OutOfDateKHR => {
                     self.swapchain_rebuild = true;
@@ -376,7 +438,7 @@ pub const UI = struct {
     }
 
     fn setupVulkanWindow(self: *Self) !void {
-        self.vulkan_window = .{
+        self.vulkan.window = .{
             .Surface = self.surface.?,
             .ClearEnable = true,
         };
@@ -385,15 +447,15 @@ pub const UI = struct {
         _ = self.vulkan.instance.getPhysicalDeviceSurfaceSupportKHR(
             self.vulkan.physical_device,
             self.vulkan.graphics_queue.family,
-            @enumFromInt(@intFromPtr(self.vulkan_window.Surface)),
+            @enumFromInt(@intFromPtr(self.vulkan.window.?.Surface)),
         ) catch return error.NoWSISupport;
 
         // Select Surface Format
         const requestSurfaceImageFormat = [_]c.VkFormat{ c.VK_FORMAT_B8G8R8A8_UNORM, c.VK_FORMAT_R8G8B8A8_UNORM, c.VK_FORMAT_B8G8R8_UNORM, c.VK_FORMAT_R8G8B8_UNORM };
         const requestSurfaceColorSpace = c.VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-        self.vulkan_window.SurfaceFormat = c.cImGui_ImplVulkanH_SelectSurfaceFormat(
+        self.vulkan.window.?.SurfaceFormat = c.cImGui_ImplVulkanH_SelectSurfaceFormat(
             self.vkPhysicalDevice(),
-            self.vulkan_window.Surface,
+            self.vulkan.window.?.Surface,
             @ptrCast(&requestSurfaceImageFormat),
             requestSurfaceImageFormat.len,
             requestSurfaceColorSpace,
@@ -401,14 +463,15 @@ pub const UI = struct {
 
         // Select Present Mode
         const present_modes = [_]c.VkPresentModeKHR{
-            // NOTE: uncommand for unlimited frame rate
-            // c.VK_PRESENT_MODE_MAILBOX_KHR,
+            // NOTE: Had some deadlocks with fifo, use mailbox instead
+            // and limit fps manually.
+            // c.VK_PRESENT_MODE_FIFO_KHR,
             // c.VK_PRESENT_MODE_IMMEDIATE_KHR,
-            c.VK_PRESENT_MODE_FIFO_KHR,
+            c.VK_PRESENT_MODE_MAILBOX_KHR,
         };
-        self.vulkan_window.PresentMode = c.cImGui_ImplVulkanH_SelectPresentMode(
+        self.vulkan.window.?.PresentMode = c.cImGui_ImplVulkanH_SelectPresentMode(
             self.vkPhysicalDevice(),
-            self.vulkan_window.Surface,
+            self.vulkan.window.?.Surface,
             &present_modes[0],
             present_modes.len,
         );
@@ -418,7 +481,7 @@ pub const UI = struct {
             self.vkInstance(),
             self.vkPhysicalDevice(),
             self.vkDevice(),
-            &self.vulkan_window,
+            &self.vulkan.window.?,
             self.vulkan.graphics_queue.family,
             null,
             WIDTH,
@@ -434,7 +497,7 @@ pub const UI = struct {
 
     fn check_vk_result(err: c.VkResult) callconv(.c) void {
         if (err == 0) return;
-        std.debug.print("[vulkan] Error: VkResult = {d}\n", .{err});
+        std.log.err("[vulkan] Error: VkResult = {d}\n", .{err});
         if (err < 0) std.process.exit(1);
     }
 
@@ -451,7 +514,7 @@ pub const UI = struct {
     }
 
     fn vkDescriptorPool(self: *const Self) c.VkDescriptorPool {
-        return @ptrFromInt(@intFromEnum(self.vulkan.descriptor_pool));
+        return @ptrFromInt(@intFromEnum(self.descriptor_pool.?));
     }
 
     fn vkQueue(self: *const Self) c.VkQueue {
@@ -459,19 +522,25 @@ pub const UI = struct {
     }
 
     pub fn deinit(self: *const Self) void {
+        self.vulkan.waitForAllFencesBegin() catch unreachable;
+        defer self.vulkan.waitForAllFencesEnd();
 
-        //TODO: check if this stuff exists first?
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
 
-        // if (self.vulkan_window) |*vulkan_window| {
-        c.cImGui_ImplVulkanH_DestroyWindow(
-            self.vkInstance(),
-            self.vkDevice(),
-            @constCast(@ptrCast(&self.vulkan_window)),
-            null,
-        );
-        // }
+        if (self.descriptor_pool) |descriptor_pool| {
+            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
+        }
+
+        if (self.vulkan.window) |window| {
+            c.cImGui_ImplVulkanH_DestroyWindow(
+                self.vkInstance(),
+                self.vkDevice(),
+                @constCast(@ptrCast(&window)),
+                null,
+            );
+            self.vulkan.window = null;
+        }
 
         // Seems like destroying the vulkan window destroys the surface?
         // if (self.surface) |surface| {

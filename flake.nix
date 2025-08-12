@@ -48,10 +48,10 @@
             libxkbcommon
             vulkan-loader
             vulkan-validation-layers
+            vulkan-tools
             pipewire
             glib
             libdrm
-            vulkan-tools
             wayland
 
             # For configuring ffmpeg headers

@@ -7,7 +7,7 @@ const UserSettings = @import("./user_settings.zig").UserSettings;
 const Util = @import("./util.zig");
 
 const CaptureMethod = if (Util.isLinux())
-    @import("./capture/linux/capture_linux.zig").LinuxPipewireDmaCapture
+    @import("./capture/linux/linux_pipewire_dma_capture.zig").LinuxPipewireDmaCapture
 else
     @import("./capture/windows/capture_windows.zig").WindowsCapture;
 
@@ -29,6 +29,8 @@ pub fn main() !void {
     const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.items);
     defer vulkan.deinit();
 
+    // TODO: create dropdown selector in UI to select capture method when
+    // more are implemented.
     const linux_capture = try CaptureMethod.init(allocator, vulkan);
     var capture = linux_capture.capture();
     defer capture.deinit();

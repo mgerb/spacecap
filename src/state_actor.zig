@@ -38,7 +38,7 @@ pub const StateActor = struct {
     thread_pool: std.Thread.Pool = undefined,
     /// WARNING: This locks the UI thread. This should only be locked
     /// when making updates to the UI state.
-    mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    ui_mutex: std.Thread.Mutex = std.Thread.Mutex{},
     state: State,
     record_thread: ?std.Thread = null,
 
@@ -101,7 +101,6 @@ pub const StateActor = struct {
                 try self.startRecord();
             },
             .stop_record => {
-                // TODO: clear the replay buffer
                 std.debug.print("[action] stop_record\n", .{});
                 try self.stopRecord();
             },
@@ -117,10 +116,10 @@ pub const StateActor = struct {
                     );
                     self.replay_buffer_mutex.unlock();
 
-                    self.mutex.lock();
+                    self.ui_mutex.lock();
                     const size = self.capture.size().?;
                     const fps = self.state.fps;
-                    self.mutex.unlock();
+                    self.ui_mutex.unlock();
 
                     try ffmpeg.writeToFile(
                         self.allocator,
@@ -147,8 +146,8 @@ pub const StateActor = struct {
                     return;
                 };
 
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.ui_mutex.lock();
+                defer self.ui_mutex.unlock();
                 self.state.has_source = true;
                 // TODO: pass allocator to state and copy this string into it
                 if (self.state.selected_screen_cast_identifier) |old_name| {
@@ -161,8 +160,8 @@ pub const StateActor = struct {
                 // }
             },
             .show_demo => {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.ui_mutex.lock();
+                defer self.ui_mutex.unlock();
                 self.state.show_demo = !self.state.show_demo;
             },
             .exit => {
@@ -171,23 +170,26 @@ pub const StateActor = struct {
         }
     }
 
+    /// TODO: move most of this to capture?
     /// This is the main capture loop.
     fn startRecordThreadHandler(self: *Self) !void {
-        self.mutex.lock();
+        self.ui_mutex.lock();
         const fps = self.state.fps;
         const bit_rate = self.state.bit_rate;
+        const width = self.capture.size().?.width;
+        const height = self.capture.size().?.height;
         // Initialize the video encoder here. It will be destroyed
         // when the record thread terminates.
         try self.vulkan.initVideoEncoder(
-            self.capture.size().?.width,
-            self.capture.size().?.height,
+            width,
+            height,
             fps,
             bit_rate,
         );
         defer self.vulkan.destroyVideoEncoder();
 
         // Initialize the replay buffer. This replay buffer
-        // will create destroyed/recreated each time a replay is saved.
+        // will be destroyed/recreated each time a replay is saved.
         self.replay_buffer_mutex.lock();
         self.replay_buffer = try ReplayBuffer.init(
             self.allocator,
@@ -195,7 +197,9 @@ pub const StateActor = struct {
             self.vulkan.encoder.?.bit_stream_header.items,
         );
         self.replay_buffer_mutex.unlock();
-        self.mutex.unlock();
+        self.ui_mutex.unlock();
+
+        try self.vulkan.initCapturePreviewSwapchain(width, height);
 
         var previous_frame_start_time: i128 = 0;
 
@@ -211,8 +215,9 @@ pub const StateActor = struct {
                 Util.printElapsed(previous_frame_start_time, "previous_frame_start_time");
                 // TODO: this makes 60fps feel choppy. I wonder if we need to
                 // not limit anything here and just modify FPS when outputting with
-                // ffmpeg.
-                std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
+                // ffmpeg. DEFINITELY CAN'T HAVE THIS HERE - IT MESSES WITH
+                // THE VIDEO PREVIEW ON THE UI
+                // std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
             }
 
             previous_frame_start_time = std.time.nanoTimestamp();
@@ -228,24 +233,37 @@ pub const StateActor = struct {
 
             var image_slc = [_]vk.Image{images.image};
             var image_view_slc = [_]vk.ImageView{images.image_view};
+
+            const copy_semaphore = try self.vulkan.capture_preview_swapchain.?.copyImageToSwapChain(
+                image_slc[0],
+                self.capture.externalWaitSemaphore().?,
+            );
+
             try self.vulkan.encoder.?.prepareEncode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
-                .external_wait_semaphore = self.capture.externalWaitSemaphore(),
+                .external_wait_semaphore = copy_semaphore,
             });
 
             const encode_result = try self.vulkan.encoder.?.encode(0);
             self.replay_buffer_mutex.lock();
             defer self.replay_buffer_mutex.unlock();
             try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?);
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
             self.state.replay_buffer_state.size = self.replay_buffer.?.size;
             self.state.replay_buffer_state.seconds = self.replay_buffer.?.getSeconds();
         }
     }
 
     fn stopRecord(self: *Self) !void {
+        {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            self.state.recording = false;
+            self.state.has_source = false;
+        }
+
         // Force the record loop to exit by closing the next frame chan.
         try self.capture.closeNextFrameChan();
 
@@ -255,22 +273,19 @@ pub const StateActor = struct {
             record_thread.join();
         }
 
+        try self.vulkan.destroyCapturePreviewSwapchain();
+
         try self.capture.stop();
 
         if (self.replay_buffer) |replay_buffer| {
             replay_buffer.deinit();
             self.replay_buffer = null;
         }
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        self.state.recording = false;
-        self.state.has_source = false;
     }
 
     fn startRecord(self: *Self) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
 
         if (self.state.has_source and !self.state.recording) {
             self.state.recording = true;

@@ -34,10 +34,10 @@ pub fn write_bmp_bgrx(
     const info_header_size = 40;
     const file_size = file_header_size + info_header_size + pixel_data_size;
 
-    var writer = file.writer();
+    var writer = file.writer(&.{});
 
     // BITMAPFILEHEADER (14 bytes)
-    try writer.writeAll(&[_]u8{
+    try writer.interface.writeAll(&[_]u8{
         'B',                                'M', // Signature
         @intCast(file_size & 0xFF),         @intCast((file_size >> 8) & 0xFF),
         @intCast((file_size >> 16) & 0xFF), @intCast((file_size >> 24) & 0xFF),
@@ -46,7 +46,7 @@ pub fn write_bmp_bgrx(
     });
 
     // BITMAPINFOHEADER (40 bytes)
-    try writer.writeAll(&[_]u8{
+    try writer.interface.writeAll(&[_]u8{
         40,                      0,                              0,                               0, // Header size
         @intCast(width & 0xFF),  @intCast((width >> 8) & 0xFF),  @intCast((width >> 16) & 0xFF),  @intCast((width >> 24) & 0xFF),
         @intCast(height & 0xFF), @intCast((height >> 8) & 0xFF), @intCast((height >> 16) & 0xFF), @intCast((height >> 24) & 0xFF),
@@ -73,7 +73,7 @@ pub fn write_bmp_bgrx(
             @memset(row_buf[row_bytes..padded_row_bytes], 0);
         }
 
-        try writer.writeAll(row_buf);
+        try writer.interface.writeAll(row_buf);
     }
 }
 

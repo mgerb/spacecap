@@ -2,6 +2,7 @@ const util = @import("../util.zig");
 const std = @import("std");
 const types = @import("../types.zig");
 const vk = @import("vulkan");
+const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 
 pub const CaptureSourceType = enum { window, desktop };
 
@@ -14,6 +15,7 @@ pub const Capture = struct {
     const Self = @This();
     ptr: *anyopaque,
     vtable: *const VTable,
+    vulkan: *Vulkan,
 
     const VTable = struct {
         selectSource: *const fn (*anyopaque, CaptureSourceType) anyerror!void,
