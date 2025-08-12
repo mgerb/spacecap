@@ -12,7 +12,7 @@ fn compileShader(
 ) !void {
     const vert_cmd = b.addSystemCommand(&.{
         "glslc",
-        "--target-env=vulkan1.3",
+        "--target-env=vulkan1.4",
         "-o",
     });
     const shaderPath = try std.fs.path.join(allocator, &[_][]const u8{ "common", "shaders", shader });

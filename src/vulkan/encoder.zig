@@ -36,6 +36,7 @@ pub const Encoder = struct {
     pps: ?vk.StdVideoH264PictureParameterSet = null,
 
     encode_command_pool: ?vk.CommandPool = null,
+    graphics_command_pool: ?vk.CommandPool = null,
     video_session: ?vk.VideoSessionKHR = null,
     video_profile: ?vk.VideoProfileInfoKHR = null,
     video_profile_list: ?vk.VideoProfileListInfoKHR = null,
@@ -68,12 +69,13 @@ pub const Encoder = struct {
     compute_descriptor_sets: std.ArrayList(vk.DescriptorSet),
     descriptor_pool: ?vk.DescriptorPool = null,
 
-    inter_queue_semaphore1: ?vk.Semaphore = null,
-    inter_queue_semaphore2: ?vk.Semaphore = null,
+    inter_queue_semaphore1: vk.Semaphore,
+    inter_queue_semaphore2: vk.Semaphore,
     // TODO: this should probably be a list
     external_wait_semaphore: ?vk.Semaphore = null,
 
-    encode_finished_fence: ?vk.Fence = null,
+    encode_finished_fence: vk.Fence,
+    compute_finished_fence: vk.Fence,
 
     encode_rate_control_layer_info: ?vk.VideoEncodeRateControlLayerInfoKHR = null,
     encode_h264_rate_control_layer_info: ?vk.VideoEncodeH264RateControlLayerInfoKHR = null,
@@ -111,9 +113,14 @@ pub const Encoder = struct {
             .dpb_image_views = std.ArrayList(vk.ImageView).init(allocator),
             .ycbcr_image_plane_views = std.ArrayList(vk.ImageView).init(allocator),
             .compute_descriptor_sets = std.ArrayList(vk.DescriptorSet).init(allocator),
+
+            .inter_queue_semaphore1 = try vulkan.device.createSemaphore(&.{}, null),
+            .inter_queue_semaphore2 = try vulkan.device.createSemaphore(&.{}, null),
+            .encode_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
+            .compute_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
         };
 
-        try self.createEncodeCommandPool();
+        try self.createCommandPools();
         errdefer {
             if (self.encode_command_pool) |encode_command_pool| {
                 self.vulkan.device.destroyCommandPool(encode_command_pool, null);
@@ -157,16 +164,13 @@ pub const Encoder = struct {
 
         try self.allocateIntermediateImage();
         errdefer self.destroyIntermediateImages();
-        std.debug.print("^^^^^ nvidia validation issue here ^^^^^n\n", .{});
+        std.debug.print("^^^^^ nvidia validation issue here ^^^^^\n", .{});
 
         try self.createOutputQueryPool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);
 
         try self.createYCbCrConversionPipeline();
         errdefer self.destroyYCbCrConversionPipeline();
-
-        try self.createFence();
-        errdefer self.destroyEncodeFinishedFence();
 
         var command_buffer = std.mem.zeroes(vk.CommandBuffer);
         const alloc_info = vk.CommandBufferAllocateInfo{
@@ -187,17 +191,14 @@ pub const Encoder = struct {
         try self.transitionImagesInitial(command_buffer);
 
         try self.vulkan.device.endCommandBuffer(command_buffer);
-        try self.vulkan.device.resetFences(1, @ptrCast(&self.encode_finished_fence));
+
         const submit_info = vk.SubmitInfo{
             .command_buffer_count = 1,
             .p_command_buffers = @ptrCast(&command_buffer),
         };
-        try self.vulkan.device.queueSubmit(
-            self.vulkan.encode_queue.handle,
-            1,
-            @ptrCast(&submit_info),
-            self.encode_finished_fence.?,
-        );
+
+        try self.vulkan.queueSubmit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
+
         const result = try self.vulkan.device.waitForFences(
             1,
             @ptrCast(&self.encode_finished_fence),
@@ -211,12 +212,16 @@ pub const Encoder = struct {
         return self;
     }
 
-    fn createEncodeCommandPool(self: *Self) !void {
+    fn createCommandPools(self: *Self) !void {
         const create_info = vk.CommandPoolCreateInfo{
             .flags = .{ .reset_command_buffer_bit = true },
             .queue_family_index = self.vulkan.encode_queue.family,
         };
         self.encode_command_pool = try self.vulkan.device.createCommandPool(&create_info, null);
+        self.graphics_command_pool = try self.vulkan.device.createCommandPool(&.{
+            .queue_family_index = self.vulkan.graphics_queue.family,
+            .flags = .{ .reset_command_buffer_bit = true },
+        }, null);
     }
 
     fn createVideoSession(self: *Self) !void {
@@ -804,13 +809,6 @@ pub const Encoder = struct {
         }
     }
 
-    fn createFence(self: *Self) !void {
-        self.inter_queue_semaphore1 = try self.vulkan.device.createSemaphore(&.{}, null);
-        self.inter_queue_semaphore2 = try self.vulkan.device.createSemaphore(&.{}, null);
-
-        self.encode_finished_fence = try self.vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
-    }
-
     fn initRateControl(self: *Self, command_buffer: vk.CommandBuffer, fps: u32) void {
         self.encode_h264_rate_control_layer_info = std.mem.zeroes(vk.VideoEncodeH264RateControlLayerInfoKHR);
         self.encode_h264_rate_control_layer_info.?.s_type = .video_encode_h264_rate_control_layer_info_khr;
@@ -901,7 +899,7 @@ pub const Encoder = struct {
     fn convertRGBtoYCbCr(self: *Self, current_image_ix: u32) !void {
         const alloc_info = vk.CommandBufferAllocateInfo{
             .level = .primary,
-            .command_pool = self.vulkan.command_pool,
+            .command_pool = self.graphics_command_pool.?,
             .command_buffer_count = 1,
         };
 
@@ -981,11 +979,11 @@ pub const Encoder = struct {
         try self.vulkan.device.endCommandBuffer(self.compute_command_buffer.?);
 
         const dst_stage_masks: [2]vk.PipelineStageFlags = .{ .{ .all_commands_bit = true }, .{ .all_commands_bit = true } };
-        const signal_semaphores: [1]vk.Semaphore = .{self.inter_queue_semaphore1.?};
+        const signal_semaphores: [1]vk.Semaphore = .{self.inter_queue_semaphore1};
 
         var wait_semaphores = std.ArrayList(vk.Semaphore).init(self.allocator);
         defer wait_semaphores.deinit();
-        try wait_semaphores.append(self.inter_queue_semaphore2.?);
+        try wait_semaphores.append(self.inter_queue_semaphore2);
 
         if (self.external_wait_semaphore) |external_wait_semaphore| {
             try wait_semaphores.append(external_wait_semaphore);
@@ -1004,9 +1002,7 @@ pub const Encoder = struct {
             submit_info.p_wait_dst_stage_mask = &dst_stage_masks;
         }
 
-        self.vulkan.graphics_queue.mutex.lock();
-        defer self.vulkan.graphics_queue.mutex.unlock();
-        try self.vulkan.device.queueSubmit(self.vulkan.graphics_queue.handle, 1, @ptrCast(&submit_info), .null_handle);
+        try self.vulkan.queueSubmit(.graphics, &.{submit_info}, .{ .fence = self.compute_finished_fence });
     }
 
     pub fn prepareEncode(self: *Self, opts: struct {
@@ -1191,10 +1187,9 @@ pub const Encoder = struct {
             .command_buffer_count = 1,
             .p_command_buffers = @ptrCast(&self.encode_command_buffer.?),
             .signal_semaphore_count = 1,
-            .p_signal_semaphores = @ptrCast(&self.inter_queue_semaphore2.?),
+            .p_signal_semaphores = @ptrCast(&self.inter_queue_semaphore2),
         };
-        try self.vulkan.device.resetFences(1, @ptrCast(&self.encode_finished_fence.?));
-        try self.vulkan.device.queueSubmit(self.vulkan.encode_queue.handle, 1, @ptrCast(&submit_info), self.encode_finished_fence.?);
+        try self.vulkan.queueSubmit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         return .{ .idr = gop_frame_count == 0 };
     }
@@ -1212,7 +1207,7 @@ pub const Encoder = struct {
     fn getOutputVideoPacket(self: *Self) !EncodeData {
         defer {
             if (self.compute_command_buffer) |compute_command_buffer| {
-                self.vulkan.device.freeCommandBuffers(self.vulkan.command_pool, 1, @ptrCast(&compute_command_buffer));
+                self.vulkan.device.freeCommandBuffers(self.graphics_command_pool.?, 1, @ptrCast(&compute_command_buffer));
             }
 
             if (self.encode_command_buffer) |encode_command_buffer| {
@@ -1224,7 +1219,7 @@ pub const Encoder = struct {
 
         var result = try self.vulkan.device.waitForFences(
             1,
-            @ptrCast(&self.encode_finished_fence.?),
+            @ptrCast(&self.encode_finished_fence),
             vk.TRUE,
             std.math.maxInt(u64),
         );
@@ -1279,15 +1274,10 @@ pub const Encoder = struct {
     }
 
     fn destroyEncodeFinishedFence(self: *Self) void {
-        if (self.encode_finished_fence) |f| {
-            self.vulkan.device.destroyFence(f, null);
-        }
-        if (self.inter_queue_semaphore1) |s| {
-            self.vulkan.device.destroySemaphore(s, null);
-        }
-        if (self.inter_queue_semaphore2) |s| {
-            self.vulkan.device.destroySemaphore(s, null);
-        }
+        self.vulkan.device.destroyFence(self.compute_finished_fence, null);
+        self.vulkan.device.destroyFence(self.encode_finished_fence, null);
+        self.vulkan.device.destroySemaphore(self.inter_queue_semaphore1, null);
+        self.vulkan.device.destroySemaphore(self.inter_queue_semaphore2, null);
     }
 
     fn destroyYCbCrConversionPipeline(self: *Self) void {
@@ -1367,6 +1357,9 @@ pub const Encoder = struct {
         }
         if (self.encode_command_pool) |encode_command_pool| {
             self.vulkan.device.destroyCommandPool(encode_command_pool, null);
+        }
+        if (self.graphics_command_pool) |graphics_command_pool| {
+            self.vulkan.device.destroyCommandPool(graphics_command_pool, null);
         }
 
         self.bit_stream_header.deinit();

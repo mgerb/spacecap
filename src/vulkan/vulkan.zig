@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const BaseDispatch = vk.BaseWrapper;
 const InstanceDispatch = vk.InstanceWrapper;
@@ -12,7 +13,7 @@ pub const API_VERSION = vk.API_VERSION_1_4;
 const util = @import("../util.zig");
 const Encoder = @import("./encoder.zig").Encoder;
 const EncodeResult = @import("./encoder.zig").EncodeResult;
-const TrianglePipeline = @import("./triangle_pipeline.zig").TrianglePipeline;
+const CapturePreviewSwapchain = @import("./capture_preview_swapchain.zig").CapturePreviewSwapchain;
 
 // TODO: update before release
 const DEBUG = true;
@@ -91,13 +92,11 @@ pub const Vulkan = struct {
     props: vk.PhysicalDeviceProperties,
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
-    command_pool: vk.CommandPool,
-    descriptor_pool: vk.DescriptorPool,
-
     encoder: ?*Encoder = null,
+    capture_preview_swapchain: ?*CapturePreviewSwapchain = null,
 
-    // NOTE: used for testing
-    triangle_pipeline: ?*TrianglePipeline = null,
+    /// The window used to render the UI with imgui
+    window: ?imguiz.ImGui_ImplVulkanH_Window = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -198,31 +197,9 @@ pub const Vulkan = struct {
         const graphics_queue = Queue.init(device, candidate.queues.graphics_family);
         const video_encode_queue = Queue.init(device, candidate.queues.video_encode_family);
 
-        const pool_size = vk.DescriptorPoolSize{
-            .type = .combined_image_sampler,
-            .descriptor_count = 1,
-        };
-
-        const pool_info = vk.DescriptorPoolCreateInfo{
-            .flags = .{ .free_descriptor_set_bit = true },
-            .max_sets = 1,
-            .p_pool_sizes = @ptrCast(&pool_size),
-            .pool_size_count = 1,
-        };
-
-        // used for sdl window
-        const descriptor_pool = try device.createDescriptorPool(&pool_info, null);
-        errdefer device.destroyDescriptorPool(descriptor_pool, null);
-
-        const command_pool = try device.createCommandPool(&.{
-            .queue_family_index = graphics_queue.family,
-            .flags = .{ .reset_command_buffer_bit = true },
-        }, null);
-        errdefer device.destroyCommandPool(command_pool, null);
-
         // We use an allocator here because we don't want the
         // reference to change when we return this object.
-        var self = try allocator.create(Self);
+        const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
             .vkb = vkbd,
@@ -234,21 +211,9 @@ pub const Vulkan = struct {
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
-            .command_pool = command_pool,
-            .descriptor_pool = descriptor_pool,
         };
 
-        std.debug.print("Using device: {s}\n", .{self.props.device_name});
-
-        self.triangle_pipeline = try TrianglePipeline.init(
-            allocator,
-            self,
-            device,
-            self.graphics_queue,
-            self.command_pool,
-            800,
-            600,
-        );
+        std.log.info("Using device: {s}\n", .{self.props.device_name});
 
         return self;
     }
@@ -274,6 +239,18 @@ pub const Vulkan = struct {
         if (self.encoder) |encoder| {
             encoder.deinit();
             self.encoder = null;
+        }
+    }
+
+    pub fn initCapturePreviewSwapchain(self: *Self, width: u32, height: u32) !void {
+        self.capture_preview_swapchain = try CapturePreviewSwapchain.init(self.allocator, self, width, height);
+    }
+
+    pub fn destroyCapturePreviewSwapchain(self: *Self) !void {
+        if (self.capture_preview_swapchain) |capture_preview_swapchain| {
+            try self.waitForUIFences();
+            capture_preview_swapchain.deinit();
+            self.capture_preview_swapchain = null;
         }
     }
 
@@ -489,21 +466,99 @@ pub const Vulkan = struct {
         return error.NoSuitableMemoryType;
     }
 
-    pub fn deinit(self: *Self) void {
+    /// Thread safe queue submit.
+    /// - locks queue mutex
+    /// - resets fence if not null
+    /// - submits queue
+    pub fn queueSubmit(
+        self: *Self,
+        queue: enum { graphics, encode },
+        submit_info: []const vk.SubmitInfo,
+        args: struct {
+            fence: vk.Fence = .null_handle,
+        },
+    ) !void {
+        const _queue = switch (queue) {
+            // NOTE: Queues must be referenced. Mutexes cannot be copied.
+            .graphics => &self.graphics_queue,
+            .encode => &self.encode_queue,
+        };
+
+        _queue.mutex.lock();
+        defer _queue.mutex.unlock();
+        if (args.fence != .null_handle) {
+            try self.device.resetFences(1, @ptrCast(&args.fence));
+        }
+        try self.device.queueSubmit(_queue.handle, @intCast(submit_info.len), submit_info.ptr, args.fence);
+    }
+
+    /// Lock graphics mutex and present.
+    pub fn queuePresentKHR(self: *Self, present_info: *const vk.PresentInfoKHR) !void {
+        self.graphics_queue.mutex.lock();
+        defer self.graphics_queue.mutex.unlock();
+        _ = try self.device.queuePresentKHR(self.graphics_queue.handle, present_info);
+    }
+
+    /// Wait for all fences on the imgui Vulkan window.
+    pub fn waitForUIFences(self: *Self) !void {
+        if (self.window) |window| {
+            for (0..@intCast(window.Frames.Size)) |i| {
+                const fd = window.Frames.Data[i];
+                _ = try self.device.waitForFences(1, @ptrCast(&fd.Fence), vk.TRUE, std.math.maxInt(u64));
+            }
+        }
+    }
+
+    /// This will lock both queues (graphics, encode), and
+    /// then wait for all valid fences.
+    ///
+    /// WARNING: Must be followed up by `waitForAllFencesEnd` to unlock mutexes.
+    pub fn waitForAllFencesBegin(self: *Self) !void {
+        self.graphics_queue.mutex.lock();
+        self.encode_queue.mutex.lock();
+
+        var wait_fences = std.ArrayList(vk.Fence).init(self.allocator);
+        defer wait_fences.deinit();
+
         if (self.encoder) |encoder| {
-            encoder.deinit();
+            try wait_fences.appendSlice(&.{
+                encoder.compute_finished_fence,
+                encoder.encode_finished_fence,
+            });
         }
 
-        self.device.destroyDescriptorPool(self.descriptor_pool, null);
+        if (self.capture_preview_swapchain) |capture_preview_swapchain| {
+            for (capture_preview_swapchain.buffers) |buffer| {
+                try wait_fences.append(buffer.fence);
+            }
+        }
+
+        if (self.window) |window| {
+            const fd = &window.Frames.Data[window.FrameIndex];
+            try wait_fences.append(@enumFromInt(@intFromPtr(fd.Fence)));
+        }
+
+        _ = try self.device.waitForFences(
+            @intCast(wait_fences.items.len),
+            wait_fences.items.ptr,
+            vk.TRUE,
+            std.math.maxInt(u64),
+        );
+    }
+
+    pub fn waitForAllFencesEnd(self: *Self) void {
+        self.graphics_queue.mutex.unlock();
+        self.encode_queue.mutex.unlock();
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.destroyVideoEncoder();
+        self.destroyCapturePreviewSwapchain() catch |err| {
+            std.log.err("failed to destroy capture preview swapchain: {}\n", .{err});
+        };
 
         if (self.debug_messenger) |debug_messenger| {
             self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);
-        }
-
-        self.device.destroyCommandPool(self.command_pool, null);
-
-        if (self.triangle_pipeline) |triangle_pipeline| {
-            triangle_pipeline.deinit();
         }
 
         self.device.destroyDevice(null);
@@ -515,44 +570,3 @@ pub const Vulkan = struct {
         self.allocator.destroy(self);
     }
 };
-
-test "simple test for memory leaks" {
-    const a = std.testing.allocator;
-
-    const start_time = std.time.nanoTimestamp();
-    std.debug.print("init", .{});
-    const vulkan = try Vulkan.init(a, 30, 60, null);
-    try vulkan.initVideoEncoder(
-        vulkan.triangle_pipeline.?.width,
-        vulkan.triangle_pipeline.?.height,
-    );
-    defer vulkan.deinit();
-    try vulkan.encoder.?.updateImages(
-        vulkan.triangle_pipeline.?.images.items,
-        vulkan.triangle_pipeline.?.image_views.items,
-    );
-
-    std.debug.print("starting mainloop", .{});
-    for (0..5) |i| {
-        const current_frame_ix: u32 = @intCast(i % vulkan.triangle_pipeline.?.images.items.len);
-        try vulkan.triangle_pipeline.?.drawFrame(current_frame_ix, @intCast(i));
-        const file_name = try std.fmt.allocPrint(a, "frame_{}.bmp", .{i});
-        defer a.free(file_name);
-
-        // try vulkan_debug_util.debugWriteImageToFile(
-        //     vulkan,
-        //     vulkan.triangle_pipeline.images.items[current_frame_ix],
-        //     // vk.Format.r8g8b8a8_unorm,
-        //     vulkan.triangle_pipeline.fence,
-        //     vulkan.triangle_pipeline.width,
-        //     vulkan.triangle_pipeline.height,
-        //     file_name,
-        //     null,
-        // );
-
-        try vulkan.encodeFrame(current_frame_ix);
-        try vulkan.waitEncodeFrame();
-    }
-
-    util.printElapsed(start_time, "start_time");
-}

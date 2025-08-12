@@ -423,7 +423,7 @@ pub const Pipewire = struct {
         const self: *Self = @alignCast(@ptrCast(data));
         _ = self;
         _ = pw_buffer;
-        std.debug.print("streamAddBufferCallback\n", .{});
+        std.debug.print("[streamAddBufferCallback]\n", .{});
     }
 
     // TODO: reuse vulkan images instead of creating/destroying them for every frame
@@ -470,8 +470,7 @@ pub const Pipewire = struct {
             .usage = .{
                 .storage_bit = true,
                 .color_attachment_bit = true,
-                // NOTE: only used when writing frames to a file for debugging purposes
-                // .transfer_src_bit = true,
+                .transfer_src_bit = true,
             },
             .sharing_mode = .exclusive,
             .initial_layout = .undefined,
@@ -561,7 +560,7 @@ pub const Pipewire = struct {
         message: [*c]const u8,
     ) callconv(.c) void {
         _ = opaque_;
-        std.debug.print(
+        std.log.err(
             "[coreErrorCallback] pipewire error: id {}, seq: {}, res: {}: {s}\n",
             .{
                 id,
