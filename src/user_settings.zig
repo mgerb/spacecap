@@ -1,9 +1,12 @@
 const std = @import("std");
 
 pub const UserSettings = struct {
-    some_setting: bool = true,
+    const Self = @This();
+    gui_foreground_fps: u32 = 120,
+    gui_background_fps: u32 = 30,
 
-    pub fn load(allocator: std.mem.Allocator) !UserSettings {
+    /// Returns copy of user settings. No need to free.
+    pub fn load(allocator: std.mem.Allocator) !Self {
         const app_data_dir = try getAppDataDir(allocator);
         defer allocator.free(app_data_dir);
 
@@ -13,20 +16,23 @@ pub const UserSettings = struct {
         const file = std.fs.openFileAbsolute(settings_path, .{}) catch |err| {
             if (err == error.FileNotFound) {
                 // Return default settings if the file doesn't exist
-                return UserSettings{};
+                return .{};
             }
             return err;
         };
         defer file.close();
 
-        const file_contents = try file.readToEndAlloc(allocator, 1 * 1024 * 1024); // 1MB limit
+        const stat = try file.stat();
+
+        var reader = file.reader(&.{});
+        const file_contents = try reader.interface.readAlloc(allocator, stat.size);
         defer allocator.free(file_contents);
-        const res = try std.json.parseFromSlice(UserSettings, allocator, file_contents, .{ .ignore_unknown_fields = true });
+        const res = try std.json.parseFromSlice(Self, allocator, file_contents, .{ .ignore_unknown_fields = true });
         defer res.deinit();
         return res.value;
     }
 
-    pub fn save(self: UserSettings, allocator: std.mem.Allocator) !void {
+    pub fn save(self: Self, allocator: std.mem.Allocator) !void {
         const app_data_dir = try getAppDataDir(allocator);
         defer allocator.free(app_data_dir);
 

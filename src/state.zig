@@ -1,4 +1,5 @@
 const Self = @This();
+const UserSettings = @import("./user_settings.zig").UserSettings;
 
 const ReplayBufferState = struct {
     size: u64 = 0,
@@ -11,6 +12,7 @@ const ReplayBufferState = struct {
 };
 
 // User settings
+user_settings: UserSettings,
 replay_seconds: u32 = 60,
 fps: u32 = 60,
 bit_rate: u64 = 20_000_000,
@@ -21,3 +23,7 @@ show_demo: bool = false,
 selected_screen_cast_identifier: ?[]u8 = null,
 
 replay_buffer_state: ReplayBufferState = .{},
+
+pub fn init(user_settings: UserSettings) Self {
+    return .{ .user_settings = user_settings };
+}

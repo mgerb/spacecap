@@ -13,6 +13,7 @@ const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
 const ReplayBuffer = @import("./vulkan/replay_buffer.zig").ReplayBuffer;
 const ffmpeg = @import("./ffmpeg.zig");
 const CaptureSourceType = @import("./capture/capture.zig").CaptureSourceType;
+const UserSettings = @import("./user_settings.zig").UserSettings;
 
 pub const Actions = union(enum) {
     start_record,
@@ -21,6 +22,8 @@ pub const Actions = union(enum) {
     save_replay,
     show_demo,
     exit,
+    set_gui_foreground_fps: u32,
+    set_gui_background_fps: u32,
 };
 
 const ActionChan = BufferedChan(Actions, 100);
@@ -46,12 +49,19 @@ pub const StateActor = struct {
     pub fn init(allocator: std.mem.Allocator, capture: *Capture, vulkan: *Vulkan) !*Self {
         const self = try allocator.create(Self);
 
+        // Just log the error. We don't want the app to crash if settings can't be
+        // loaded for some unexpected error such as permissions issues.
+        const user_settings = UserSettings.load(allocator) catch |err| blk: {
+            std.log.err("unable to load user settings: {}\n", .{err});
+            break :blk UserSettings{};
+        };
+
         self.* = Self{
             .allocator = allocator,
             .capture = capture,
             .vulkan = vulkan,
             .action_chan = ActionChan.init(allocator),
-            .state = .{},
+            .state = State.init(user_settings),
         };
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -166,6 +176,22 @@ pub const StateActor = struct {
             },
             .exit => {
                 try self.stopRecord();
+            },
+            .set_gui_foreground_fps => |fps| {
+                self.ui_mutex.lock();
+                self.state.user_settings.gui_foreground_fps = fps;
+                const user_settings_copy = self.state.user_settings;
+                self.ui_mutex.unlock();
+                // Write the settings outside of the lock
+                try user_settings_copy.save(self.allocator);
+            },
+            .set_gui_background_fps => |fps| {
+                self.ui_mutex.lock();
+                self.state.user_settings.gui_background_fps = fps;
+                const user_settings_copy = self.state.user_settings;
+                self.ui_mutex.unlock();
+                // Write the settings outside of the lock
+                try user_settings_copy.save(self.allocator);
             },
         }
     }
