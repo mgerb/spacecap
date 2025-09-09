@@ -327,7 +327,12 @@ pub const UI = struct {
             // Delay until the next frame to maintain desired FPS.
             // We use mailbox present mode so unlimited FPS can get
             // pretty high e.g. 2k+
-            const frame_duration_ns: u64 = if (window_has_focus) (1_000_000_000 / 120) else (1_000_000_000 / 30);
+            self.state_actor.ui_mutex.lock();
+            const fg_fps = self.state_actor.state.user_settings.gui_foreground_fps;
+            const bg_fps = self.state_actor.state.user_settings.gui_background_fps;
+            self.state_actor.ui_mutex.unlock();
+
+            const frame_duration_ns = if (window_has_focus) (1_000_000_000 / fg_fps) else (1_000_000_000 / bg_fps);
             const elapsed_ns = timer.read();
             if (elapsed_ns < frame_duration_ns) {
                 const sleep_duration_ns = frame_duration_ns - elapsed_ns;
