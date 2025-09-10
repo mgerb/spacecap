@@ -2,7 +2,8 @@ const std = @import("std");
 const c = @import("./pipewire_include.zig").c;
 const c_def = @import("./pipewire_include.zig").c_def;
 const CaptureError = @import("../../capture.zig").CaptureError;
-const TokenManager = @import("./token_manager.zig").TokenManager;
+const TokenManager = @import("./token_manager.zig");
+const TokenStorage = @import("../../../common/linux/token_storage.zig");
 const UserSettings = @import("../../../user_settings.zig");
 const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
 
@@ -75,7 +76,7 @@ pub const Portal = struct {
         try handleGError(err, error.g_bus_get_sync);
         errdefer unrefMaybe(screen_cast);
 
-        const restore_token = readRestoreTokenFromFile(allocator) catch |_err| blk: {
+        const restore_token = TokenStorage.loadToken(allocator, "restore_token") catch |_err| blk: {
             std.log.err("error reading restore token file: {}\n", .{_err});
             break :blk null;
         };
@@ -95,24 +96,26 @@ pub const Portal = struct {
     pub fn createScreenCastSession(self: *Self) !void {
         std.debug.print("[createScreenCastSession]\n", .{});
 
-        const request_tokens = try TokenManager.getRequestTokens(self.allocator, self.sender_name.?);
-        defer request_tokens.deinit();
-        std.debug.print("portal request path: {s}, request token: {s}\n", .{ request_tokens.path, request_tokens.token });
+        const request_token = try TokenManager.generateToken(self.allocator);
+        defer self.allocator.free(request_token);
+        const request_path = try TokenManager.getRequestPath(self.allocator, self.sender_name.?, request_token);
+        defer self.allocator.free(request_path);
+        std.debug.print("portal request path: {s}, request token: {s}\n", .{ request_path, request_token });
 
-        const session_token = try TokenManager.getSessionToken(self.allocator);
-        defer session_token.deinit();
+        const session_token = try TokenManager.generateToken(self.allocator);
+        defer self.allocator.free(session_token);
 
-        std.debug.print("portal session token: {s}\n", .{session_token.path});
+        std.debug.print("portal session token: {s}\n", .{session_token});
 
         var callback = std.mem.zeroes(DBusCallback);
 
-        self.callbackRegister(&callback, request_tokens.path, Portal.createSessionCallback);
+        self.callbackRegister(&callback, request_path, Portal.createSessionCallback);
         defer self.callbackUnregister(&callback);
 
         var builder = std.mem.zeroes(c.GVariantBuilder);
         c.g_variant_builder_init(&builder, c_def.G_VARIANT_TYPE_VARDICT);
-        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_tokens.token.ptr));
-        c.g_variant_builder_add(&builder, "{sv}", "session_handle_token", c.g_variant_new_string(session_token.path.ptr));
+        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_token));
+        c.g_variant_builder_add(&builder, "{sv}", "session_handle_token", c.g_variant_new_string(session_token));
         var err: ?*c.GError = null;
         defer freeMaybe(err);
         const response = c.g_dbus_proxy_call_sync(
@@ -150,11 +153,14 @@ pub const Portal = struct {
             try self.createScreenCastSession();
         }
 
-        const request_tokens = try TokenManager.getRequestTokens(self.allocator, self.sender_name.?);
-        defer request_tokens.deinit();
+        const request_token = try TokenManager.generateToken(self.allocator);
+        defer self.allocator.free(request_token);
+
+        const request_path = try TokenManager.getRequestPath(self.allocator, self.sender_name.?, request_token);
+        defer self.allocator.free(request_path);
 
         var callback = std.mem.zeroes(DBusCallback);
-        self.callbackRegister(&callback, request_tokens.path, Portal.selectSourceCallback);
+        self.callbackRegister(&callback, request_path, Portal.selectSourceCallback);
         defer self.callbackUnregister(&callback);
 
         var builder = std.mem.zeroes(c.GVariantBuilder);
@@ -168,7 +174,7 @@ pub const Portal = struct {
         c.g_variant_builder_add(&builder, "{sv}", "types", c.g_variant_new_uint32(source));
         c.g_variant_builder_add(&builder, "{sv}", "multiple", c.g_variant_new_boolean(c.FALSE));
         c.g_variant_builder_add(&builder, "{sv}", "persist_mode", c.g_variant_new_uint32(2));
-        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_tokens.token));
+        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_token));
 
         if (self.restore_token) |restore_token| {
             c.g_variant_builder_add(&builder, "{sv}", "restore_token", c.g_variant_new_string(restore_token.ptr));
@@ -235,7 +241,7 @@ pub const Portal = struct {
         _ = interface_name;
         _ = signal_name;
         std.debug.print("[createSessionCallback]\n", .{});
-        const callback: *DBusCallback = @alignCast(@ptrCast(opaque_));
+        const callback: *DBusCallback = @ptrCast(@alignCast(opaque_));
         var status: u32 = undefined;
         var result: ?*c.GVariant = null;
         defer freeMaybe(result);
@@ -258,8 +264,10 @@ pub const Portal = struct {
     };
 
     fn startSourcePicker(self: *Self) (CaptureError || anyerror)!u32 {
-        const request_tokens = try TokenManager.getRequestTokens(self.allocator, self.sender_name.?);
-        defer request_tokens.deinit();
+        const request_token = try TokenManager.generateToken(self.allocator);
+        defer self.allocator.free(request_token);
+        const request_path = try TokenManager.getRequestPath(self.allocator, self.sender_name.?, request_token);
+        defer self.allocator.free(request_path);
 
         var callback = std.mem.zeroes(DBusCallback);
         var result: u32 = 0;
@@ -268,11 +276,11 @@ pub const Portal = struct {
             .result = &result,
         };
         callback.opaque_ = &context;
-        self.callbackRegister(&callback, request_tokens.path, Portal.sourcePickerCallback);
+        self.callbackRegister(&callback, request_path, Portal.sourcePickerCallback);
         defer self.callbackUnregister(&callback);
         var builder = std.mem.zeroes(c.GVariantBuilder);
         c.g_variant_builder_init(&builder, c_def.G_VARIANT_TYPE_VARDICT);
-        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_tokens.token));
+        c.g_variant_builder_add(&builder, "{sv}", "handle_token", c.g_variant_new_string(request_token));
 
         if (self.restore_token) |restore_token| {
             c.g_variant_builder_add(&builder, "{sv}", "restore_token", c.g_variant_new_string(restore_token.ptr));
@@ -354,8 +362,8 @@ pub const Portal = struct {
         _ = interface_name;
         _ = signal_name;
         std.debug.print("[sourcePickerCallback]", .{});
-        const callback: *DBusCallback = @alignCast(@ptrCast(opaque_));
-        const context: *SourcePickerContext = @alignCast(@ptrCast(callback.opaque_));
+        const callback: *DBusCallback = @ptrCast(@alignCast(opaque_));
+        const context: *SourcePickerContext = @ptrCast(@alignCast(callback.opaque_));
         const self = context.portal;
         callback.completed = true;
 
@@ -385,7 +393,7 @@ pub const Portal = struct {
                 self.allocator.free(restore_token);
             }
             self.restore_token = new_token;
-            writeRestoreTokenToFile(self.allocator, new_token) catch |err| {
+            TokenStorage.saveToken(self.allocator, "restore_token", new_token) catch |err| {
                 std.debug.print("write restore_token error: {}\n", .{err});
             };
         } else {
@@ -414,7 +422,7 @@ pub const Portal = struct {
         _ = c.g_variant_iter_loop(
             &iter,
             "(u@a{sv})",
-            @as(*u32, @alignCast(@ptrCast(context.result))),
+            @as(*u32, @ptrCast(@alignCast(context.result))),
             &prop,
         );
 
@@ -487,7 +495,7 @@ pub const Portal = struct {
         _ = interface_name;
         _ = signal_name;
         std.debug.print("[selectSourceCallback]", .{});
-        const callback: *DBusCallback = @alignCast(@ptrCast(opaque_));
+        const callback: *DBusCallback = @ptrCast(@alignCast(opaque_));
         var status: u32 = undefined;
         var result: ?*c.GVariant = null;
         defer freeMaybe(result);
@@ -525,42 +533,6 @@ pub const Portal = struct {
             std.debug.print("unregisterring\n", .{});
             c.g_dbus_connection_signal_unsubscribe(self.conn, d.id);
         }
-    }
-
-    /// Read restore token from user app directory
-    fn readRestoreTokenFromFile(
-        allocator: std.mem.Allocator,
-    ) ![]u8 {
-        const dir = try UserSettings.getAppDataDir(allocator);
-        defer allocator.free(dir);
-        const file_path = try std.fmt.allocPrint(
-            allocator,
-            "{s}/{s}",
-            .{ dir, "restore_token.txt" },
-        );
-        defer allocator.free(file_path);
-        const file = try std.fs.cwd().openFile(file_path, .{});
-        defer file.close();
-        const stat = try file.stat();
-
-        var reader = file.reader(&.{});
-        return reader.interface.readAlloc(allocator, stat.size);
-    }
-
-    /// Write restore token to user app directory
-    fn writeRestoreTokenToFile(allocator: std.mem.Allocator, restore_token: []u8) !void {
-        const dir = try UserSettings.getAppDataDir(allocator);
-        defer allocator.free(dir);
-        const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{
-            dir,
-            "restore_token.txt",
-        });
-        defer allocator.free(file_path);
-
-        const file = try std.fs.createFileAbsolute(file_path, .{});
-        defer file.close();
-
-        try file.writeAll(restore_token);
     }
 
     pub fn destroySession(self: *Self) void {

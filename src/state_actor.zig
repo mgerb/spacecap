@@ -4,6 +4,7 @@ const vk = @import("vulkan");
 
 const Util = @import("./util.zig");
 const Capture = @import("./capture/capture.zig").Capture;
+const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const CaptureError = @import("./capture/capture.zig").CaptureError;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
@@ -15,6 +16,8 @@ const ffmpeg = @import("./ffmpeg.zig");
 const CaptureSourceType = @import("./capture/capture.zig").CaptureSourceType;
 const UserSettings = @import("./user_settings.zig").UserSettings;
 
+const log = std.log.scoped(.state_actor);
+
 pub const Actions = union(enum) {
     start_record,
     stop_record,
@@ -24,6 +27,7 @@ pub const Actions = union(enum) {
     exit,
     set_gui_foreground_fps: u32,
     set_gui_background_fps: u32,
+    open_global_shortcuts,
 };
 
 const ActionChan = BufferedChan(Actions, 100);
@@ -35,31 +39,38 @@ pub const StateActor = struct {
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
     capture: *Capture,
+    global_shortcuts: *GlobalShortcuts,
     replay_buffer: ?*ReplayBuffer = null,
-    replay_buffer_mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    replay_buffer_mutex: std.Thread.Mutex = .{},
     action_chan: ActionChan,
     thread_pool: std.Thread.Pool = undefined,
     /// WARNING: This locks the UI thread. This should only be locked
     /// when making updates to the UI state.
-    ui_mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    ui_mutex: std.Thread.Mutex = .{},
     state: State,
     record_thread: ?std.Thread = null,
 
     /// Caller owns the memory. Be sure to deinit.
-    pub fn init(allocator: std.mem.Allocator, capture: *Capture, vulkan: *Vulkan) !*Self {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        vulkan: *Vulkan,
+        capture: *Capture,
+        global_shortcuts: *GlobalShortcuts,
+    ) !*Self {
         const self = try allocator.create(Self);
 
         // Just log the error. We don't want the app to crash if settings can't be
         // loaded for some unexpected error such as permissions issues.
         const user_settings = UserSettings.load(allocator) catch |err| blk: {
-            std.log.err("unable to load user settings: {}\n", .{err});
+            log.err("unable to load user settings: {}\n", .{err});
             break :blk UserSettings{};
         };
 
         self.* = Self{
             .allocator = allocator,
-            .capture = capture,
             .vulkan = vulkan,
+            .capture = capture,
+            .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
             .state = State.init(user_settings),
         };
@@ -71,21 +82,21 @@ pub const StateActor = struct {
 
     /// Does not return an error because this should always run.
     /// Handle errors internally.
-    /// TODO: add errors to the state and present on UI
+    /// TODO: Add errors to the state and present on UI.
     pub fn run(self: *Self) void {
         while (true) {
             const action = self.action_chan.recv() catch |err| {
                 if (err == ChanError.Closed) {
                     break;
                 } else {
-                    std.debug.print("actor loop terminating: {}\n", .{err});
+                    log.info("actor loop terminating: {}\n", .{err});
                     break;
                 }
             };
 
             if (action == .exit) {
                 self.handleAction(action) catch |err| {
-                    std.log.err("exit err: {}\n", .{err});
+                    log.err("exit err: {}\n", .{err});
                 };
                 break;
             }
@@ -93,13 +104,13 @@ pub const StateActor = struct {
             const ActionThread = struct {
                 fn run(_self: *Self, _action: Actions) void {
                     _self.handleAction(_action) catch |err| {
-                        std.log.err("handleAction error: {}\n", .{err});
+                        log.err("handleAction error: {}\n", .{err});
                     };
                 }
             };
 
             self.thread_pool.spawn(ActionThread.run, .{ self, action }) catch |err| {
-                std.log.err("thread_pool spawn error: {}\n", .{err});
+                log.err("thread_pool spawn error: {}\n", .{err});
             };
         }
     }
@@ -107,15 +118,15 @@ pub const StateActor = struct {
     fn handleAction(self: *Self, action: Actions) !void {
         switch (action) {
             .start_record => {
-                std.debug.print("[action] start_record\n", .{});
+                log.info("[action] start_record\n", .{});
                 try self.startRecord();
             },
             .stop_record => {
-                std.debug.print("[action] stop_record\n", .{});
+                log.info("[action] stop_record\n", .{});
                 try self.stopRecord();
             },
             .save_replay => {
-                std.debug.print("[action] save_replay\n", .{});
+                log.info("[action] save_replay\n", .{});
 
                 if (self.replay_buffer) |replay_buffer| {
                     self.replay_buffer_mutex.lock();
@@ -141,17 +152,17 @@ pub const StateActor = struct {
                 }
             },
             .select_video_source => |source_type| {
-                std.debug.print("[action] select_video_source\n", .{});
+                log.info("[action] select_video_source\n", .{});
                 if (self.state.recording) {
                     try self.stopRecord();
                 }
 
                 self.capture.selectSource(source_type) catch |err| {
                     if (err != CaptureError.source_picker_cancelled) {
-                        std.log.err("selectSource error: {}\n", .{err});
+                        log.err("selectSource error: {}\n", .{err});
                         return err;
                     } else {
-                        std.debug.print("source_picker_cancelled\n", .{});
+                        log.info("source_picker_cancelled\n", .{});
                     }
                     return;
                 };
@@ -192,6 +203,19 @@ pub const StateActor = struct {
                 self.ui_mutex.unlock();
                 // Write the settings outside of the lock
                 try user_settings_copy.save(self.allocator);
+            },
+
+            .open_global_shortcuts => {
+                try self.global_shortcuts.open();
+            },
+        }
+    }
+
+    pub fn globalShortcutsHandler(context: *anyopaque, shortcut: GlobalShortcuts.Shortcut) void {
+        const self: *Self = @ptrCast(@alignCast(context));
+        switch (shortcut) {
+            .save_replay => {
+                self.dispatch(.save_replay) catch unreachable;
             },
         }
     }
@@ -250,7 +274,7 @@ pub const StateActor = struct {
 
             self.capture.nextFrame() catch |err| {
                 if (err == ChanError.Closed) {
-                    std.debug.print("self.capture.nextFrame: chan closed, exiting record thread\n", .{});
+                    log.info("self.capture.nextFrame: chan closed, exiting record thread\n", .{});
                     break;
                 }
                 return err;
