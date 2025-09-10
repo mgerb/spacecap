@@ -60,7 +60,7 @@ pub const StateActor = struct {
             .allocator = allocator,
             .capture = capture,
             .vulkan = vulkan,
-            .action_chan = ActionChan.init(allocator),
+            .action_chan = try ActionChan.init(allocator),
             .state = State.init(user_settings),
         };
 

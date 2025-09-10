@@ -23,8 +23,8 @@ pub fn main() !void {
     const user_settings = try UserSettings.load(allocator);
     try user_settings.save(allocator);
 
-    const sdl_vulkan_extensions = try UI.getSDLVulkanExtensions(allocator);
-    defer sdl_vulkan_extensions.deinit();
+    var sdl_vulkan_extensions = try UI.getSDLVulkanExtensions(allocator);
+    defer sdl_vulkan_extensions.deinit(allocator);
 
     const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.items);
     defer vulkan.deinit();

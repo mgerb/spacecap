@@ -117,14 +117,14 @@ pub const Vulkan = struct {
             .api_version = @bitCast(API_VERSION),
         };
 
-        var extension_names = std.ArrayList([*:0]const u8).init(allocator);
-        defer extension_names.deinit();
+        var extension_names = try std.ArrayList([*:0]const u8).initCapacity(allocator, 0);
+        defer extension_names.deinit(allocator);
 
-        try extension_names.appendSlice(&INSTANCE_EXTENSIONS);
+        try extension_names.appendSlice(allocator, &INSTANCE_EXTENSIONS);
 
         if (extra_instance_extensions) |extensions| {
             for (extensions) |extension| {
-                try extension_names.append(std.mem.span(extension));
+                try extension_names.append(allocator, std.mem.span(extension));
             }
         }
 
@@ -133,7 +133,7 @@ pub const Vulkan = struct {
         // See imgui example_sdl3_vulkan for reference.
 
         if (DEBUG) {
-            try extension_names.append(vk.extensions.ext_debug_utils.name);
+            try extension_names.append(allocator, vk.extensions.ext_debug_utils.name);
             // TODO: check if this extension is enabled
             //try extension_names.append(vk.extensions.ext_device_address_binding_report.name);
             // try extension_names.append(vk.extensions.ext_debug_report.name);
@@ -271,10 +271,10 @@ pub const Vulkan = struct {
 
         self.instance.getPhysicalDeviceFormatProperties2KHR(self.physical_device, format, &props);
 
-        var modifiers = std.ArrayList(u64).init(self.allocator);
+        var modifiers = try std.ArrayList(u64).initCapacity(self.allocator, 0);
 
         for (format_mod_props) |modifier| {
-            try modifiers.append(modifier.drm_format_modifier);
+            try modifiers.append(self.allocator, modifier.drm_format_modifier);
         }
 
         return modifiers;
@@ -308,10 +308,11 @@ pub const Vulkan = struct {
         b: {
             const msg = (p_callback_data orelse break :b).p_message orelse break :b;
             std.log.scoped(.validation).warn("{s}", .{msg});
-            return vk.FALSE;
+
+            return .false;
         }
         std.log.scoped(.validation).warn("unrecognized validation layer debug message", .{});
-        return vk.FALSE;
+        return .true;
     }
 
     fn checkSuitable(
@@ -426,12 +427,12 @@ pub const Vulkan = struct {
             2;
 
         const synchronization2_features = vk.PhysicalDeviceSynchronization2Features{
-            .synchronization_2 = vk.TRUE,
+            .synchronization_2 = .true,
         };
 
         const dynamic_rendering_features = vk.PhysicalDeviceDynamicRenderingFeaturesKHR{
-            .p_next = @constCast(@ptrCast(&synchronization2_features)),
-            .dynamic_rendering = vk.TRUE,
+            .p_next = @ptrCast(@constCast(&synchronization2_features)),
+            .dynamic_rendering = .true,
         };
 
         return try instance.createDevice(candidate.pdev, &.{
@@ -504,7 +505,7 @@ pub const Vulkan = struct {
         if (self.window) |window| {
             for (0..@intCast(window.Frames.Size)) |i| {
                 const fd = window.Frames.Data[i];
-                _ = try self.device.waitForFences(1, @ptrCast(&fd.Fence), vk.TRUE, std.math.maxInt(u64));
+                _ = try self.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64));
             }
         }
     }
@@ -517,11 +518,11 @@ pub const Vulkan = struct {
         self.graphics_queue.mutex.lock();
         self.encode_queue.mutex.lock();
 
-        var wait_fences = std.ArrayList(vk.Fence).init(self.allocator);
-        defer wait_fences.deinit();
+        var wait_fences = try std.ArrayList(vk.Fence).initCapacity(self.allocator, 0);
+        defer wait_fences.deinit(self.allocator);
 
         if (self.encoder) |encoder| {
-            try wait_fences.appendSlice(&.{
+            try wait_fences.appendSlice(self.allocator, &.{
                 encoder.compute_finished_fence,
                 encoder.encode_finished_fence,
             });
@@ -529,19 +530,19 @@ pub const Vulkan = struct {
 
         if (self.capture_preview_swapchain) |capture_preview_swapchain| {
             for (capture_preview_swapchain.buffers) |buffer| {
-                try wait_fences.append(buffer.fence);
+                try wait_fences.append(self.allocator, buffer.fence);
             }
         }
 
         if (self.window) |window| {
             const fd = &window.Frames.Data[window.FrameIndex];
-            try wait_fences.append(@enumFromInt(@intFromPtr(fd.Fence)));
+            try wait_fences.append(self.allocator, @enumFromInt(@intFromPtr(fd.Fence)));
         }
 
         _ = try self.device.waitForFences(
             @intCast(wait_fences.items.len),
             wait_fences.items.ptr,
-            vk.TRUE,
+            .true,
             std.math.maxInt(u64),
         );
     }

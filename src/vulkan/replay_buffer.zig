@@ -12,7 +12,7 @@ const ReplayBufferNode = struct {
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *@This()) void {
-        self.data.data.deinit();
+        self.data.data.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };
@@ -38,8 +38,8 @@ pub const ReplayBuffer = struct {
     ) !*Self {
         const frames = std.DoublyLinkedList{};
 
-        var header_frame = std.ArrayList(u8).init(allocator);
-        try header_frame.appendSlice(header_frame_data);
+        var header_frame = try std.ArrayList(u8).initCapacity(allocator, 0);
+        try header_frame.appendSlice(allocator, header_frame_data);
 
         const self = try allocator.create(Self);
         self.* = .{
@@ -54,8 +54,8 @@ pub const ReplayBuffer = struct {
     }
 
     pub fn addFrame(self: *Self, data: []const u8, is_idr: bool) !void {
-        var data_list = std.ArrayList(u8).init(self.allocator);
-        try data_list.appendSlice(data);
+        var data_list = try std.ArrayList(u8).initCapacity(self.allocator, data.len);
+        try data_list.appendSlice(self.allocator, data);
 
         var node = try self.allocator.create(ReplayBufferNode);
         node.* = .{
@@ -126,10 +126,10 @@ pub const ReplayBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.header_frame.deinit();
+        self.header_frame.deinit(self.allocator);
         while (self.frames.popFirst()) |node| {
             const l: *ReplayBufferNode = @alignCast(@fieldParentPtr("node", node));
-            l.data.data.deinit();
+            l.data.data.deinit(self.allocator);
             self.allocator.destroy(l);
         }
         self.allocator.destroy(self);

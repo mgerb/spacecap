@@ -50,11 +50,11 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             }
         };
 
-        pub fn init(alloc: std.mem.Allocator) Self {
+        pub fn init(alloc: std.mem.Allocator) !Self {
             return Self{
                 .alloc = alloc,
-                .recvQ = std.ArrayList(*Receiver).init(alloc),
-                .sendQ = std.ArrayList(*Sender).init(alloc),
+                .recvQ = try std.ArrayList(*Receiver).initCapacity(alloc, 0),
+                .sendQ = try std.ArrayList(*Sender).initCapacity(alloc, 0),
             };
         }
 
@@ -62,8 +62,8 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             if (!self.closed) {
                 self.close();
             }
-            self.recvQ.deinit();
-            self.sendQ.deinit();
+            self.recvQ.deinit(self.alloc);
+            self.sendQ.deinit(self.alloc);
         }
 
         /// Close the channel. Any sender/receiver currently
@@ -148,7 +148,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             sender.mut.lock(); // cond.wait below will unlock it and wait until signal, then relock it
             defer sender.mut.unlock(); // unlocks the relock
 
-            self.sendQ.append(&sender) catch |err| {
+            self.sendQ.append(self.alloc, &sender) catch |err| {
                 self.mut.unlock();
                 return err;
             }; // make visible to other threads
@@ -235,7 +235,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             receiver.mut.lock();
             defer receiver.mut.unlock();
 
-            self.recvQ.append(&receiver) catch |err| {
+            self.recvQ.append(self.alloc, &receiver) catch |err| {
                 self.mut.unlock();
                 return err;
             };

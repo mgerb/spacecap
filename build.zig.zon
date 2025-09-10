@@ -74,8 +74,8 @@
             .hash = "N-V-__8AAPJS7wFRVAIGhMZ7cis5e-y5LZfn2KfO5O2jiHGH",
         },
         .vulkan_zig = .{
-            .url = "git+https://github.com/Snektron/vulkan-zig#ed429842b8ad60966bc3b8b214606d8a5714f99e",
-            .hash = "vulkan-0.0.0-r7Ytx5w-AwC04xBpfzcuIjGyYv2z6xb1i49ZUeNUgT5H",
+            .url = "https://github.com/Snektron/vulkan-zig/archive/zig-0.15-compat.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx6hBAwBUnt0XA-uOkR2hda4fAHFhQITNTgJpnFkY",
         },
         .imguiz = .{
             .url = "git+https://github.com/mgerb/imguiz#7d6e1a4dfb2f31da24c9f76e0c4ba8285e89d289",
