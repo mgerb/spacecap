@@ -6,10 +6,15 @@ const StateActor = @import("./state_actor.zig").StateActor;
 const UserSettings = @import("./user_settings.zig").UserSettings;
 const Util = @import("./util.zig");
 
-const CaptureMethod = if (Util.isLinux())
+const PlatformCapture = if (Util.isLinux())
     @import("./capture/linux/linux_pipewire_dma_capture.zig").LinuxPipewireDmaCapture
 else
     @import("./capture/windows/capture_windows.zig").WindowsCapture;
+
+const PlatformGlobalShortcuts = if (Util.isLinux())
+    @import("./global_shortcuts/xdg_desktop_portal_global_shortcuts.zig").XdgDesktopPortalGlobalShortcuts
+else
+    @import("./global_shortcuts/windows_global_shortcuts.zig").WindowsGlobalShortcuts;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -29,14 +34,20 @@ pub fn main() !void {
     const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.items);
     defer vulkan.deinit();
 
-    // TODO: create dropdown selector in UI to select capture method when
-    // more are implemented.
-    const linux_capture = try CaptureMethod.init(allocator, vulkan);
-    var capture = linux_capture.capture();
+    // TODO: create dropdown selector in UI to select capture method when more are implemented.
+    const capture_method = try PlatformCapture.init(allocator, vulkan);
+    var capture = capture_method.capture();
     defer capture.deinit();
 
-    const state_actor = try StateActor.init(allocator, &capture, vulkan);
+    const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
+    var global_shortcuts = platform_global_shortcuts.global_shortcuts();
+    try global_shortcuts.run();
+    defer global_shortcuts.deinit();
+
+    const state_actor = try StateActor.init(allocator, vulkan, &capture, &global_shortcuts);
     defer state_actor.deinit();
+
+    global_shortcuts.registerShortcutHandler(.{ .ptr = state_actor, .handler = StateActor.globalShortcutsHandler });
 
     const StateThread = struct {
         pub fn run(_state: *StateActor) void {

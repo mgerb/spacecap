@@ -93,6 +93,10 @@
             .url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip",
             .hash = "N-V-__8AALCxywofrbiZJX6duwGaBapY7KZ8mphf_0Dbt7Lg",
         },
+        .gobject = .{
+            .url = "https://github.com/ianprime0509/zig-gobject/releases/download/v0.3.0/bindings-gnome47.tar.zst",
+            .hash = "gobject-0.3.0-Skun7IrmdQHh-PhvmchG9AKnrR2RFS5EhBe5oedb0ITv",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.

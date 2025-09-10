@@ -120,6 +120,20 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             c.ImGui_SameLine();
             imgui_util.help_marker("Background FPS. This is the max frame rate Spacecap will render while NOT focused. Double click to change.");
 
+            // NOTE: Hiding this for now. Linux shortcuts can be configured at the
+            // desktop environment level. See comments regarding `Method.configure_shortcuts`
+            // in `xdg_desktop_portal_global_shortcuts.zig` for more info.
+            //
+            // TODO: Adjust widths so that they match the above.
+            // const help_marker_width = c.ImGui_CalcTextSize("(?)").x;
+            // const spacing = c.ImGui_GetStyle().*.ItemSpacing.x;
+            // const button_width = @max(0.0, c.ImGui_GetContentRegionAvail().x - help_marker_width - spacing);
+            // if (c.ImGui_ButtonEx("Configure Shortcuts", .{ .x = button_width, .y = 0 })) {
+            //     try state_actor.dispatch(.open_global_shortcuts);
+            // }
+            // c.ImGui_SameLineEx(0, spacing);
+            // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
+
             c.ImGui_SeparatorText("imgui debug");
 
             if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {

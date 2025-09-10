@@ -114,6 +114,11 @@ fn addLinuxDependencies(allocator: std.mem.Allocator, b: *std.Build, exe: *std.B
     try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("GLIB").?, "gio-2.0", .linux, "libgio-2.0.so");
     try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("GLIB").?, "gobject-2.0", .linux, "libgobject-2.0.so.0");
 
+    const gobject = b.dependency("gobject", .{});
+    exe.root_module.addImport("glib", gobject.module("glib2"));
+    exe.root_module.addImport("gio", gobject.module("gio2"));
+    exe.root_module.addImport("gobject", gobject.module("gobject2"));
+
     // drm
     const libdrm_dev = std.posix.getenv("LIBDRM_DEV").?;
     const libdrm_libdrm = try std.fmt.allocPrint(allocator, "{s}/libdrm", .{libdrm_dev});

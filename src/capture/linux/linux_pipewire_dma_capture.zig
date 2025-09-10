@@ -111,7 +111,6 @@ pub const LinuxPipewireDmaCapture = struct {
     pub fn capture(self: *Self) Capture {
         return .{
             .ptr = self,
-            .vulkan = self.vulkan,
             .vtable = &.{
                 .selectSource = selectSource,
                 .nextFrame = nextFrame,
