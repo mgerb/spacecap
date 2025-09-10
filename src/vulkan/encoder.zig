@@ -105,14 +105,14 @@ pub const Encoder = struct {
             .fps = fps,
             .bit_rate = bit_rate,
 
-            .bit_stream_header = std.ArrayList(u8).init(allocator),
-            .encode_session_bind_memory = std.ArrayList(vk.BindVideoSessionMemoryInfoKHR).init(allocator),
+            .bit_stream_header = try std.ArrayList(u8).initCapacity(allocator, 0),
+            .encode_session_bind_memory = try std.ArrayList(vk.BindVideoSessionMemoryInfoKHR).initCapacity(allocator, 0),
 
-            .dpb_images = std.ArrayList(vk.Image).init(allocator),
-            .dpb_image_memory = std.ArrayList(vk.DeviceMemory).init(allocator),
-            .dpb_image_views = std.ArrayList(vk.ImageView).init(allocator),
-            .ycbcr_image_plane_views = std.ArrayList(vk.ImageView).init(allocator),
-            .compute_descriptor_sets = std.ArrayList(vk.DescriptorSet).init(allocator),
+            .dpb_images = try std.ArrayList(vk.Image).initCapacity(allocator, 0),
+            .dpb_image_memory = try std.ArrayList(vk.DeviceMemory).initCapacity(allocator, 0),
+            .dpb_image_views = try std.ArrayList(vk.ImageView).initCapacity(allocator, 0),
+            .ycbcr_image_plane_views = try std.ArrayList(vk.ImageView).initCapacity(allocator, 0),
+            .compute_descriptor_sets = try std.ArrayList(vk.DescriptorSet).initCapacity(allocator, 0),
 
             .inter_queue_semaphore1 = try vulkan.device.createSemaphore(&.{}, null),
             .inter_queue_semaphore2 = try vulkan.device.createSemaphore(&.{}, null),
@@ -147,7 +147,7 @@ pub const Encoder = struct {
         );
 
         try self.readBitstreamHeader();
-        errdefer self.bit_stream_header.deinit();
+        errdefer self.bit_stream_header.deinit(self.allocator);
 
         try self.allocateOutputBitStream();
         errdefer {
@@ -202,7 +202,7 @@ pub const Encoder = struct {
         const result = try self.vulkan.device.waitForFences(
             1,
             @ptrCast(&self.encode_finished_fence),
-            vk.TRUE,
+            .true,
             std.math.maxInt(u64),
         );
 
@@ -299,12 +299,12 @@ pub const Encoder = struct {
             return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResultError;
         }
 
-        var video_format_properties = std.ArrayList(vk.VideoFormatPropertiesKHR).init(self.allocator);
-        defer video_format_properties.deinit();
+        var video_format_properties = try std.ArrayList(vk.VideoFormatPropertiesKHR).initCapacity(self.allocator, 0);
+        defer video_format_properties.deinit(self.allocator);
 
         var video_format_properties_init = std.mem.zeroes(vk.VideoFormatPropertiesKHR);
         video_format_properties_init.s_type = .video_format_properties_khr;
-        try video_format_properties.appendNTimes(video_format_properties_init, video_format_property_count);
+        try video_format_properties.appendNTimes(self.allocator, video_format_properties_init, video_format_property_count);
 
         result = try self.vulkan.instance.getPhysicalDeviceVideoFormatPropertiesKHR(
             self.vulkan.physical_device,
@@ -344,12 +344,12 @@ pub const Encoder = struct {
             return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResult3Error;
         }
 
-        var dpb_video_format_properties = std.ArrayList(vk.VideoFormatPropertiesKHR).init(self.allocator);
-        defer dpb_video_format_properties.deinit();
+        var dpb_video_format_properties = try std.ArrayList(vk.VideoFormatPropertiesKHR).initCapacity(self.allocator, 0);
+        defer dpb_video_format_properties.deinit(self.allocator);
 
         var dpb_video_format_properties_init = std.mem.zeroes(vk.VideoFormatPropertiesKHR);
         dpb_video_format_properties_init.s_type = .video_format_properties_khr;
-        try dpb_video_format_properties.appendNTimes(dpb_video_format_properties_init, video_format_property_count);
+        try dpb_video_format_properties.appendNTimes(self.allocator, dpb_video_format_properties_init, video_format_property_count);
 
         result = try self.vulkan.instance.getPhysicalDeviceVideoFormatPropertiesKHR(
             self.vulkan.physical_device,
@@ -403,14 +403,19 @@ pub const Encoder = struct {
             return error.Spacecap_GetVideoSessionMemoryRequirementsKHRError;
         }
 
-        var encode_session_memory_requirements = std.ArrayList(vk.VideoSessionMemoryRequirementsKHR).init(
+        var encode_session_memory_requirements = try std.ArrayList(vk.VideoSessionMemoryRequirementsKHR).initCapacity(
             self.allocator,
+            0,
         );
-        defer encode_session_memory_requirements.deinit();
+        defer encode_session_memory_requirements.deinit(self.allocator);
 
         var encode_session_memory_requirements_init = std.mem.zeroes(vk.VideoSessionMemoryRequirementsKHR);
         encode_session_memory_requirements_init.s_type = .video_session_memory_requirements_khr;
-        try encode_session_memory_requirements.appendNTimes(encode_session_memory_requirements_init, video_session_memory_requirement_count);
+        try encode_session_memory_requirements.appendNTimes(
+            self.allocator,
+            encode_session_memory_requirements_init,
+            video_session_memory_requirement_count,
+        );
 
         result = try self.vulkan.device.getVideoSessionMemoryRequirementsKHR(
             self.video_session.?,
@@ -436,7 +441,7 @@ pub const Encoder = struct {
             bind_mem.memory_offset = 0;
             bind_mem.memory_size = encode_session_memory_requirements.items[memIdx].memory_requirements.size;
 
-            try self.encode_session_bind_memory.append(bind_mem);
+            try self.encode_session_bind_memory.append(self.allocator, bind_mem);
         }
 
         try self.vulkan.device.bindVideoSessionMemoryKHR(self.video_session.?, video_session_memory_requirement_count, self.encode_session_bind_memory.items.ptr);
@@ -476,8 +481,8 @@ pub const Encoder = struct {
         h264_get_info.s_type = .video_encode_h264_session_parameters_get_info_khr;
         h264_get_info.std_sps_id = 0;
         h264_get_info.std_pps_id = 0;
-        h264_get_info.write_std_pps = vk.TRUE;
-        h264_get_info.write_std_sps = vk.TRUE;
+        h264_get_info.write_std_pps = .true;
+        h264_get_info.write_std_sps = .true;
 
         var get_info = std.mem.zeroes(vk.VideoEncodeSessionParametersGetInfoKHR);
         get_info.s_type = .video_encode_session_parameters_get_info_khr;
@@ -498,7 +503,7 @@ pub const Encoder = struct {
             return error.Spacecap_GetEncodedVideoSessionParametersKHRError;
         }
 
-        try self.bit_stream_header.resize(datalen);
+        try self.bit_stream_header.resize(self.allocator, datalen);
 
         result = try self.vulkan.device.getEncodedVideoSessionParametersKHR(
             &get_info,
@@ -556,10 +561,10 @@ pub const Encoder = struct {
             };
 
             const image = try self.vulkan.device.createImage(&image_create_info, null);
-            try self.dpb_images.append(image);
+            try self.dpb_images.append(self.allocator, image);
             const memory_reqs = self.vulkan.device.getImageMemoryRequirements(image);
             const memory = try self.vulkan.allocate(memory_reqs, .{}, null);
-            try self.dpb_image_memory.append(memory);
+            try self.dpb_image_memory.append(self.allocator, memory);
             try self.vulkan.device.bindImageMemory(image, memory, 0);
 
             const view_info = vk.ImageViewCreateInfo{
@@ -576,7 +581,7 @@ pub const Encoder = struct {
                 .components = std.mem.zeroes(vk.ComponentMapping),
             };
             const image_view = try self.vulkan.device.createImageView(&view_info, null);
-            try self.dpb_image_views.append(image_view);
+            try self.dpb_image_views.append(self.allocator, image_view);
         }
     }
 
@@ -638,12 +643,12 @@ pub const Encoder = struct {
 
         view_info.format = .r8_unorm;
         view_info.subresource_range.aspect_mask = .{ .plane_0_bit = true };
-        try self.ycbcr_image_plane_views.append(try self.vulkan.device.createImageView(&view_info, null));
+        try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
 
         view_info.subresource_range.aspect_mask = .{ .plane_1_bit = true };
 
         view_info.format = .r8g8_unorm;
-        try self.ycbcr_image_plane_views.append(try self.vulkan.device.createImageView(&view_info, null));
+        try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
     }
 
     fn createOutputQueryPool(self: *Self) !void {
@@ -669,7 +674,7 @@ pub const Encoder = struct {
         const compute_shader = bgr_ycbcr_shader_2plane;
         const shader_module_create_info = vk.ShaderModuleCreateInfo{
             .code_size = compute_shader.len,
-            .p_code = @alignCast(@ptrCast(compute_shader)),
+            .p_code = @ptrCast(@alignCast(compute_shader)),
         };
         const compute_shader_module = try self.vulkan.device.createShaderModule(&shader_module_create_info, null);
         defer self.vulkan.device.destroyShaderModule(compute_shader_module, null);
@@ -755,9 +760,9 @@ pub const Encoder = struct {
 
         self.descriptor_pool = try self.vulkan.device.createDescriptorPool(&pool_info, null);
 
-        var layouts = std.ArrayList(vk.DescriptorSetLayout).init(self.allocator);
-        defer layouts.deinit();
-        try layouts.resize(max_frames_count);
+        var layouts = try std.ArrayList(vk.DescriptorSetLayout).initCapacity(self.allocator, 0);
+        defer layouts.deinit(self.allocator);
+        try layouts.resize(self.allocator, max_frames_count);
 
         for (layouts.items) |*dsl| {
             dsl.* = self.compute_descriptor_set_layout.?;
@@ -769,7 +774,7 @@ pub const Encoder = struct {
             .p_set_layouts = layouts.items.ptr,
         };
 
-        try self.compute_descriptor_sets.resize(max_frames_count);
+        try self.compute_descriptor_sets.resize(self.allocator, max_frames_count);
         try self.vulkan.device.allocateDescriptorSets(&descriptor_set_alloc_info, self.compute_descriptor_sets.items.ptr);
 
         for (0..max_frames_count) |i| {
@@ -865,8 +870,8 @@ pub const Encoder = struct {
     }
 
     fn transitionImagesInitial(self: *Self, command_buffer: vk.CommandBuffer) !void {
-        var barriers = std.ArrayList(vk.ImageMemoryBarrier2).init(self.allocator);
-        defer barriers.deinit();
+        var barriers = try std.ArrayList(vk.ImageMemoryBarrier2).initCapacity(self.allocator, 0);
+        defer barriers.deinit(self.allocator);
 
         for (self.dpb_images.items) |dpb_image| {
             const image_memory_barrier = vk.ImageMemoryBarrier2{
@@ -885,7 +890,7 @@ pub const Encoder = struct {
                 .src_queue_family_index = 0,
                 .dst_queue_family_index = 0,
             };
-            try barriers.append(image_memory_barrier);
+            try barriers.append(self.allocator, image_memory_barrier);
         }
 
         const dependency_info = vk.DependencyInfoKHR{
@@ -911,8 +916,8 @@ pub const Encoder = struct {
             .flags = .{ .one_time_submit_bit = true },
         });
 
-        var barriers = std.ArrayList(vk.ImageMemoryBarrier2).init(self.allocator);
-        defer barriers.deinit();
+        var barriers = try std.ArrayList(vk.ImageMemoryBarrier2).initCapacity(self.allocator, 0);
+        defer barriers.deinit(self.allocator);
         var image_memory_barrier = vk.ImageMemoryBarrier2{
             .dst_stage_mask = .{ .compute_shader_bit = true },
             .new_layout = .general,
@@ -938,7 +943,7 @@ pub const Encoder = struct {
         if (self.ycbcr_image_plane_views.items.len >= 3) {
             image_memory_barrier.subresource_range.aspect_mask.plane_2_bit = true;
         }
-        try barriers.append(image_memory_barrier);
+        try barriers.append(self.allocator, image_memory_barrier);
 
         // transition source image to be shader source
         image_memory_barrier.src_stage_mask = .{ .color_attachment_output_bit = true };
@@ -947,7 +952,7 @@ pub const Encoder = struct {
         image_memory_barrier.image = self.input_images.?[current_image_ix];
         image_memory_barrier.dst_access_mask = .{ .shader_storage_read_bit = true };
         image_memory_barrier.subresource_range.aspect_mask = .{ .color_bit = true };
-        try barriers.append(image_memory_barrier);
+        try barriers.append(self.allocator, image_memory_barrier);
 
         const dependency_info = vk.DependencyInfo{
             .image_memory_barrier_count = @as(u32, @intCast(barriers.items.len)),
@@ -981,12 +986,12 @@ pub const Encoder = struct {
         const dst_stage_masks: [2]vk.PipelineStageFlags = .{ .{ .all_commands_bit = true }, .{ .all_commands_bit = true } };
         const signal_semaphores: [1]vk.Semaphore = .{self.inter_queue_semaphore1};
 
-        var wait_semaphores = std.ArrayList(vk.Semaphore).init(self.allocator);
-        defer wait_semaphores.deinit();
-        try wait_semaphores.append(self.inter_queue_semaphore2);
+        var wait_semaphores = try std.ArrayList(vk.Semaphore).initCapacity(self.allocator, 0);
+        defer wait_semaphores.deinit(self.allocator);
+        try wait_semaphores.append(self.allocator, self.inter_queue_semaphore2);
 
         if (self.external_wait_semaphore) |external_wait_semaphore| {
-            try wait_semaphores.append(external_wait_semaphore);
+            try wait_semaphores.append(self.allocator, external_wait_semaphore);
         }
 
         var submit_info = vk.SubmitInfo{
@@ -1220,7 +1225,7 @@ pub const Encoder = struct {
         var result = try self.vulkan.device.waitForFences(
             1,
             @ptrCast(&self.encode_finished_fence),
-            vk.TRUE,
+            .true,
             std.math.maxInt(u64),
         );
 
@@ -1362,13 +1367,13 @@ pub const Encoder = struct {
             self.vulkan.device.destroyCommandPool(graphics_command_pool, null);
         }
 
-        self.bit_stream_header.deinit();
-        self.encode_session_bind_memory.deinit();
-        self.dpb_images.deinit();
-        self.dpb_image_memory.deinit();
-        self.dpb_image_views.deinit();
-        self.ycbcr_image_plane_views.deinit();
-        self.compute_descriptor_sets.deinit();
+        self.bit_stream_header.deinit(self.allocator);
+        self.encode_session_bind_memory.deinit(self.allocator);
+        self.dpb_images.deinit(self.allocator);
+        self.dpb_image_memory.deinit(self.allocator);
+        self.dpb_image_views.deinit(self.allocator);
+        self.ycbcr_image_plane_views.deinit(self.allocator);
+        self.compute_descriptor_sets.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };

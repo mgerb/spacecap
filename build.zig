@@ -254,8 +254,8 @@ fn buildLinux(
     const exe = b.addExecutable(.{
         .name = EXE_NAME,
         .root_module = module,
-        // TODO: Switch back to the zig backend when 0.15.0 officially releases.
-        // NOTE: should be fixed after this goes in: https://github.com/ziglang/zig/pull/24249
+        // TODO: There are currently some pointer alignment issues
+        // with pipewire using the Zig backend. Just stick to LLVM for now...
         .use_llvm = true,
     });
     exe.addRPath(b.path("./lib"));

@@ -25,10 +25,10 @@
         packages = {
           zls-custom = pkgs.stdenv.mkDerivation {
             pname = "zls";
-            version = "0.15.0-dev.348+b00ed99c";
+            version = "0.15.0";
             src = pkgs.fetchurl {
-              url = "https://builds.zigtools.org/zls-linux-x86_64-0.15.0-dev.348+b00ed99c.tar.xz";
-              sha256 = "sha256-7gLM9L8KRq8GQ/y6HJQ9+ONbR88duGxHMqEc36Ac4no=";
+              url = "https://builds.zigtools.org/zls-x86_64-linux-0.15.0.tar.xz";
+              sha256 = "sha256-UIv+P9Y30qAvB/P8faiQA1H0BxFrA2hcXa4mtPAaMN4=";
             };
             sourceRoot = ".";
             installPhase = ''
@@ -40,7 +40,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            zigpkgs.master
+            zigpkgs."0.15.1"
             self.packages.${system}.zls-custom
 
             shaderc

@@ -65,10 +65,10 @@ pub const UI = struct {
         }
         defer c.SDL_Quit();
 
-        var extensions = std.ArrayList([*:0]const u8).init(allocator);
+        var extensions = try std.ArrayList([*:0]const u8).initCapacity(allocator, 0);
         var extensions_count: u32 = 0;
         const sdl_extensions = c.SDL_Vulkan_GetInstanceExtensions(&extensions_count);
-        for (0..extensions_count) |i| try extensions.append(std.mem.span(sdl_extensions[i]));
+        for (0..extensions_count) |i| try extensions.append(allocator, std.mem.span(sdl_extensions[i]));
 
         return extensions;
     }
@@ -372,7 +372,7 @@ pub const UI = struct {
         var fd = &wd.Frames.Data[wd.FrameIndex];
 
         {
-            const err = try self.vulkan.device.waitForFences(1, @ptrCast(&fd.Fence), c.VK_TRUE, std.math.maxInt(u64));
+            const err = try self.vulkan.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64));
             check_vk_result(@intFromEnum(err));
         }
 
@@ -541,7 +541,7 @@ pub const UI = struct {
             c.cImGui_ImplVulkanH_DestroyWindow(
                 self.vkInstance(),
                 self.vkDevice(),
-                @constCast(@ptrCast(&window)),
+                @ptrCast(@constCast(&window)),
                 null,
             );
             self.vulkan.window = null;

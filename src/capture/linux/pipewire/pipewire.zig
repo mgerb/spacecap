@@ -54,8 +54,8 @@ pub const Pipewire = struct {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
-            .rx_chan = Chan(bool).init(allocator),
-            .tx_chan = Chan(types.VkImages).init(allocator),
+            .rx_chan = try Chan(bool).init(allocator),
+            .tx_chan = try Chan(types.VkImages).init(allocator),
             .portal = try Portal.init(allocator),
             .vulkan = vulkan,
             .frame_time = std.time.nanoTimestamp(),
@@ -162,7 +162,7 @@ pub const Pipewire = struct {
         const ptr = c_def.spa_pod_builder_pop(b, &format_frame);
 
         if (ptr != null) {
-            return @alignCast(@ptrCast(ptr));
+            return @ptrCast(@alignCast(ptr));
         }
 
         return null;
@@ -193,17 +193,17 @@ pub const Pipewire = struct {
             c.SPA_VIDEO_FORMAT_ABGR_210LE,
         };
 
-        var params = std.ArrayList(*c.spa_pod).init(self.allocator);
-        defer params.deinit();
+        var params = try std.ArrayList(*c.spa_pod).initCapacity(self.allocator, 0);
+        defer params.deinit(self.allocator);
 
         for (formats) |format| {
-            const modifiers = try self.vulkan.queryFormatModifiers(pipewire_util.spaToVkFormat(format));
-            defer modifiers.deinit();
+            var modifiers = try self.vulkan.queryFormatModifiers(pipewire_util.spaToVkFormat(format));
+            defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;
             }
             if (self.build_format(&builder, format, modifiers.items)) |spa_pod| {
-                try params.append(spa_pod);
+                try params.append(self.allocator, spa_pod);
             }
         }
 
@@ -223,7 +223,7 @@ pub const Pipewire = struct {
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
         std.debug.print("[streamProcessCallback]\n", .{});
-        const self: *Self = @alignCast(@ptrCast(data));
+        const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
             return;
@@ -264,8 +264,8 @@ pub const Pipewire = struct {
                     return;
                 }
 
-                var subresource_layouts = std.ArrayList(vk.SubresourceLayout).init(self.allocator);
-                defer subresource_layouts.deinit();
+                var subresource_layouts = std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0) catch unreachable;
+                defer subresource_layouts.deinit(self.allocator);
 
                 for (0..pwb.buffer[0].n_datas) |i| {
                     const buf_data = pwb.buffer[0].datas[i];
@@ -277,7 +277,7 @@ pub const Pipewire = struct {
                         .depth_pitch = 0,
                         .row_pitch = row_pitch,
                     };
-                    subresource_layouts.append(subresource_layout) catch unreachable;
+                    subresource_layouts.append(self.allocator, subresource_layout) catch unreachable;
                 }
 
                 const images = self.createVulkanImage(
@@ -310,7 +310,7 @@ pub const Pipewire = struct {
         new_state: c.pw_stream_state,
         error_: [*c]const u8,
     ) callconv(.c) void {
-        const self: *Self = @alignCast(@ptrCast(data));
+        const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
 
         std.debug.print("[streamStateChangedCallback] pipewire stream state change: {s} -> {s}\n", .{
@@ -326,7 +326,7 @@ pub const Pipewire = struct {
     fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const c.spa_pod) callconv(.c) void {
         std.debug.print("[streamParamChangedCallback]\n", .{});
 
-        const self: *Self = @alignCast(@ptrCast(data));
+        const self: *Self = @ptrCast(@alignCast(data));
 
         if (param == null or id != c.SPA_PARAM_Format) {
             return;
@@ -366,11 +366,11 @@ pub const Pipewire = struct {
             .size = 1024,
         };
 
-        var params = std.ArrayList(*c.struct_spa_pod).init(self.allocator);
-        defer params.deinit();
+        var params = std.ArrayList(*c.struct_spa_pod).initCapacity(self.allocator, 0) catch unreachable;
+        defer params.deinit(self.allocator);
 
         // damage
-        params.append(@alignCast(@ptrCast(c_def.spa_pod_builder_add_object(
+        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             c.SPA_TYPE_OBJECT_ParamMeta,
             c.SPA_PARAM_Meta,
@@ -388,7 +388,7 @@ pub const Pipewire = struct {
         )))) catch unreachable;
 
         // cursor
-        params.append(@alignCast(@ptrCast(c_def.spa_pod_builder_add_object(
+        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             c.SPA_TYPE_OBJECT_ParamMeta,
             c.SPA_PARAM_Meta,
@@ -405,7 +405,7 @@ pub const Pipewire = struct {
             },
         )))) catch unreachable;
 
-        params.append(@alignCast(@ptrCast(c_def.spa_pod_builder_add_object(&builder, c.SPA_TYPE_OBJECT_ParamBuffers, c.SPA_PARAM_Buffers, .{
+        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, c.SPA_TYPE_OBJECT_ParamBuffers, c.SPA_PARAM_Buffers, .{
             c.SPA_PARAM_BUFFERS_dataType,
             "i",
             @as(i32, 1 << c.SPA_DATA_DmaBuf),
@@ -420,7 +420,7 @@ pub const Pipewire = struct {
     }
 
     fn streamAddBufferCallback(data: ?*anyopaque, pw_buffer: [*c]c.struct_pw_buffer) callconv(.c) void {
-        const self: *Self = @alignCast(@ptrCast(data));
+        const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
         _ = pw_buffer;
         std.debug.print("[streamAddBufferCallback]\n", .{});
@@ -533,7 +533,7 @@ pub const Pipewire = struct {
 
     fn streamRemoveBufferCallback(data: ?*anyopaque, pw_buffer: [*c]c.struct_pw_buffer) callconv(.c) void {
         std.debug.print("[streamRemoveBufferCallback]\n", .{});
-        const self: *Self = @alignCast(@ptrCast(data));
+        const self: *Self = @ptrCast(@alignCast(data));
         _ = pw_buffer;
         _ = self;
     }

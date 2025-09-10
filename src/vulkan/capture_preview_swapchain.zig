@@ -73,14 +73,14 @@ pub const CapturePreviewBuffer = struct {
             .address_mode_v = .clamp_to_edge,
             .address_mode_w = .clamp_to_edge,
             .mip_lod_bias = 0.0,
-            .anisotropy_enable = vk.FALSE,
+            .anisotropy_enable = .false,
             .max_anisotropy = 1.0,
-            .compare_enable = vk.FALSE,
+            .compare_enable = .false,
             .compare_op = .always,
             .min_lod = 0.0,
             .max_lod = 0.0,
             .border_color = .int_opaque_black,
-            .unnormalized_coordinates = vk.FALSE,
+            .unnormalized_coordinates = .false,
         }, null);
 
         const s: imguiz.VkSampler = @ptrFromInt(@intFromEnum(sampler));
@@ -129,7 +129,7 @@ pub const CapturePreviewBuffer = struct {
         src_image: vk.Image,
         wait_semaphore: vk.Semaphore,
     ) !vk.Semaphore {
-        const result = try self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), vk.TRUE, std.math.maxInt(u64));
+        const result = try self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64));
         if (result != .success) {
             return error.waitForFences;
         }
@@ -249,7 +249,7 @@ pub const CapturePreviewBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), vk.TRUE, std.math.maxInt(u64)) catch unreachable;
+        _ = self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64)) catch unreachable;
         imguiz.cImGui_ImplVulkan_RemoveTexture(self.descriptor_set);
         self.vulkan.device.destroyImage(self.image, null);
         self.vulkan.device.destroyImageView(self.image_view, null);
