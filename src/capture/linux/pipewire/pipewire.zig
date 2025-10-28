@@ -223,7 +223,6 @@ pub const Pipewire = struct {
     }
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
-        log.debug("[streamProcessCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
