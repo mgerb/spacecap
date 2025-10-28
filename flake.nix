@@ -53,6 +53,7 @@
             glib
             libdrm
             wayland
+            libportal
 
             # For configuring ffmpeg headers
             nasm
@@ -81,6 +82,7 @@
           SDL3 = "${pkgs.sdl3}/lib";
           GLIB = "${pkgs.glib.out}/lib";
           LIBDRM = "${pkgs.libdrm}/lib";
+          LIBPORTAL = "${pkgs.libportal}/lib";
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           VULKAN_SDK_PATH = "${pkgs.vulkan-loader}/lib";

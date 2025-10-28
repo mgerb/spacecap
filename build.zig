@@ -119,6 +119,9 @@ fn addLinuxDependencies(allocator: std.mem.Allocator, b: *std.Build, exe: *std.B
     exe.root_module.addImport("gio", gobject.module("gio2"));
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
+    // libportal
+    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBPORTAL").?, "portal", .linux, "libportal.so");
+
     // drm
     const libdrm_dev = std.posix.getenv("LIBDRM_DEV").?;
     const libdrm_libdrm = try std.fmt.allocPrint(allocator, "{s}/libdrm", .{libdrm_dev});
