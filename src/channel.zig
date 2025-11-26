@@ -1,5 +1,5 @@
 //// Credits to https://github.com/erik-dunteman/chanz/tree/main
-//// This is a placeholder until zig get async back.
+//// This is a placeholder until the new async queue in zig 0.16.0.
 
 const std = @import("std");
 
@@ -33,8 +33,8 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             data: ?T = null,
 
             fn putDataAndSignal(self: *@This(), data: T) void {
-                defer self.cond.signal();
                 self.data = data;
+                self.cond.signal();
             }
         };
 
@@ -86,6 +86,10 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             return self.buf.len;
         }
 
+        pub fn full(self: *Self) bool {
+            return self.buf.len == self.len;
+        }
+
         fn debugBuf(self: *Self) void {
             std.log.debug("{d} Buffer debug\n", .{std.time.milliTimestamp()});
             for (self.buf, 0..) |item, i| {
@@ -127,7 +131,10 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             // pull receiver (if any) and give it data. Signal receiver that it's done waiting.
             if (self.recvQ.items.len > 0) {
                 defer self.mut.unlock();
+                // Lock receiver mutex to synchronize data visibility with the waiting thread.
                 var receiver: *Receiver = self.recvQ.orderedRemove(0);
+                receiver.mut.lock();
+                defer receiver.mut.unlock();
                 receiver.putDataAndSignal(data);
                 return;
             }
@@ -241,14 +248,30 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             };
             self.mut.unlock();
 
-            // now wait for sender to signal receiver
-            receiver.cond.wait(&receiver.mut);
+            // Wait until a sender provides data. A sender may set data before we reach
+            // the wait; in that case we skip waiting. Condition waits can spuriously
+            // wake, so loop until data is present. We briefly drop receiver.mut to
+            // check for a closed channel to avoid lock-order inversion with senders.
+            while (receiver.data == null) {
+                receiver.cond.wait(&receiver.mut);
+                if (receiver.data != null) break;
+
+                receiver.mut.unlock();
+                self.mut.lock();
+                const closed = self.closed;
+                self.mut.unlock();
+                receiver.mut.lock();
+                if (closed) {
+                    return ChanError.Closed;
+                }
+            }
 
             self.mut.lock();
             defer self.mut.unlock();
+            const closed = self.closed;
 
             // sender should have put data in .data
-            if (self.closed) {
+            if (closed) {
                 return ChanError.Closed;
             } else if (receiver.data) |data| {
                 return data;

@@ -263,11 +263,13 @@ pub const StateActor = struct {
             if (previous_frame_start_time > 0 and next_projected_frame_start_time > now) {
                 // TODO: add to state
                 Util.printElapsed(previous_frame_start_time, "previous_frame_start_time");
+                // NOTE: This TODO is old and probably irrelevant now that I have
+                // refactored some of the pipewire video logic. Revisit this to confirm.
                 // TODO: this makes 60fps feel choppy. I wonder if we need to
                 // not limit anything here and just modify FPS when outputting with
                 // ffmpeg. DEFINITELY CAN'T HAVE THIS HERE - IT MESSES WITH
                 // THE VIDEO PREVIEW ON THE UI
-                // std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
+                std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
             }
 
             previous_frame_start_time = std.time.nanoTimestamp();

@@ -5,6 +5,7 @@ const pipewire_util = @import("./pipewire_util.zig");
 const types = @import("../../../types.zig");
 const Chan = @import("../../../channel.zig").Chan;
 const ChanError = @import("../../../channel.zig").ChanError;
+const BufferedChan = @import("../../../channel.zig").BufferedChan;
 const util = @import("../../../util.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
 const CaptureError = @import("../../capture.zig").CaptureError;
@@ -13,8 +14,17 @@ const c_def = @import("./pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
 const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
 
+const log = std.log.scoped(.pipewire);
+
 pub const Pipewire = struct {
     const Self = @This();
+
+    const BufferImage = struct {
+        image: vk.Image,
+        image_view: vk.ImageView,
+        device_memory: vk.DeviceMemory,
+        fd: i64,
+    };
 
     portal: *Portal,
     allocator: std.mem.Allocator,
@@ -31,19 +41,18 @@ pub const Pipewire = struct {
     rx_chan: Chan(bool),
     // Receive messages from Pipewire on this channel
     tx_chan: Chan(types.VkImages),
-    pw_buffer: ?*c.pw_buffer = null,
+    // Queue for pw_buffers coming from the RT thread. Bounded to avoid starving PipeWire of buffers.
+    buffer_queue: BufferedChan(*c.struct_pw_buffer, 2),
+    worker_thread: ?std.Thread = null,
+    buffer_images: std.AutoHashMap(*c.struct_pw_buffer, BufferImage),
 
     /// Stores all information about the video stream
     info: ?c.spa_video_info_raw = null,
 
     // vulkan stuff
     vulkan: *Vulkan,
-    vk_image: ?vk.Image = null,
-    vk_image_view: ?vk.ImageView = null,
-    vk_device_memory: ?vk.DeviceMemory = null,
     /// This is the semaphore for the pipewire dambuf
     vk_foreign_semaphore: ?vk.Semaphore = null,
-    semaphore_fd: ?i32 = null,
 
     frame_time: i128 = 0,
 
@@ -56,8 +65,10 @@ pub const Pipewire = struct {
             .allocator = allocator,
             .rx_chan = try Chan(bool).init(allocator),
             .tx_chan = try Chan(types.VkImages).init(allocator),
+            .buffer_queue = try .init(allocator),
             .portal = try Portal.init(allocator),
             .vulkan = vulkan,
+            .buffer_images = std.AutoHashMap(*c.struct_pw_buffer, BufferImage).init(allocator),
             .frame_time = std.time.nanoTimestamp(),
         };
 
@@ -118,10 +129,17 @@ pub const Pipewire = struct {
         if (self.info == null or self.info.?.format < 0) {
             return error.bad_format;
         }
+
+        self.worker_thread = try std.Thread.spawn(.{}, workerMain, .{self});
     }
 
     pub fn stop(self: *Self) !void {
         self.rx_chan.close();
+        self.buffer_queue.close();
+        if (self.worker_thread) |thread| {
+            thread.join();
+            self.worker_thread = null;
+        }
         c.pw_thread_loop_lock(self.thread_loop);
 
         // TODO: probably want to move this to deinit and only stop the loop here
@@ -169,7 +187,7 @@ pub const Pipewire = struct {
     }
 
     fn startStream(self: *const Self, node: u32) !void {
-        std.debug.print("[startStream] starting stream for node: {}\n", .{node});
+        log.debug("[startStream] starting stream for node: {}", .{node});
 
         var buffer = std.mem.zeroes([4096]u8);
 
@@ -222,85 +240,125 @@ pub const Pipewire = struct {
     }
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
-        std.debug.print("[streamProcessCallback]\n", .{});
+        log.debug("[streamProcessCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
             return;
         }
 
-        // wait until consumer is ready for a new frame
-        const get_next_frame = self.rx_chan.recv() catch |err| {
-            switch (err) {
-                ChanError.Closed => return,
-                else => unreachable,
-            }
-        };
-
-        if (!get_next_frame) {
-            return;
-        }
-
-        // dequeue all buffers to get the latest one
+        // Drain all available buffers, queueing at most two for processing.
         while (true) {
             const tmp = c.pw_stream_dequeue_buffer(self.stream);
-
             if (tmp == null) {
                 break;
             }
+            const pwb_raw = tmp.?;
+            const pwb: *c.struct_pw_buffer = @ptrCast(pwb_raw);
 
-            if (self.pw_buffer) |pwb| {
-                _ = c.pw_stream_queue_buffer(self.stream, pwb);
+            // Only keep buffers that use dmabuf.
+            if (pwb.buffer == null or pwb.buffer[0].datas[0].type != c.SPA_DATA_DmaBuf) {
+                _ = c.pw_stream_queue_buffer(self.stream, pwb_raw);
+                continue;
             }
 
-            self.pw_buffer = tmp;
+            // Remove the oldest frame if the queue is full.
+            if (self.buffer_queue.full()) {
+                const dropped = self.buffer_queue.tryRecv() catch null;
+                if (dropped) |old| {
+                    _ = c.pw_stream_queue_buffer(self.stream, old);
+                }
+            }
+
+            self.buffer_queue.trySend(pwb) catch unreachable;
         }
+    }
 
-        if (self.pw_buffer) |pwb| {
-            if (pwb.buffer != null and pwb.buffer[0].datas[0].type == c.SPA_DATA_DmaBuf) {
-                const buffer: *c.struct_spa_buffer = @ptrCast(pwb.buffer);
+    fn workerMain(self: *Self) !void {
+        while (true) {
+            // Wait for consumer request.
+            _ = self.rx_chan.recv() catch |err| {
+                if (err == ChanError.Closed) {
+                    break;
+                }
+                return err;
+            };
 
-                if (buffer.datas[0].chunk[0].size <= 0) {
-                    return;
+            // Drain the queue and grab the newest buffer.
+            var latest: ?*c.struct_pw_buffer = null;
+            while (true) {
+                const tmp = try self.buffer_queue.tryRecv();
+
+                if (tmp == null) {
+                    break;
                 }
 
-                var subresource_layouts = std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0) catch unreachable;
-                defer subresource_layouts.deinit(self.allocator);
-
-                for (0..pwb.buffer[0].n_datas) |i| {
-                    const buf_data = pwb.buffer[0].datas[i];
-                    const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
-                    const subresource_layout = vk.SubresourceLayout{
-                        .offset = buf_data.chunk[0].offset,
-                        .size = 0,
-                        .array_pitch = 0,
-                        .depth_pitch = 0,
-                        .row_pitch = row_pitch,
-                    };
-                    subresource_layouts.append(self.allocator, subresource_layout) catch unreachable;
+                // Return the buffer to pipewire.
+                if (latest) |old| {
+                    _ = c.pw_stream_queue_buffer(self.stream, old);
                 }
 
-                const images = self.createVulkanImage(
-                    self.info.?,
-                    buffer.datas[0].fd,
-                    subresource_layouts.items,
-                ) catch unreachable;
-
-                self.tx_chan.send(images) catch |err| {
-                    switch (err) {
-                        ChanError.Closed => {}, // do nothing on closed
-                        else => unreachable,
-                    }
-                };
-
-                _ = c.pw_stream_queue_buffer(self.stream, self.pw_buffer.?);
-                self.pw_buffer = null;
-
-                util.printElapsed(self.frame_time, "frame time");
-                self.frame_time = std.time.nanoTimestamp();
+                latest = tmp.?;
             }
-        } else {
-            std.debug.print("[streamProcessCallback] pipewire out of buffers\n", .{});
+
+            // Wait for the buffer queue if we still don't have a buffer.
+            if (latest == null) {
+                latest = self.buffer_queue.recv() catch |err| {
+                    if (err == ChanError.Closed) {
+                        break;
+                    }
+                    return err;
+                };
+            }
+
+            const pipewire_buffer = latest.?;
+
+            // Return the buffer to pipewire when we are done with it.
+            defer {
+                _ = c.pw_stream_queue_buffer(self.stream, pipewire_buffer);
+            }
+
+            if (pipewire_buffer.buffer == null or pipewire_buffer.buffer[0].datas[0].chunk[0].size <= 0) {
+                continue;
+            }
+
+            var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0);
+            defer subresource_layouts.deinit(self.allocator);
+
+            for (0..pipewire_buffer.buffer[0].n_datas) |i| {
+                const buf_data = pipewire_buffer.buffer[0].datas[i];
+                const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
+                const subresource_layout = vk.SubresourceLayout{
+                    .offset = buf_data.chunk[0].offset,
+                    .size = 0,
+                    .array_pitch = 0,
+                    .depth_pitch = 0,
+                    .row_pitch = row_pitch,
+                };
+                try subresource_layouts.append(self.allocator, subresource_layout);
+            }
+
+            const buffer_images = try self.getOrCreateBufferImage(
+                pipewire_buffer,
+                self.info.?,
+                pipewire_buffer.buffer[0].datas[0].fd,
+                subresource_layouts.items,
+            );
+
+            const images = types.VkImages{
+                .image = buffer_images.image,
+                .image_view = buffer_images.image_view,
+            };
+
+            self.tx_chan.send(images) catch |err| {
+                switch (err) {
+                    ChanError.Closed => {},
+                    else => return error.sendChanClosed,
+                }
+            };
+
+            util.printElapsed(self.frame_time, "frame time");
+            self.frame_time = std.time.nanoTimestamp();
         }
     }
 
@@ -313,18 +371,18 @@ pub const Pipewire = struct {
         const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
 
-        std.debug.print("[streamStateChangedCallback] pipewire stream state change: {s} -> {s}\n", .{
+        log.debug("[streamStateChangedCallback] pipewire stream state change: {s} -> {s}", .{
             c.pw_stream_state_as_string(old_state),
             c.pw_stream_state_as_string(new_state),
         });
 
         if (new_state == c.PW_STREAM_STATE_ERROR) {
-            std.debug.print("[streamStateChangedCallback] pipewire stream error: {s}\n", .{error_});
+            log.debug("[streamStateChangedCallback] pipewire stream error: {s}", .{error_});
         }
     }
 
     fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const c.spa_pod) callconv(.c) void {
-        std.debug.print("[streamParamChangedCallback]\n", .{});
+        log.debug("[streamParamChangedCallback]", .{});
 
         const self: *Self = @ptrCast(@alignCast(data));
 
@@ -337,25 +395,26 @@ pub const Pipewire = struct {
 
         const fmt = c_def.spa_format_parse(param, &media_type, &media_subtype);
 
-        std.debug.print("[streamParamChangedCallback] fmt: {}\n", .{fmt});
+        log.debug("[streamParamChangedCallback] fmt: {}", .{fmt});
 
         if (fmt < 0 or
             media_type != c.SPA_MEDIA_TYPE_video or
             media_subtype != c.SPA_MEDIA_SUBTYPE_raw)
         {
-            std.debug.print("[streamParamChangedCallback] media_type: {}, media_subtype: {}\n", .{ media_type, media_subtype });
+            log.debug("[streamParamChangedCallback] media_type: {}, media_subtype: {}", .{ media_type, media_subtype });
             return;
         }
 
         self.info = std.mem.zeroes(c.spa_video_info_raw);
 
         if (c_def.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
-            std.debug.print("[streamParamChangedCallback] failed to parse video info", .{});
+            log.debug("[streamParamChangedCallback] failed to parse video info", .{});
             return;
         }
 
         if (self.has_format) {
             self.format_changed = true;
+            self.resetImagePool();
             return;
         }
 
@@ -413,7 +472,7 @@ pub const Pipewire = struct {
 
         _ = c.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
 
-        std.debug.print("[streamParamChangedCallback] stream format: {}\n", .{self.info.?.format});
+        log.debug("[streamParamChangedCallback] stream format: {}", .{self.info.?.format});
         self.has_format = true;
 
         c.pw_thread_loop_signal(self.thread_loop, false);
@@ -423,30 +482,54 @@ pub const Pipewire = struct {
         const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
         _ = pw_buffer;
-        std.debug.print("[streamAddBufferCallback]\n", .{});
+        log.debug("[streamAddBufferCallback]", .{});
     }
 
-    // TODO: reuse vulkan images instead of creating/destroying them for every frame
+    fn getOrCreateBufferImage(
+        self: *Self,
+        pw_buffer: *c.struct_pw_buffer,
+        info: c.spa_video_info_raw,
+        fd: i64,
+        subresource_layouts: []vk.SubresourceLayout,
+    ) !BufferImage {
+        if (self.vk_foreign_semaphore == null) {
+            self.vk_foreign_semaphore = try self.vulkan.device.createSemaphore(&.{}, null);
+        }
+
+        try pipewire_util.dmabufExportSyncFile(self.vulkan, fd, self.vk_foreign_semaphore.?);
+
+        if (self.buffer_images.getPtr(pw_buffer)) |existing| {
+            if (existing.fd == fd) {
+                return existing.*;
+            }
+
+            // The fd for this pw_buffer changed, rebuild the image.
+            log.debug("[getOrCreateBufferImage] fd changed for buffer {x}: old {}, new {}", .{
+                @intFromPtr(pw_buffer),
+                existing.fd,
+                fd,
+            });
+            const new_buffer_image = try self.createVulkanImage(info, fd, subresource_layouts);
+            self.destroyBufferImage(existing.*);
+            existing.* = new_buffer_image;
+            return existing.*;
+        }
+
+        const buffer_image = try self.createVulkanImage(info, fd, subresource_layouts);
+        log.debug("[getOrCreateBufferImage] new buffer image for buffer {x}, fd {}", .{
+            @intFromPtr(pw_buffer),
+            fd,
+        });
+        try self.buffer_images.put(pw_buffer, buffer_image);
+        return buffer_image;
+    }
+
     fn createVulkanImage(
         self: *Self,
         info: c.spa_video_info_raw,
         fd: i64,
         subresource_layouts: []vk.SubresourceLayout,
-    ) !types.VkImages {
-        self.cleanVulkanResources();
-
-        if (self.vk_foreign_semaphore == null) {
-            self.vk_foreign_semaphore = try self.vulkan.device.createSemaphore(&.{}, null);
-        }
-
-        self.semaphore_fd = c.fcntl(@intCast(fd), c.F_DUPFD_CLOEXEC, @as(u32, 0));
-        try pipewire_util.dmabufExportSyncFile(self.vulkan, fd, self.vk_foreign_semaphore.?);
-
-        errdefer {
-            _ = c.close(@intCast(self.semaphore_fd.?));
-            self.semaphore_fd = null;
-        }
-
+    ) !BufferImage {
         const modifier_info = vk.ImageDrmFormatModifierExplicitCreateInfoEXT{
             .drm_format_modifier = info.modifier,
             .drm_format_modifier_plane_count = @intCast(subresource_layouts.len),
@@ -521,21 +604,18 @@ pub const Pipewire = struct {
         const image_view = try self.vulkan.device.createImageView(&view_info, null);
         errdefer self.vulkan.device.destroyImageView(image_view, null);
 
-        self.vk_image = image;
-        self.vk_image_view = image_view;
-        self.vk_device_memory = device_memory;
-
         return .{
             .image = image,
             .image_view = image_view,
+            .device_memory = device_memory,
+            .fd = fd,
         };
     }
 
     fn streamRemoveBufferCallback(data: ?*anyopaque, pw_buffer: [*c]c.struct_pw_buffer) callconv(.c) void {
-        std.debug.print("[streamRemoveBufferCallback]\n", .{});
+        log.debug("[streamRemoveBufferCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
-        _ = pw_buffer;
-        _ = self;
+        self.removeBuffer(@ptrCast(pw_buffer));
     }
 
     const stream_events = c.pw_stream_events{
@@ -561,7 +641,7 @@ pub const Pipewire = struct {
     ) callconv(.c) void {
         _ = opaque_;
         std.log.err(
-            "[coreErrorCallback] pipewire error: id {}, seq: {}, res: {}: {s}\n",
+            "[coreErrorCallback] pipewire error: id {}, seq: {}, res: {}: {s}",
             .{
                 id,
                 seq,
@@ -571,43 +651,47 @@ pub const Pipewire = struct {
         );
     }
 
-    fn cleanVulkanResources(self: *Self) void {
-        if (self.vk_image) |image| {
-            self.vulkan.device.destroyImage(image, null);
-        }
-        self.vk_image = null;
-        if (self.vk_image_view) |image_view| {
-            self.vulkan.device.destroyImageView(image_view, null);
-        }
-        self.vk_image_view = null;
-        if (self.vk_device_memory) |device_memory| {
-            self.vulkan.device.freeMemory(device_memory, null);
-        }
-        self.vk_device_memory = null;
+    fn destroyBufferImage(self: *Self, buffer_image: BufferImage) void {
+        self.vulkan.device.destroyImageView(buffer_image.image_view, null);
+        self.vulkan.device.destroyImage(buffer_image.image, null);
+        self.vulkan.device.freeMemory(buffer_image.device_memory, null);
+    }
 
-        if (self.semaphore_fd) |semaphore_fd| {
-            _ = c.close(semaphore_fd);
+    fn resetImagePool(self: *Self) void {
+        var it = self.buffer_images.valueIterator();
+        while (it.next()) |buffer_image| {
+            self.destroyBufferImage(buffer_image.*);
         }
-        self.semaphore_fd = null;
+        self.buffer_images.clearRetainingCapacity();
+    }
+
+    fn removeBuffer(self: *Self, pw_buffer: *c.struct_pw_buffer) void {
+        if (self.buffer_images.fetchRemove(pw_buffer)) |entry| {
+            self.destroyBufferImage(entry.value);
+        }
     }
 
     pub fn deinit(self: *Self) void {
         self.rx_chan.deinit();
         self.tx_chan.deinit();
+        self.buffer_queue.deinit();
+
+        if (self.worker_thread) |thread| {
+            thread.join();
+            self.worker_thread = null;
+        }
 
         if (self.vk_foreign_semaphore) |vk_foreign_semaphore| {
             self.vulkan.device.destroySemaphore(vk_foreign_semaphore, null);
         }
         self.vk_foreign_semaphore = null;
 
-        self.cleanVulkanResources();
+        self.resetImagePool();
 
         self.portal.deinit();
 
         if (self.thread_loop) |thread_loop| {
             c.pw_thread_loop_lock(thread_loop);
-
-            self.pw_buffer = null;
 
             // make sure no signals are waiting
             c.pw_thread_loop_accept(thread_loop);
@@ -631,6 +715,7 @@ pub const Pipewire = struct {
 
         c.pw_deinit();
 
+        self.buffer_images.deinit();
         self.allocator.destroy(self);
     }
 };
