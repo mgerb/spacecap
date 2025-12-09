@@ -33,7 +33,6 @@ pub const LinuxPipewireDmaCapture = struct {
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
             // to select a new source here.
-            try pipewire.stop();
             pipewire.deinit();
             self.pipewire = null;
         }
@@ -87,7 +86,6 @@ pub const LinuxPipewireDmaCapture = struct {
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
             // to select a new source here.
-            try pipewire.stop();
             pipewire.deinit();
             self.pipewire = null;
         }
