@@ -7,6 +7,7 @@ const util = @import("../../util.zig");
 const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
 const Pipewire = @import("./pipewire/pipewire.zig").Pipewire;
 const Chan = @import("../../channel.zig").Chan;
+const ChanError = @import("../../channel.zig").ChanError;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
 const Capture = @import("../capture.zig").Capture;
 const CaptureError = @import("../capture.zig").CaptureError;
@@ -48,19 +49,21 @@ pub const LinuxPipewireDmaCapture = struct {
         try self.pipewire.?.selectSource(source_type);
     }
 
-    pub fn nextFrame(context: *anyopaque) !void {
+    pub fn nextFrame(context: *anyopaque) ChanError!void {
         const self: *Self = @ptrCast(@alignCast(context));
         try self.pipewire.?.rx_chan.send(true);
     }
 
-    pub fn closeNextFrameChan(context: *anyopaque) !void {
+    pub fn closeAllChannels(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
+            pipewire.tx_chan.close();
             pipewire.rx_chan.close();
+            pipewire.buffer_queue.close();
         }
     }
 
-    pub fn waitForFrame(context: *anyopaque) !types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) ChanError!types.VkImages {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.tx_chan.recv();
     }
@@ -112,7 +115,7 @@ pub const LinuxPipewireDmaCapture = struct {
             .vtable = &.{
                 .selectSource = selectSource,
                 .nextFrame = nextFrame,
-                .closeNextFrameChan = closeNextFrameChan,
+                .closeAllChannels = closeAllChannels,
                 .waitForFrame = waitForFrame,
                 .size = size,
                 .externalWaitSemaphore = externalWaitSemaphore,

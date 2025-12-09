@@ -7,6 +7,7 @@ const util = @import("../../util.zig");
 const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
 const Capture = @import("../capture.zig").Capture;
+const ChanError = @import("../../channel.zig").ChanError;
 
 const DWORD = u32;
 
@@ -37,17 +38,17 @@ pub const WindowsCapture = struct {
         _ = self;
     }
 
-    pub fn nextFrame(context: *anyopaque) !void {
+    pub fn nextFrame(context: *anyopaque) ChanError!void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn closeNextFrameChan(context: *anyopaque) !void {
+    pub fn closeAllChannels(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn waitForFrame(context: *anyopaque) !types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) ChanError!types.VkImages {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return .{
@@ -90,7 +91,7 @@ pub const WindowsCapture = struct {
             .vtable = &.{
                 .selectSource = selectSource,
                 .nextFrame = nextFrame,
-                .closeNextFrameChan = closeNextFrameChan,
+                .closeAllChannels = closeAllChannels,
                 .waitForFrame = waitForFrame,
                 .size = size,
                 .externalWaitSemaphore = externalWaitSemaphore,

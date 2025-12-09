@@ -281,7 +281,13 @@ pub const StateActor = struct {
                 }
                 return err;
             };
-            const images = try self.capture.waitForFrame();
+            const images = self.capture.waitForFrame() catch |err| {
+                if (err == ChanError.Closed) {
+                    log.info("self.capture.waitForFrame: chan closed, exiting record thread\n", .{});
+                    break;
+                }
+                return err;
+            };
 
             var image_slc = [_]vk.Image{images.image};
             var image_view_slc = [_]vk.ImageView{images.image_view};
@@ -316,8 +322,8 @@ pub const StateActor = struct {
             self.state.has_source = false;
         }
 
-        // Force the record loop to exit by closing the next frame chan.
-        try self.capture.closeNextFrameChan();
+        // Force the record loop to exit by closing all capture channels.
+        self.capture.closeAllChannels();
 
         // Wait for the thread loop to complete
         if (self.record_thread) |record_thread| {
