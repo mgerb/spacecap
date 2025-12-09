@@ -253,7 +253,13 @@ pub const Pipewire = struct {
                 }
             }
 
-            self.buffer_queue.trySend(pwb) catch unreachable;
+            self.buffer_queue.trySend(pwb) catch |err| {
+                if (err == ChanError.Closed) {
+                    log.info("buffer_queue closed, cannot send new pipewire buffer", .{});
+                    _ = c.pw_stream_queue_buffer(self.stream, pwb);
+                    break;
+                } else unreachable;
+            };
         }
     }
 
@@ -270,7 +276,13 @@ pub const Pipewire = struct {
             // Drain the queue and grab the newest buffer.
             var latest: ?*c.struct_pw_buffer = null;
             while (true) {
-                const tmp = try self.buffer_queue.tryRecv();
+                const tmp = self.buffer_queue.tryRecv() catch |err| {
+                    if (err == ChanError.Closed) {
+                        log.info("tmp buffer_queue closed, exiting workerMain", .{});
+                        return;
+                    }
+                    return err;
+                };
 
                 if (tmp == null) {
                     break;
@@ -287,8 +299,11 @@ pub const Pipewire = struct {
             // Wait for the buffer queue if we still don't have a buffer.
             if (latest == null) {
                 latest = self.buffer_queue.recv() catch |err| {
+                    // If we exit here, we must also close the tx_chan so we
+                    // don't hold anything up on the consumer side.
                     if (err == ChanError.Closed) {
-                        break;
+                        log.info("latest buffer_queue closed, exiting workerMain", .{});
+                        return;
                     }
                     return err;
                 };

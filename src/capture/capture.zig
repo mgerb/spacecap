@@ -2,6 +2,7 @@ const util = @import("../util.zig");
 const std = @import("std");
 const types = @import("../types.zig");
 const vk = @import("vulkan");
+const ChanError = @import("../channel.zig").ChanError;
 
 pub const CaptureSourceType = enum { window, desktop };
 
@@ -18,9 +19,9 @@ pub const Capture = struct {
 
     const VTable = struct {
         selectSource: *const fn (*anyopaque, CaptureSourceType) anyerror!void,
-        nextFrame: *const fn (*anyopaque) anyerror!void,
-        closeNextFrameChan: *const fn (*anyopaque) anyerror!void,
-        waitForFrame: *const fn (*anyopaque) anyerror!types.VkImages,
+        nextFrame: *const fn (*anyopaque) ChanError!void,
+        closeAllChannels: *const fn (*anyopaque) void,
+        waitForFrame: *const fn (*anyopaque) ChanError!types.VkImages,
         size: *const fn (*anyopaque) ?types.Size,
         externalWaitSemaphore: *const fn (*anyopaque) ?vk.Semaphore,
         stop: *const fn (*anyopaque) anyerror!void,
@@ -31,15 +32,19 @@ pub const Capture = struct {
         return self.vtable.selectSource(self.ptr, source_type);
     }
 
-    pub fn nextFrame(self: *Self) !void {
+    pub fn nextFrame(self: *Self) ChanError!void {
         return self.vtable.nextFrame(self.ptr);
     }
 
-    pub fn closeNextFrameChan(self: *Self) !void {
-        return self.vtable.closeNextFrameChan(self.ptr);
+    /// Close all channels in the capture implementation. This is
+    /// done so that we don't have any unexpected deadlocks. Any
+    /// implementation of this interface must gracefully handle
+    /// all channels being closed.
+    pub fn closeAllChannels(self: *Self) void {
+        return self.vtable.closeAllChannels(self.ptr);
     }
 
-    pub fn waitForFrame(self: *Self) !types.VkImages {
+    pub fn waitForFrame(self: *Self) ChanError!types.VkImages {
         return self.vtable.waitForFrame(self.ptr);
     }
 
