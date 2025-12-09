@@ -133,23 +133,6 @@ pub const Pipewire = struct {
         self.worker_thread = try std.Thread.spawn(.{}, workerMain, .{self});
     }
 
-    pub fn stop(self: *Self) !void {
-        self.rx_chan.close();
-        self.buffer_queue.close();
-        if (self.worker_thread) |thread| {
-            thread.join();
-            self.worker_thread = null;
-        }
-        c.pw_thread_loop_lock(self.thread_loop);
-
-        // TODO: probably want to move this to deinit and only stop the loop here
-        _ = c.pw_stream_disconnect(self.stream);
-        self.stream = null;
-
-        c.pw_thread_loop_unlock(self.thread_loop);
-        c.pw_thread_loop_stop(self.thread_loop);
-    }
-
     fn build_format(self: *const Self, b: ?*c.spa_pod_builder, format: u32, modifiers: []const u64) ?*c.spa_pod {
         _ = self;
         var format_frame = std.mem.zeroes(c.spa_pod_frame);
@@ -640,7 +623,7 @@ pub const Pipewire = struct {
         message: [*c]const u8,
     ) callconv(.c) void {
         _ = opaque_;
-        std.log.err(
+        log.err(
             "[coreErrorCallback] pipewire error: id {}, seq: {}, res: {}: {s}",
             .{
                 id,
@@ -672,6 +655,21 @@ pub const Pipewire = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Stop the thread loop so we don't get anymore process callbacks.
+        if (self.thread_loop) |thread_loop| {
+            c.pw_thread_loop_lock(thread_loop);
+            // Make sure no signals are waiting.
+            c.pw_thread_loop_accept(thread_loop);
+            c.pw_thread_loop_unlock(thread_loop);
+            c.pw_thread_loop_stop(thread_loop);
+        }
+
+        // Drain the buffer queue and requeue any held pipewire buffers.
+        while (self.buffer_queue.tryRecv() catch null) |buffer| {
+            _ = c.pw_stream_queue_buffer(self.stream.?, buffer);
+        }
+
+        // Deinit all channels. This should terminate the worker thread.
         self.rx_chan.deinit();
         self.tx_chan.deinit();
         self.buffer_queue.deinit();
@@ -683,38 +681,34 @@ pub const Pipewire = struct {
 
         if (self.vk_foreign_semaphore) |vk_foreign_semaphore| {
             self.vulkan.device.destroySemaphore(vk_foreign_semaphore, null);
-        }
-        self.vk_foreign_semaphore = null;
-
-        self.resetImagePool();
-
-        self.portal.deinit();
-
-        if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_lock(thread_loop);
-
-            // make sure no signals are waiting
-            c.pw_thread_loop_accept(thread_loop);
-        }
-
-        if (self.core) |core| {
-            _ = c.pw_core_disconnect(core);
+            self.vk_foreign_semaphore = null;
         }
 
         if (self.stream) |stream| {
             _ = c.pw_stream_disconnect(stream);
+            _ = c.pw_stream_destroy(stream);
             self.stream = null;
         }
 
+        if (self.core) |core| {
+            _ = c.pw_core_disconnect(core);
+            self.core = null;
+        }
+
+        if (self.context) |context| {
+            _ = c.pw_context_destroy(context);
+            self.context = null;
+        }
+
         if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_unlock(self.thread_loop);
-            c.pw_thread_loop_stop(thread_loop);
             c.pw_thread_loop_destroy(thread_loop);
             self.thread_loop = null;
         }
 
         c.pw_deinit();
 
+        self.portal.deinit();
+        self.resetImagePool();
         self.buffer_images.deinit();
         self.allocator.destroy(self);
     }
