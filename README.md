@@ -1,22 +1,26 @@
 # Spacecap
 
-An extremely fast, cross platform (Linux/Windows) screen recording tool focused on replays.
+A cross platform (Linux/Windows) screen recording tool focused on performance.
 
-- written in [Zig](https://ziglang.org/)
-- hardware encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig))
-- UI built with [imgui](https://github.com/ocornut/imgui)
+- Written in [Zig](https://ziglang.org/).
+- Hardware encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
+- UI built with [imgui](https://github.com/ocornut/imgui).
 
-## ⚠️ WARNING ⚠️
+### ⚠️ WARNING ⚠️
 
-This is in the very early prototype stages and is under heavy construction. Don't expect anything to work right away.
+This is in the very early stages of development. Don't expect everything to work.
 
 **What is currently working?**
 
+**NOTE:** I'm testing with an RTX 3080 GPU. I have no idea if AMD works. I don't have one to test on.
+
 - Linux
-  - Select desktop/window
-  - Record and save last 60 seconds (no audio yet)
+  - Select desktop/window.
+  - Replay buffer with last 60 seconds of video (no audio yet).
+  - Output to .mp4 file.
+  - Global keybinds via desktop portal.
 - Windows
-  - Binaries are built for Windows, but capture has not been implemented yet
+  - Binaries are built for Windows, but capture has not been implemented yet (Linux is priority at the moment).
 
 ## How to compile and run
 
@@ -34,19 +38,21 @@ zig build run -Dnix
 
 ## Roadmap
 
-- Audio recording
-- Global keybinds
-- Screenshots
+- Set up pipeline to build and distribute binaries.
+  - Build for Flatpak.
+- Audio recording.
+- ~~Global keybinds~~
+- Screenshots.
 - ~~Show video preview on UI~~ - #9
-  - Live scrubbing of video preview
-- Video Player
-  - Simple video editor (trim start/end)
-- Convert video output (mp4, gif, etc.)
-- AV1 encoding (Currently only H264 is supported)
+  - Live scrubbing of video preview.
+- Video Player.
+  - Simple video editor (trim start/end).
+- Convert video output (mp4, gif, etc.).
+- Windows capture.
 
 ## Misc docs
 
-Enable pipewire debug logs
+Enable pipewire debug logs.
 
 ```sh
 export PIPEWIRE_DEBUG=4
