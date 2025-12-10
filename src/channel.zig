@@ -43,9 +43,13 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             mut: std.Thread.Mutex = std.Thread.Mutex{},
             cond: std.Thread.Condition = std.Thread.Condition{},
             data: T,
+            delivered: bool = false,
 
             fn getDataAndSignal(self: *@This()) T {
-                defer self.cond.signal();
+                self.mut.lock();
+                defer self.mut.unlock();
+                self.delivered = true;
+                self.cond.signal();
                 return self.data;
             }
         };
@@ -153,22 +157,44 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
 
             // prime condition
             sender.mut.lock(); // cond.wait below will unlock it and wait until signal, then relock it
-            defer sender.mut.unlock(); // unlocks the relock
 
             self.sendQ.append(self.alloc, &sender) catch |err| {
                 self.mut.unlock();
+                sender.mut.unlock();
                 return err;
             }; // make visible to other threads
             self.mut.unlock(); // allow all other threads to proceed. This thread is done reading/writing
 
-            // now just wait for receiver to signal sender
-            sender.cond.wait(&sender.mut);
+            // Wait until a receiver consumes the data or the channel closes. Condition
+            // waits can spuriously wake, so loop until the receiver marks the send as
+            // delivered to avoid leaving a dangling sender pointer in sendQ.
+            while (true) {
+                // A receiver may have already consumed the data before we start waiting.
+                if (sender.delivered) {
+                    sender.mut.unlock();
+                    break;
+                }
 
-            self.mut.lock();
-            defer self.mut.unlock();
-            if (self.closed) {
-                return ChanError.Closed;
+                // Check for closed without holding locks in the opposite order of receivers.
+                sender.mut.unlock();
+                self.mut.lock();
+                const closed = self.closed;
+                self.mut.unlock();
+                sender.mut.lock();
+
+                if (closed) {
+                    sender.mut.unlock();
+                    return ChanError.Closed;
+                }
+                if (sender.delivered) {
+                    sender.mut.unlock();
+                    break;
+                }
+
+                sender.cond.wait(&sender.mut);
             }
+
+            // Sender mutex is already unlocked here.
         }
 
         /// Try to receive
@@ -248,12 +274,10 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             };
             self.mut.unlock();
 
-            // Wait until a sender provides data. A sender may set data before we reach
-            // the wait; in that case we skip waiting. Condition waits can spuriously
-            // wake, so loop until data is present. We briefly drop receiver.mut to
-            // check for a closed channel to avoid lock-order inversion with senders.
-            while (receiver.data == null) {
-                receiver.cond.wait(&receiver.mut);
+            // Wait until a sender provides data. A sender may set data before we start
+            // waiting, so always re-check after reacquiring the mutex to avoid missed
+            // signals. Condition waits can spuriously wake, so loop until data or closed.
+            while (true) {
                 if (receiver.data != null) break;
 
                 receiver.mut.unlock();
@@ -261,9 +285,13 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
                 const closed = self.closed;
                 self.mut.unlock();
                 receiver.mut.lock();
+
+                if (receiver.data != null) break;
                 if (closed) {
                     return ChanError.Closed;
                 }
+
+                receiver.cond.wait(&receiver.mut);
             }
 
             self.mut.lock();
