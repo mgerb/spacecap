@@ -289,7 +289,7 @@ pub const Pipewire = struct {
 
                 // Return the buffer to pipewire.
                 if (latest) |old| {
-                    _ = c.pw_stream_queue_buffer(self.stream, old);
+                    self.queueBufferFromWorker(old);
                 }
 
                 latest = tmp.?;
@@ -311,9 +311,7 @@ pub const Pipewire = struct {
             const pipewire_buffer = latest.?;
 
             // Return the buffer to pipewire when we are done with it.
-            defer {
-                _ = c.pw_stream_queue_buffer(self.stream, pipewire_buffer);
-            }
+            defer self.queueBufferFromWorker(pipewire_buffer);
 
             if (pipewire_buffer.buffer == null or pipewire_buffer.buffer[0].datas[0].chunk[0].size <= 0) {
                 continue;
@@ -668,6 +666,14 @@ pub const Pipewire = struct {
         }
     }
 
+    fn queueBufferFromWorker(self: *Self, buffer: *c.struct_pw_buffer) void {
+        const stream = self.stream orelse return;
+        const loop = self.thread_loop orelse return;
+        c.pw_thread_loop_lock(loop);
+        defer c.pw_thread_loop_unlock(loop);
+        _ = c.pw_stream_queue_buffer(stream, buffer);
+    }
+
     pub fn deinit(self: *Self) void {
         // Stop the thread loop so we don't get anymore process callbacks.
         if (self.thread_loop) |thread_loop| {
@@ -680,7 +686,7 @@ pub const Pipewire = struct {
 
         // Drain the buffer queue and requeue any held pipewire buffers.
         while (self.buffer_queue.tryRecv() catch null) |buffer| {
-            _ = c.pw_stream_queue_buffer(self.stream.?, buffer);
+            self.queueBufferFromWorker(buffer);
         }
 
         // Deinit all channels. This should terminate the worker thread.
