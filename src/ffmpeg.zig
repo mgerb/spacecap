@@ -5,7 +5,9 @@ const c = @cImport({
     @cInclude("libavcodec/avcodec.h");
 });
 
-const ReplayBuffer = @import("./vulkan/replay_buffer.zig").ReplayBuffer;
+const replay_buffer_mod = @import("./vulkan/replay_buffer.zig");
+const ReplayBuffer = replay_buffer_mod.ReplayBuffer;
+const ReplayBufferNode = replay_buffer_mod.ReplayBufferNode;
 
 /// Write replay_buffer to a file.
 /// NOTE: This consumes the replay_buffer and takes ownership of the memory.
@@ -40,7 +42,9 @@ pub fn writeToFile(allocator: std.mem.Allocator, width: u32, height: u32, fps: u
     codecpar.*.extradata = extradata;
     codecpar.*.extradata_size = @intCast(replay_buffer.header_frame.items.len);
 
-    out_stream.*.time_base = c.AVRational{ .num = 1, .den = 90000 };
+    // Use nanosecond time base so we can map capture timestamps directly.
+    const ns_time_base = c.AVRational{ .num = 1, .den = 1_000_000_000 };
+    out_stream.*.time_base = ns_time_base;
     out_stream.*.avg_frame_rate = c.AVRational{ .num = @intCast(fps), .den = 1 };
     out_stream.*.r_frame_rate = c.AVRational{ .num = @intCast(fps), .den = 1 };
 
@@ -62,39 +66,73 @@ pub fn writeToFile(allocator: std.mem.Allocator, width: u32, height: u32, fps: u
     var pkt = c.av_packet_alloc();
     defer c.av_packet_free(&pkt);
 
-    var first_frame_time: ?i128 = null;
+    var first_frame_time_ns: ?i128 = null;
+    var pending_node: ?*ReplayBufferNode = null;
+    var pending_pts: i64 = 0;
+    var last_delta: i64 = 0;
+
     while (try replay_buffer.popFirstOwned()) |data| {
-        defer data.deinit();
         const frame = data.data;
 
-        if (first_frame_time == null) {
+        if (first_frame_time_ns == null) {
             // Make sure that the first frame is always an IDR frame.
-            // This will occur after the first replay is saved, because
-            // a new replay buffer is allocated, and then the encoder
-            // just continues where it left off.
-            if (!data.data.is_idr) {
+            if (!frame.is_idr) {
+                data.deinit();
                 continue;
             }
-            first_frame_time = frame.frame_time;
+            first_frame_time_ns = frame.frame_time;
         }
 
-        const current_pts: i64 = @intCast(frame.frame_time - first_frame_time.?);
+        const pts_ns = frame.frame_time - first_frame_time_ns.?;
+        const current_pts: i64 = c.av_rescale_q(@intCast(pts_ns), ns_time_base, out_stream.*.time_base);
 
-        pkt.*.data = frame.data.items.ptr;
-        pkt.*.size = @intCast(frame.data.items.len);
+        if (pending_node) |pending| {
+            // We now have the next PTS, so we can set duration on the pending packet.
+            const duration = if (current_pts > pending_pts) current_pts - pending_pts else 0;
+
+            pkt.*.data = pending.data.data.items.ptr;
+            pkt.*.size = @intCast(pending.data.data.items.len);
+            pkt.*.stream_index = stream_idx;
+            pkt.*.pts = pending_pts;
+            pkt.*.dts = pkt.*.pts;
+            pkt.*.duration = duration;
+            if (pending.data.is_idr) {
+                pkt.*.flags |= c.AV_PKT_FLAG_KEY;
+            } else {
+                pkt.*.flags &= ~@as(c_int, c.AV_PKT_FLAG_KEY);
+            }
+
+            ret = c.av_interleaved_write_frame(format_context, pkt);
+            c.av_packet_unref(pkt);
+            try checkErr(ret);
+
+            last_delta = duration;
+            pending.deinit();
+        }
+
+        pending_node = data;
+        pending_pts = current_pts;
+    }
+
+    if (pending_node) |pending| {
+        // Write the final packet with the last known delta (or zero if only one frame).
+        pkt.*.data = pending.data.data.items.ptr;
+        pkt.*.size = @intCast(pending.data.data.items.len);
         pkt.*.stream_index = stream_idx;
-
-        const your_pts_time_base = c.AVRational{ .num = 1, .den = 1_000_000_000 };
-        pkt.*.pts = c.av_rescale_q(current_pts, your_pts_time_base, out_stream.*.time_base);
+        pkt.*.pts = pending_pts;
         pkt.*.dts = pkt.*.pts;
-
-        if (frame.is_idr) {
+        pkt.*.duration = if (last_delta > 0) last_delta else 0;
+        if (pending.data.is_idr) {
             pkt.*.flags |= c.AV_PKT_FLAG_KEY;
+        } else {
+            pkt.*.flags &= ~@as(c_int, c.AV_PKT_FLAG_KEY);
         }
 
         ret = c.av_interleaved_write_frame(format_context, pkt);
         c.av_packet_unref(pkt);
         try checkErr(ret);
+
+        pending.deinit();
     }
 
     ret = c.av_write_trailer(format_context);

@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const ReplayBufferFrame = struct {
+pub const ReplayBufferFrame = struct {
     frame_time: i128,
     data: std.ArrayList(u8),
     is_idr: bool,
 };
 
-const ReplayBufferNode = struct {
+pub const ReplayBufferNode = struct {
     data: ReplayBufferFrame,
     node: std.DoublyLinkedList.Node = .{},
     allocator: std.mem.Allocator,
