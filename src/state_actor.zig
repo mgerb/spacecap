@@ -306,7 +306,7 @@ pub const StateActor = struct {
             const encode_result = try self.vulkan.encoder.?.encode(0);
             self.replay_buffer_mutex.lock();
             defer self.replay_buffer_mutex.unlock();
-            try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?);
+            try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?, images.frame_time_ns);
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
             self.state.replay_buffer_state.size = self.replay_buffer.?.size;

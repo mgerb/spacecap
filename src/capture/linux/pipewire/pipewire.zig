@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const vk = @import("vulkan");
 
 const pipewire_util = @import("./pipewire_util.zig");
@@ -26,6 +27,11 @@ pub const Pipewire = struct {
         fd: i64,
     };
 
+    const TimedBuffer = struct {
+        buffer: *c.struct_pw_buffer,
+        frame_time_ns: i128,
+    };
+
     portal: *Portal,
     allocator: std.mem.Allocator,
     thread_loop: ?*c.pw_thread_loop = null,
@@ -42,7 +48,7 @@ pub const Pipewire = struct {
     // Receive messages from Pipewire on this channel
     tx_chan: Chan(types.VkImages),
     // Queue for pw_buffers coming from the RT thread. Bounded to avoid starving PipeWire of buffers.
-    buffer_queue: BufferedChan(*c.struct_pw_buffer, 2),
+    buffer_queue: BufferedChan(TimedBuffer, 2),
     worker_thread: ?std.Thread = null,
     buffer_images: std.AutoHashMap(*c.struct_pw_buffer, BufferImage),
 
@@ -237,6 +243,7 @@ pub const Pipewire = struct {
             }
             const pwb_raw = tmp.?;
             const pwb: *c.struct_pw_buffer = @ptrCast(pwb_raw);
+            const dequeue_time_ns = std.time.nanoTimestamp();
 
             // Only keep buffers that use dmabuf.
             if (pwb.buffer == null or pwb.buffer[0].datas[0].type != c.SPA_DATA_DmaBuf) {
@@ -248,11 +255,16 @@ pub const Pipewire = struct {
             if (self.buffer_queue.full()) {
                 const dropped = self.buffer_queue.tryRecv() catch null;
                 if (dropped) |old| {
-                    _ = c.pw_stream_queue_buffer(self.stream, old);
+                    _ = c.pw_stream_queue_buffer(self.stream, old.buffer);
                 }
             }
 
-            self.buffer_queue.trySend(pwb) catch |err| {
+            const timed_buffer = TimedBuffer{
+                .buffer = pwb,
+                .frame_time_ns = dequeue_time_ns,
+            };
+
+            self.buffer_queue.trySend(timed_buffer) catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("buffer_queue closed, cannot send new pipewire buffer", .{});
                     _ = c.pw_stream_queue_buffer(self.stream, pwb);
@@ -273,7 +285,7 @@ pub const Pipewire = struct {
             };
 
             // Drain the queue and grab the newest buffer.
-            var latest: ?*c.struct_pw_buffer = null;
+            var timed_buffer: ?TimedBuffer = null;
             while (true) {
                 const tmp = self.buffer_queue.tryRecv() catch |err| {
                     if (err == ChanError.Closed) {
@@ -288,16 +300,16 @@ pub const Pipewire = struct {
                 }
 
                 // Return the buffer to pipewire.
-                if (latest) |old| {
-                    self.queueBufferFromWorker(old);
+                if (timed_buffer) |old| {
+                    self.queueBufferFromWorker(old.buffer);
                 }
 
-                latest = tmp.?;
+                timed_buffer = tmp.?;
             }
 
             // Wait for the buffer queue if we still don't have a buffer.
-            if (latest == null) {
-                latest = self.buffer_queue.recv() catch |err| {
+            if (timed_buffer == null) {
+                timed_buffer = self.buffer_queue.recv() catch |err| {
                     // If we exit here, we must also close the tx_chan so we
                     // don't hold anything up on the consumer side.
                     if (err == ChanError.Closed) {
@@ -308,20 +320,20 @@ pub const Pipewire = struct {
                 };
             }
 
-            const pipewire_buffer = latest.?;
+            assert(timed_buffer != null);
 
             // Return the buffer to pipewire when we are done with it.
-            defer self.queueBufferFromWorker(pipewire_buffer);
+            defer self.queueBufferFromWorker(timed_buffer.?.buffer);
 
-            if (pipewire_buffer.buffer == null or pipewire_buffer.buffer[0].datas[0].chunk[0].size <= 0) {
+            if (timed_buffer.?.buffer.buffer == null or timed_buffer.?.buffer.buffer[0].datas[0].chunk[0].size <= 0) {
                 continue;
             }
 
             var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0);
             defer subresource_layouts.deinit(self.allocator);
 
-            for (0..pipewire_buffer.buffer[0].n_datas) |i| {
-                const buf_data = pipewire_buffer.buffer[0].datas[i];
+            for (0..timed_buffer.?.buffer.buffer[0].n_datas) |i| {
+                const buf_data = timed_buffer.?.buffer.buffer[0].datas[i];
                 const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
                 const subresource_layout = vk.SubresourceLayout{
                     .offset = buf_data.chunk[0].offset,
@@ -334,15 +346,16 @@ pub const Pipewire = struct {
             }
 
             const buffer_images = try self.getOrCreateBufferImage(
-                pipewire_buffer,
+                timed_buffer.?.buffer,
                 self.info.?,
-                pipewire_buffer.buffer[0].datas[0].fd,
+                timed_buffer.?.buffer.buffer[0].datas[0].fd,
                 subresource_layouts.items,
             );
 
             const images = types.VkImages{
                 .image = buffer_images.image,
                 .image_view = buffer_images.image_view,
+                .frame_time_ns = timed_buffer.?.frame_time_ns,
             };
 
             self.tx_chan.send(images) catch |err| {
@@ -353,7 +366,7 @@ pub const Pipewire = struct {
             };
 
             util.printElapsed(self.frame_time, "frame time");
-            self.frame_time = std.time.nanoTimestamp();
+            self.frame_time = timed_buffer.?.frame_time_ns;
         }
     }
 
@@ -686,7 +699,7 @@ pub const Pipewire = struct {
 
         // Drain the buffer queue and requeue any held pipewire buffers.
         while (self.buffer_queue.tryRecv() catch null) |buffer| {
-            self.queueBufferFromWorker(buffer);
+            self.queueBufferFromWorker(buffer.buffer);
         }
 
         // Deinit all channels. This should terminate the worker thread.

@@ -54,6 +54,7 @@ pub const WindowsCapture = struct {
         return .{
             .image = .null_handle,
             .image_view = .null_handle,
+            .frame_time_ns = std.time.nanoTimestamp(),
         };
     }
 

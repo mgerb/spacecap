@@ -10,4 +10,6 @@ pub const Size = struct {
 pub const VkImages = struct {
     image: vk.Image,
     image_view: vk.ImageView,
+    /// Capture timestamp in nanoseconds.
+    frame_time_ns: i128,
 };
