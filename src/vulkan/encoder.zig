@@ -1204,9 +1204,10 @@ pub const Encoder = struct {
         self: *Self,
         encode_result: EncodeResult,
         replay_buffer: *ReplayBuffer,
+        frame_time_ns: i128,
     ) !void {
         const data = try self.getOutputVideoPacket();
-        try replay_buffer.addFrame(data.data[0..data.size], encode_result.idr);
+        try replay_buffer.addFrame(data.data[0..data.size], frame_time_ns, encode_result.idr);
     }
 
     fn getOutputVideoPacket(self: *Self) !EncodeData {

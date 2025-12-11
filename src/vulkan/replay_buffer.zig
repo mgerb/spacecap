@@ -53,14 +53,14 @@ pub const ReplayBuffer = struct {
         return self;
     }
 
-    pub fn addFrame(self: *Self, data: []const u8, is_idr: bool) !void {
+    pub fn addFrame(self: *Self, data: []const u8, frame_time_ns: i128, is_idr: bool) !void {
         var data_list = try std.ArrayList(u8).initCapacity(self.allocator, data.len);
         try data_list.appendSlice(self.allocator, data);
 
         var node = try self.allocator.create(ReplayBufferNode);
         node.* = .{
             .data = .{
-                .frame_time = std.time.nanoTimestamp(),
+                .frame_time = frame_time_ns,
                 .data = data_list,
                 .is_idr = is_idr,
             },
