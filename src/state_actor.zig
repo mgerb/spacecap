@@ -15,6 +15,7 @@ const ReplayBuffer = @import("./vulkan/replay_buffer.zig").ReplayBuffer;
 const ffmpeg = @import("./ffmpeg.zig");
 const CaptureSourceType = @import("./capture/capture.zig").CaptureSourceType;
 const UserSettings = @import("./user_settings.zig").UserSettings;
+const types = @import("./types.zig");
 
 const log = std.log.scoped(.state_actor);
 
@@ -249,7 +250,7 @@ pub const StateActor = struct {
         self.replay_buffer_mutex.unlock();
         self.ui_mutex.unlock();
 
-        try self.vulkan.initCapturePreviewSwapchain(width, height);
+        try self.vulkan.initCapturePreviewRingBuffer(width, height);
 
         var previous_frame_start_time: i128 = 0;
 
@@ -263,12 +264,6 @@ pub const StateActor = struct {
             if (previous_frame_start_time > 0 and next_projected_frame_start_time > now) {
                 // TODO: add to state
                 Util.printElapsed(previous_frame_start_time, "previous_frame_start_time");
-                // NOTE: This TODO is old and probably irrelevant now that I have
-                // refactored some of the pipewire video logic. Revisit this to confirm.
-                // TODO: this makes 60fps feel choppy. I wonder if we need to
-                // not limit anything here and just modify FPS when outputting with
-                // ffmpeg. DEFINITELY CAN'T HAVE THIS HERE - IT MESSES WITH
-                // THE VIDEO PREVIEW ON THE UI
                 std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
             }
 
@@ -281,32 +276,49 @@ pub const StateActor = struct {
                 }
                 return err;
             };
-            const images = self.capture.waitForFrame() catch |err| {
+
+            // This thing is ref counted so release when we are done with it here.
+            const vulkan_image_buffer = self.capture.waitForFrame() catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("self.capture.waitForFrame: chan closed, exiting record thread\n", .{});
                     break;
                 }
                 return err;
             };
+            defer {
+                vulkan_image_buffer.value.*.in_use.store(false, .release);
+                if (vulkan_image_buffer.releaseUnwrap()) |val| {
+                    val.deinit();
+                }
+            }
 
-            var image_slc = [_]vk.Image{images.image};
-            var image_view_slc = [_]vk.ImageView{images.image_view};
+            var image_slc = [_]vk.Image{vulkan_image_buffer.value.*.image};
+            var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.value.*.image_view};
 
-            const copy_semaphore = try self.vulkan.capture_preview_swapchain.?.copyImageToSwapChain(
-                image_slc[0],
-                self.capture.externalWaitSemaphore().?,
+            const copy_data = try self.vulkan.capture_preview_ring_buffer.?.copyImageToRingBuffer(
+                .{
+                    .src_image = image_slc[0],
+                    .src_width = vulkan_image_buffer.value.*.width,
+                    .src_height = vulkan_image_buffer.value.*.height,
+                    .wait_semaphore = null,
+                    .use_signal_semaphore = true,
+                },
             );
 
             try self.vulkan.encoder.?.prepareEncode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
-                .external_wait_semaphore = copy_semaphore,
+                .input_size = .{
+                    .width = vulkan_image_buffer.value.*.width,
+                    .height = vulkan_image_buffer.value.*.height,
+                },
+                .external_wait_semaphore = copy_data.semaphore,
             });
 
             const encode_result = try self.vulkan.encoder.?.encode(0);
             self.replay_buffer_mutex.lock();
             defer self.replay_buffer_mutex.unlock();
-            try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?, images.frame_time_ns);
+            try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?, vulkan_image_buffer.value.*.copy_image_timestamp);
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
             self.state.replay_buffer_state.size = self.replay_buffer.?.size;
@@ -331,7 +343,7 @@ pub const StateActor = struct {
             record_thread.join();
         }
 
-        try self.vulkan.destroyCapturePreviewSwapchain();
+        try self.vulkan.destroyCapturePreviewRingBuffer();
 
         try self.capture.stop();
 

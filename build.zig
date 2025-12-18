@@ -58,6 +58,10 @@ fn addSharedDependencies(
     const imguiz = b.dependency("imguiz", .{}).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 
+    // zigrc
+    const zigrc = b.dependency("zigrc", .{});
+    exe.root_module.addImport("zigrc", zigrc.module("zigrc"));
+
     // ffmpeg
     // Add ffmpeg headers here. They can be shared cross platform. Libs
     // are added separately because they are platform specific.

@@ -6,6 +6,10 @@ layout (binding = 2, rg8) uniform writeonly image2D outputImage1;
 
 layout (local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
+layout(push_constant) uniform PushConstants {
+    uvec2 inputSize;
+} pushConstants;
+
 const mat4 rgb2ycbcr = mat4(
     0.299, -0.169,  0.5,   0,
     0.587, -0.331, -0.419, 0,
@@ -14,7 +18,14 @@ const mat4 rgb2ycbcr = mat4(
 );
 
 void main() {
-    vec4 bgra = imageLoad(inputImage,  ivec2(gl_GlobalInvocationID.xy));
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    if (gid.x >= int(pushConstants.inputSize.x) || gid.y >= int(pushConstants.inputSize.y)) {
+        imageStore(outputImage0, gid, vec4(0.0));
+        imageStore(outputImage1, ivec2(gid.x / 2, gid.y / 2), vec4(0.5, 0.5, 0.0, 0.0));
+        return;
+    }
+
+    vec4 bgra = imageLoad(inputImage, gid);
     vec4 rgba = vec4(bgra.b, bgra.g, bgra.r, 1.0);
 
     vec4 ycbcra = rgb2ycbcr * rgba;

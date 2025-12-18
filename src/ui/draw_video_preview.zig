@@ -1,7 +1,8 @@
 const c = @import("imguiz").imguiz;
-const CapturePreviewBuffer = @import("../vulkan/capture_preview_swapchain.zig").CapturePreviewBuffer;
+const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
 
-pub fn drawVideoPreview(buffer: *CapturePreviewBuffer) !void {
+pub fn drawVideoPreview(capture_preview_buffer: *CapturePreviewTexture, width: u32, height: u32) !void {
     const left_panel_width = 250.0;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
     const container_width = viewport_size.x - left_panel_width;
@@ -27,8 +28,8 @@ pub fn drawVideoPreview(buffer: *CapturePreviewBuffer) !void {
     defer c.ImGui_PopStyleVarEx(2);
     defer c.ImGui_End();
 
-    const capture_width = @as(f32, @floatFromInt(buffer.width));
-    const capture_height = @as(f32, @floatFromInt(buffer.height));
+    const capture_width = @as(f32, @floatFromInt(width));
+    const capture_height = @as(f32, @floatFromInt(height));
 
     const aspect_ratio = capture_width / capture_height;
 
@@ -47,5 +48,5 @@ pub fn drawVideoPreview(buffer: *CapturePreviewBuffer) !void {
 
     const cursor_x = (container_width - render_width) / 2;
     c.ImGui_SetCursorPosX(cursor_x);
-    c.ImGui_Image(buffer.im_texture_ref, .{ .x = render_width, .y = render_height });
+    c.ImGui_Image(capture_preview_buffer.im_texture_ref, .{ .x = render_width, .y = render_height });
 }

@@ -8,7 +8,7 @@ const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
 const drawVideoPreview = @import("./draw_video_preview.zig").drawVideoPreview;
-const CapturePreviewBuffer = @import("../vulkan/capture_preview_swapchain.zig").CapturePreviewBuffer;
+const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -55,6 +55,40 @@ pub const UI = struct {
         try self.initVulkan();
 
         return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.vulkan.waitForAllFencesBegin() catch unreachable;
+        defer self.vulkan.waitForAllFencesEnd();
+
+        c.cImGui_ImplVulkan_Shutdown();
+        c.cImGui_ImplSDL3_Shutdown();
+
+        if (self.descriptor_pool) |descriptor_pool| {
+            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
+        }
+
+        if (self.vulkan.window) |window| {
+            c.cImGui_ImplVulkanH_DestroyWindow(
+                self.vkInstance(),
+                self.vkDevice(),
+                @ptrCast(@constCast(&window)),
+                null,
+            );
+            self.vulkan.window = null;
+        }
+
+        // Seems like destroying the vulkan window destroys the surface?
+        // if (self.surface) |surface| {
+        //     c.SDL_Vulkan_DestroySurface(self.vkInstance(), surface, null);
+        // }
+
+        if (self.window) |window| {
+            c.SDL_DestroyWindow(window);
+        }
+        c.SDL_Quit();
+
+        self.allocator.destroy(self);
     }
 
     /// Caller owns memory
@@ -265,12 +299,12 @@ pub const UI = struct {
             c.cImGui_ImplSDL3_NewFrame();
             c.ImGui_NewFrame();
 
-            var capture_preview_buffer: ?*CapturePreviewBuffer = null;
+            var capture_preview_buffer: ?*VulkanImageBuffer = null;
             defer {
-                // First, check if the swapchain has been destroyed. The buffer
+                // First, check if the ring buffer has been destroyed. The buffer
                 // gets locked when we call `getMostRecentBuffer`, so we must
                 // unlock it before the next iteration.
-                if (self.vulkan.capture_preview_swapchain != null) {
+                if (self.vulkan.capture_preview_ring_buffer != null) {
                     if (capture_preview_buffer) |buffer| {
                         buffer.mutex.unlock();
                     }
@@ -294,10 +328,11 @@ pub const UI = struct {
                 try drawLeftColumn(self.allocator, self.state_actor);
 
                 if (self.state_actor.state.recording) {
-                    if (self.vulkan.capture_preview_swapchain) |capture_preview_swapchain| {
-                        if (capture_preview_swapchain.getMostRecentBuffer()) |buffer| {
+                    if (self.vulkan.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
+                        if (capture_preview_ring_buffer.getMostRecentBuffer()) |buffer| {
                             capture_preview_buffer = buffer;
-                            try drawVideoPreview(buffer);
+                            const capture_preview_texture = try self.vulkan.getCapturePreviewTexture(buffer);
+                            try drawVideoPreview(capture_preview_texture, buffer.width, buffer.height);
                         }
                     }
                 }
@@ -524,39 +559,5 @@ pub const UI = struct {
 
     fn vkQueue(self: *const Self) c.VkQueue {
         return @ptrFromInt(@intFromEnum(self.vulkan.graphics_queue.handle));
-    }
-
-    pub fn deinit(self: *const Self) void {
-        self.vulkan.waitForAllFencesBegin() catch unreachable;
-        defer self.vulkan.waitForAllFencesEnd();
-
-        c.cImGui_ImplVulkan_Shutdown();
-        c.cImGui_ImplSDL3_Shutdown();
-
-        if (self.descriptor_pool) |descriptor_pool| {
-            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
-        }
-
-        if (self.vulkan.window) |window| {
-            c.cImGui_ImplVulkanH_DestroyWindow(
-                self.vkInstance(),
-                self.vkDevice(),
-                @ptrCast(@constCast(&window)),
-                null,
-            );
-            self.vulkan.window = null;
-        }
-
-        // Seems like destroying the vulkan window destroys the surface?
-        // if (self.surface) |surface| {
-        //     c.SDL_Vulkan_DestroySurface(self.vkInstance(), surface, null);
-        // }
-
-        if (self.window) |window| {
-            c.SDL_DestroyWindow(window);
-        }
-        c.SDL_Quit();
-
-        self.allocator.destroy(self);
     }
 };
