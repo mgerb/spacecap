@@ -51,6 +51,10 @@ pub const Pipewire = struct {
     buffer_queue: BufferedChan(TimedBuffer, 2),
     worker_thread: ?std.Thread = null,
     buffer_images: std.AutoHashMap(*c.struct_pw_buffer, BufferImage),
+    buffer_images_mutex: std.Thread.Mutex = .{},
+    // Keep track of active buffers so that we don't try to send
+    // frames to the encoder if a buffer is destroyed.
+    active_buffers: std.AutoHashMap(*c.struct_pw_buffer, void),
 
     /// Stores all information about the video stream
     info: ?c.spa_video_info_raw = null,
@@ -75,6 +79,8 @@ pub const Pipewire = struct {
             .portal = try Portal.init(allocator),
             .vulkan = vulkan,
             .buffer_images = std.AutoHashMap(*c.struct_pw_buffer, BufferImage).init(allocator),
+            .active_buffers = std.AutoHashMap(*c.struct_pw_buffer, void).init(allocator),
+            .buffer_images_mutex = .{},
             .frame_time = std.time.nanoTimestamp(),
         };
 
@@ -243,6 +249,10 @@ pub const Pipewire = struct {
             }
             const pwb_raw = tmp.?;
             const pwb: *c.struct_pw_buffer = @ptrCast(pwb_raw);
+            self.addActiveBuffer(pwb) catch |err| {
+                log.err("[streamProcessCallback] failed to register pipewire buffer: {}", .{err});
+                return;
+            };
             const dequeue_time_ns = std.time.nanoTimestamp();
 
             // Only keep buffers that use dmabuf.
@@ -322,18 +332,24 @@ pub const Pipewire = struct {
 
             assert(timed_buffer != null);
 
-            // Return the buffer to pipewire when we are done with it.
-            defer self.queueBufferFromWorker(timed_buffer.?.buffer);
+            const latest_buffer = timed_buffer.?;
 
-            if (timed_buffer.?.buffer.buffer == null or timed_buffer.?.buffer.buffer[0].datas[0].chunk[0].size <= 0) {
+            if (!self.isBufferActive(latest_buffer.buffer)) {
+                continue;
+            }
+
+            // Return the buffer to pipewire when we are done with it.
+            defer self.queueBufferFromWorker(latest_buffer.buffer);
+
+            if (latest_buffer.buffer.buffer == null or latest_buffer.buffer.buffer[0].datas[0].chunk[0].size <= 0) {
                 continue;
             }
 
             var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0);
             defer subresource_layouts.deinit(self.allocator);
 
-            for (0..timed_buffer.?.buffer.buffer[0].n_datas) |i| {
-                const buf_data = timed_buffer.?.buffer.buffer[0].datas[i];
+            for (0..latest_buffer.buffer.buffer[0].n_datas) |i| {
+                const buf_data = latest_buffer.buffer.buffer[0].datas[i];
                 const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
                 const subresource_layout = vk.SubresourceLayout{
                     .offset = buf_data.chunk[0].offset,
@@ -345,17 +361,22 @@ pub const Pipewire = struct {
                 try subresource_layouts.append(self.allocator, subresource_layout);
             }
 
-            const buffer_images = try self.getOrCreateBufferImage(
-                timed_buffer.?.buffer,
+            const buffer_images = self.getOrCreateBufferImage(
+                latest_buffer.buffer,
                 self.info.?,
-                timed_buffer.?.buffer.buffer[0].datas[0].fd,
+                latest_buffer.buffer.buffer[0].datas[0].fd,
                 subresource_layouts.items,
-            );
+            ) catch |err| {
+                if (err == error.InactiveBuffer) {
+                    continue;
+                }
+                return err;
+            };
 
             const images = types.VkImages{
                 .image = buffer_images.image,
                 .image_view = buffer_images.image_view,
-                .frame_time_ns = timed_buffer.?.frame_time_ns,
+                .frame_time_ns = latest_buffer.frame_time_ns,
             };
 
             self.tx_chan.send(images) catch |err| {
@@ -366,7 +387,7 @@ pub const Pipewire = struct {
             };
 
             util.printElapsed(self.frame_time, "frame time");
-            self.frame_time = timed_buffer.?.frame_time_ns;
+            self.frame_time = latest_buffer.frame_time_ns;
         }
     }
 
@@ -500,6 +521,13 @@ pub const Pipewire = struct {
         fd: i64,
         subresource_layouts: []vk.SubresourceLayout,
     ) !BufferImage {
+        self.buffer_images_mutex.lock();
+        defer self.buffer_images_mutex.unlock();
+
+        if (!self.active_buffers.contains(pw_buffer)) {
+            return error.InactiveBuffer;
+        }
+
         if (self.vk_foreign_semaphore == null) {
             self.vk_foreign_semaphore = try self.vulkan.device.createSemaphore(&.{}, null);
         }
@@ -666,6 +694,8 @@ pub const Pipewire = struct {
     }
 
     fn resetImagePool(self: *Self) void {
+        self.buffer_images_mutex.lock();
+        defer self.buffer_images_mutex.unlock();
         var it = self.buffer_images.valueIterator();
         while (it.next()) |buffer_image| {
             self.destroyBufferImage(buffer_image.*);
@@ -673,13 +703,41 @@ pub const Pipewire = struct {
         self.buffer_images.clearRetainingCapacity();
     }
 
+    fn addActiveBuffer(self: *Self, pw_buffer: *c.struct_pw_buffer) !void {
+        self.buffer_images_mutex.lock();
+        defer self.buffer_images_mutex.unlock();
+        try self.active_buffers.put(pw_buffer, {});
+    }
+
     fn removeBuffer(self: *Self, pw_buffer: *c.struct_pw_buffer) void {
-        if (self.buffer_images.fetchRemove(pw_buffer)) |entry| {
-            self.destroyBufferImage(entry.value);
+        var buffer_image: ?BufferImage = null;
+
+        {
+            self.buffer_images_mutex.lock();
+            defer self.buffer_images_mutex.unlock();
+
+            _ = self.active_buffers.remove(pw_buffer);
+
+            if (self.buffer_images.fetchRemove(pw_buffer)) |entry| {
+                buffer_image = entry.value;
+            }
+        }
+
+        if (buffer_image) |image| {
+            self.destroyBufferImage(image);
         }
     }
 
+    fn isBufferActive(self: *Self, pw_buffer: *c.struct_pw_buffer) bool {
+        self.buffer_images_mutex.lock();
+        defer self.buffer_images_mutex.unlock();
+        return self.active_buffers.contains(pw_buffer);
+    }
+
     fn queueBufferFromWorker(self: *Self, buffer: *c.struct_pw_buffer) void {
+        if (!self.isBufferActive(buffer)) {
+            return;
+        }
         const stream = self.stream orelse return;
         const loop = self.thread_loop orelse return;
         c.pw_thread_loop_lock(loop);
@@ -742,6 +800,7 @@ pub const Pipewire = struct {
 
         self.portal.deinit();
         self.resetImagePool();
+        self.active_buffers.deinit();
         self.buffer_images.deinit();
         self.allocator.destroy(self);
     }
