@@ -6,6 +6,7 @@ const Vulkan = @import("./vulkan.zig").Vulkan;
 const Queue = @import("./vulkan.zig").Queue;
 const ReplayBuffer = @import("./replay_buffer.zig").ReplayBuffer;
 const h264_parameters = @import("./h264_parameters.zig");
+const types = @import("../types.zig");
 
 const Display = u32;
 const REFERENCE_IMAGE_COUNT = 2;
@@ -19,6 +20,11 @@ const EncodeData = struct {
     size: usize,
 };
 
+const PushConstants = extern struct {
+    input_width: u32,
+    input_height: u32,
+};
+
 pub const Encoder = struct {
     const Self = @This();
 
@@ -30,6 +36,7 @@ pub const Encoder = struct {
     width: u32,
     fps: u32,
     bit_rate: u64,
+    current_input_size: types.Size,
 
     vui: ?vk.StdVideoH264SequenceParameterSetVui = null,
     sps: ?vk.StdVideoH264SequenceParameterSet = null,
@@ -96,14 +103,17 @@ pub const Encoder = struct {
         fps: u32,
         bit_rate: u64,
     ) !*Self {
+        const even_width = width & ~@as(u32, 1);
+        const even_height = height & ~@as(u32, 1);
         var self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
             .vulkan = vulkan,
-            .height = height & ~@as(u32, 1),
-            .width = width & ~@as(u32, 1),
+            .height = even_height,
+            .width = even_width,
             .fps = fps,
             .bit_rate = bit_rate,
+            .current_input_size = .{ .width = even_width, .height = even_height },
 
             .bit_stream_header = try std.ArrayList(u8).initCapacity(allocator, 0),
             .encode_session_bind_memory = try std.ArrayList(vk.BindVideoSessionMemoryInfoKHR).initCapacity(allocator, 0),
@@ -702,9 +712,17 @@ pub const Encoder = struct {
 
         self.compute_descriptor_set_layout = try self.vulkan.device.createDescriptorSetLayout(&layout_info, null);
 
+        const push_constant_range = vk.PushConstantRange{
+            .stage_flags = .{ .compute_bit = true },
+            .offset = 0,
+            .size = @sizeOf(PushConstants),
+        };
+
         const pipeline_layout_create_info = vk.PipelineLayoutCreateInfo{
             .set_layout_count = 1,
             .p_set_layouts = @ptrCast(&self.compute_descriptor_set_layout.?),
+            .push_constant_range_count = 1,
+            .p_push_constant_ranges = @ptrCast(&push_constant_range),
         };
 
         self.compute_pipeline_layout = try self.vulkan.device.createPipelineLayout(&pipeline_layout_create_info, null);
@@ -974,6 +992,20 @@ pub const Encoder = struct {
             null,
         );
 
+        const push_constants = PushConstants{
+            .input_width = @min(self.current_input_size.width, self.width),
+            .input_height = @min(self.current_input_size.height, self.height),
+        };
+
+        self.vulkan.device.cmdPushConstants(
+            self.compute_command_buffer.?,
+            self.compute_pipeline_layout.?,
+            .{ .compute_bit = true },
+            0,
+            @sizeOf(PushConstants),
+            @ptrCast(&push_constants),
+        );
+
         self.vulkan.device.cmdDispatch(
             self.compute_command_buffer.?,
             (self.width + 15) / 16,
@@ -1013,8 +1045,15 @@ pub const Encoder = struct {
     pub fn prepareEncode(self: *Self, opts: struct {
         image: []vk.Image,
         image_view: []vk.ImageView,
+        input_size: types.Size,
         external_wait_semaphore: ?vk.Semaphore,
     }) !void {
+        const sanitized_width = @max(opts.input_size.width & ~@as(u32, 1), 1);
+        const sanitized_height = @max(opts.input_size.height & ~@as(u32, 1), 1);
+        self.current_input_size = .{
+            .width = sanitized_width,
+            .height = sanitized_height,
+        };
         if (opts.external_wait_semaphore) |external_wait_semaphore| {
             self.updateExternalWaitSemaphores(external_wait_semaphore);
         }

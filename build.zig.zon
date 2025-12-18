@@ -101,6 +101,10 @@
             .url = "https://github.com/ianprime0509/zig-gobject/releases/download/v0.3.0/bindings-gnome47.tar.zst",
             .hash = "gobject-0.3.0-Skun7IrmdQHh-PhvmchG9AKnrR2RFS5EhBe5oedb0ITv",
         },
+        .zigrc = .{
+            .url = "git+https://github.com/Aandreba/zigrc#b1e98f1cc506e975bdb27341c27d920021e7b4d8",
+            .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.

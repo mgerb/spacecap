@@ -1,38 +1,25 @@
 const std = @import("std");
-const assert = std.debug.assert;
-const vk = @import("vulkan");
+const rc = @import("zigrc");
 
 const pipewire_util = @import("./pipewire_util.zig");
-const types = @import("../../../types.zig");
 const Chan = @import("../../../channel.zig").Chan;
 const ChanError = @import("../../../channel.zig").ChanError;
-const BufferedChan = @import("../../../channel.zig").BufferedChan;
-const util = @import("../../../util.zig");
+const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanImageBufferChan;
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
 const CaptureError = @import("../../capture.zig").CaptureError;
 const c = @import("./pipewire_include.zig").c;
 const c_def = @import("./pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
 const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
-
-const log = std.log.scoped(.pipewire);
+const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
+const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 pub const Pipewire = struct {
+    const log = std.log.scoped(.Pipewire);
     const Self = @This();
 
-    const BufferImage = struct {
-        image: vk.Image,
-        image_view: vk.ImageView,
-        device_memory: vk.DeviceMemory,
-        fd: i64,
-    };
-
-    const TimedBuffer = struct {
-        buffer: *c.struct_pw_buffer,
-        frame_time_ns: i128,
-    };
-
     portal: *Portal,
+    vulkan: *Vulkan,
     allocator: std.mem.Allocator,
     thread_loop: ?*c.pw_thread_loop = null,
     context: ?*c.pw_context = null,
@@ -42,29 +29,18 @@ pub const Pipewire = struct {
     stream_listener: c.spa_hook = undefined,
     has_format: bool = false,
     format_changed: bool = false,
-    frame_data: ?[]u8 = null,
-    // Send messages to Pipewire on this channel
+    // Send messages to Pipewire on this channel.
     rx_chan: Chan(bool),
-    // Receive messages from Pipewire on this channel
-    tx_chan: Chan(types.VkImages),
-    // Queue for pw_buffers coming from the RT thread. Bounded to avoid starving PipeWire of buffers.
-    buffer_queue: BufferedChan(TimedBuffer, 2),
+    // Receive messages from Pipewire on this channel.
+    tx_chan: Chan(rc.Arc(*VulkanImageBuffer)),
     worker_thread: ?std.Thread = null,
-    buffer_images: std.AutoHashMap(*c.struct_pw_buffer, BufferImage),
-    buffer_images_mutex: std.Thread.Mutex = .{},
-    // Keep track of active buffers so that we don't try to send
-    // frames to the encoder if a buffer is destroyed.
-    active_buffers: std.AutoHashMap(*c.struct_pw_buffer, void),
-
-    /// Stores all information about the video stream
+    pipewire_frame_buffer_manager: ?*PipewireFrameBufferManager = null,
+    /// Stores all information about the video stream.
     info: ?c.spa_video_info_raw = null,
-
-    // vulkan stuff
-    vulkan: *Vulkan,
-    /// This is the semaphore for the pipewire dambuf
-    vk_foreign_semaphore: ?vk.Semaphore = null,
-
-    frame_time: i128 = 0,
+    /// This channel is used to communicate from the main pipewire thread
+    /// to the worker thread. The worker thread must be separate from the
+    /// main pipewire loop, because it blocks and waits for the consumer.
+    vulkan_image_buffer_chan: VulkanImageBufferChan,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -73,19 +49,67 @@ pub const Pipewire = struct {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
-            .rx_chan = try Chan(bool).init(allocator),
-            .tx_chan = try Chan(types.VkImages).init(allocator),
-            .buffer_queue = try .init(allocator),
-            .portal = try Portal.init(allocator),
+            .rx_chan = try .init(allocator),
+            .tx_chan = try .init(allocator),
+            .portal = try .init(allocator),
             .vulkan = vulkan,
-            .buffer_images = std.AutoHashMap(*c.struct_pw_buffer, BufferImage).init(allocator),
-            .active_buffers = std.AutoHashMap(*c.struct_pw_buffer, void).init(allocator),
-            .buffer_images_mutex = .{},
-            .frame_time = std.time.nanoTimestamp(),
+            .vulkan_image_buffer_chan = try VulkanImageBufferChan.init(allocator),
         };
 
         c.pw_init(null, null);
         return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        // Stop the thread loop so we don't get anymore process callbacks.
+        if (self.thread_loop) |thread_loop| {
+            c.pw_thread_loop_lock(thread_loop);
+            // Make sure no signals are waiting.
+            c.pw_thread_loop_accept(thread_loop);
+            c.pw_thread_loop_unlock(thread_loop);
+            c.pw_thread_loop_stop(thread_loop);
+        }
+
+        // Deinit all channels. This should terminate the worker thread.
+        self.rx_chan.deinit();
+        self.tx_chan.deinit();
+        self.vulkan_image_buffer_chan.deinit();
+
+        if (self.worker_thread) |thread| {
+            thread.join();
+            self.worker_thread = null;
+        }
+
+        if (self.stream) |stream| {
+            _ = c.pw_stream_disconnect(stream);
+            _ = c.pw_stream_destroy(stream);
+            self.stream = null;
+        }
+
+        if (self.core) |core| {
+            _ = c.pw_core_disconnect(core);
+            self.core = null;
+        }
+
+        if (self.context) |context| {
+            _ = c.pw_context_destroy(context);
+            self.context = null;
+        }
+
+        if (self.thread_loop) |thread_loop| {
+            c.pw_thread_loop_destroy(thread_loop);
+            self.thread_loop = null;
+        }
+
+        c.pw_deinit();
+
+        if (self.pipewire_frame_buffer_manager) |frame_buffer_manager| {
+            frame_buffer_manager.deinit();
+        }
+
+        self.vulkan.destroyCaptureRingBuffer();
+        self.portal.deinit();
+        self.allocator.destroy(self);
     }
 
     pub fn selectSource(
@@ -126,7 +150,17 @@ pub const Pipewire = struct {
 
         _ = c.pw_core_add_listener(self.core, &self.core_listener, &core_events, null);
 
-        self.stream = c.pw_stream_new(self.core, "Spacecap (host)", c.pw_properties_new(c.PW_KEY_MEDIA_TYPE, "Video", c.PW_KEY_MEDIA_CATEGORY, "Capture", c.PW_KEY_MEDIA_ROLE, "Screen", c.NULL)) orelse return error.pw_stream_new;
+        self.stream = c.pw_stream_new(self.core, "Spacecap (host)", c.pw_properties_new(
+            c.PW_KEY_MEDIA_TYPE,
+            "Video",
+            c.PW_KEY_MEDIA_CATEGORY,
+            "Capture",
+            c.PW_KEY_MEDIA_ROLE,
+            "Screen",
+            c.NULL,
+        )) orelse return error.pw_stream_new;
+
+        self.pipewire_frame_buffer_manager = try .init(self.allocator, self.vulkan);
 
         c.pw_stream_add_listener(self.stream, &self.stream_listener, &stream_events, self);
 
@@ -154,7 +188,7 @@ pub const Pipewire = struct {
         _ = c.spa_pod_builder_add(b, @as(u32, c.SPA_FORMAT_mediaSubtype), "I", @as(i32, c.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
         _ = c.spa_pod_builder_add(b, @as(u32, c.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
 
-        // TODO: need to update this to handle single modifiers - see fixate example
+        // TODO: Need to update this to handle single modifiers - see fixate example.
         if (modifiers.len > 0) {
             var modifier_frame = std.mem.zeroes(c.spa_pod_frame);
 
@@ -168,9 +202,23 @@ pub const Pipewire = struct {
             _ = c_def.spa_pod_builder_pop(b, &modifier_frame);
         }
 
-        // TODO: update fps
-        // Keep one line otherwise zls breaks from the variadic c functions when cursoring over args.
-        _ = c.spa_pod_builder_add(b, @as(u32, c.SPA_FORMAT_VIDEO_size), "?rR", @as(u32, 3), &c.SPA_RECTANGLE(32, 32), &c.SPA_RECTANGLE(1, 1), &c.SPA_RECTANGLE(16384, 16384), @as(u32, c.SPA_FORMAT_VIDEO_framerate), "?rF", @as(u32, 3), &c.SPA_FRACTION(60, 1), &c.SPA_FRACTION(0, 1), &c.SPA_FRACTION(500, 1), @as(i32, 0));
+        // TODO: Update fps.
+        _ = c.spa_pod_builder_add(
+            b,
+            @as(u32, c.SPA_FORMAT_VIDEO_size),
+            "?rR",
+            @as(u32, 3),
+            &c.SPA_RECTANGLE(32, 32),
+            &c.SPA_RECTANGLE(1, 1),
+            &c.SPA_RECTANGLE(16384, 16384),
+            @as(u32, c.SPA_FORMAT_VIDEO_framerate),
+            "?rF",
+            @as(u32, 3),
+            &c.SPA_FRACTION(60, 1), // FPS
+            &c.SPA_FRACTION(0, 1),
+            &c.SPA_FRACTION(500, 1),
+            @as(i32, 0),
+        );
 
         const ptr = c_def.spa_pod_builder_pop(b, &format_frame);
 
@@ -235,159 +283,108 @@ pub const Pipewire = struct {
     }
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
+        log.debug("[streamProcessCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
+            log.debug("[streamProcessCallback] does not have format", .{});
             return;
         }
 
-        // Drain all available buffers, queueing at most two for processing.
+        // Grab the newest buffer.
+        var pipewire_buffer: ?*c.struct_pw_buffer = null;
         while (true) {
-            const tmp = c.pw_stream_dequeue_buffer(self.stream);
+            const tmp: ?*c.struct_pw_buffer = c.pw_stream_dequeue_buffer(self.stream);
+
             if (tmp == null) {
                 break;
             }
-            const pwb_raw = tmp.?;
-            const pwb: *c.struct_pw_buffer = @ptrCast(pwb_raw);
-            self.addActiveBuffer(pwb) catch |err| {
-                log.err("[streamProcessCallback] failed to register pipewire buffer: {}", .{err});
-                return;
-            };
-            const dequeue_time_ns = std.time.nanoTimestamp();
 
-            // Only keep buffers that use dmabuf.
-            if (pwb.buffer == null or pwb.buffer[0].datas[0].type != c.SPA_DATA_DmaBuf) {
-                _ = c.pw_stream_queue_buffer(self.stream, pwb_raw);
+            // Only keep buffers that are dmabuf.
+            if (tmp.?.buffer == null or tmp.?.buffer[0].datas[0].type != c.SPA_DATA_DmaBuf) {
+                _ = c.pw_stream_queue_buffer(self.stream.?, tmp.?);
                 continue;
             }
 
-            // Remove the oldest frame if the queue is full.
-            if (self.buffer_queue.full()) {
-                const dropped = self.buffer_queue.tryRecv() catch null;
-                if (dropped) |old| {
-                    _ = c.pw_stream_queue_buffer(self.stream, old.buffer);
-                }
+            if (pipewire_buffer) |pwb| {
+                _ = c.pw_stream_queue_buffer(self.stream.?, pwb);
             }
 
-            const timed_buffer = TimedBuffer{
-                .buffer = pwb,
-                .frame_time_ns = dequeue_time_ns,
-            };
+            pipewire_buffer = tmp;
+        }
 
-            self.buffer_queue.trySend(timed_buffer) catch |err| {
-                if (err == ChanError.Closed) {
-                    log.info("buffer_queue closed, cannot send new pipewire buffer", .{});
-                    _ = c.pw_stream_queue_buffer(self.stream, pwb);
-                    break;
-                } else unreachable;
+        const pwb = pipewire_buffer.?;
+
+        // TODO: Should gracefully handle these errors.
+        defer _ = c.pw_stream_queue_buffer(self.stream.?, pwb);
+
+        const vulkan_image = self.pipewire_frame_buffer_manager.?.getVulkanImage(pwb, self.info.?) catch |err| {
+            log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
+            unreachable;
+        };
+
+        const copy_data = blk: {
+            const capture_ring_buffer = self.vulkan.capture_ring_buffer.lock();
+            defer capture_ring_buffer.unlock();
+            break :blk capture_ring_buffer.unwrap().?.copyImageToRingBuffer(.{
+                .src_image = vulkan_image.frame_buffer.frame_buffer_image.?.image,
+                .src_width = self.info.?.size.width,
+                .src_height = self.info.?.size.height,
+                .wait_semaphore = vulkan_image.wait_semaphore,
+                .use_signal_semaphore = false,
+            }) catch |err| {
+                log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
+                unreachable;
+            };
+        };
+
+        if (copy_data.fence) |fence| {
+            _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), .true, std.math.maxInt(u64)) catch |err| {
+                log.err("[streamProcessCallback] error waiting for fences: {}", .{err});
+            };
+        }
+
+        if (copy_data.vulkan_image_buffer) |vulkan_image_buffer| {
+            self.vulkan_image_buffer_chan.drain();
+            self.vulkan_image_buffer_chan.send(vulkan_image_buffer) catch |err| {
+                log.err("[streamProcessCallback] vulkan image buffer chan send err: {}", .{err});
             };
         }
     }
 
     fn workerMain(self: *Self) !void {
         while (true) {
-            // Wait for consumer request.
+            // Wait for the consumer to request a new frame.
             _ = self.rx_chan.recv() catch |err| {
                 if (err == ChanError.Closed) {
                     break;
                 }
+                log.err("[workerMain] rx_chan error: {}", .{err});
                 return err;
             };
 
-            // Drain the queue and grab the newest buffer.
-            var timed_buffer: ?TimedBuffer = null;
-            while (true) {
-                const tmp = self.buffer_queue.tryRecv() catch |err| {
-                    if (err == ChanError.Closed) {
-                        log.info("tmp buffer_queue closed, exiting workerMain", .{});
-                        return;
-                    }
-                    return err;
-                };
-
-                if (tmp == null) {
+            // Wait for a new pipewire frame buffer.
+            const vulkan_image_buffer = self.vulkan_image_buffer_chan.recv() catch |err| {
+                if (err == ChanError.Closed) {
                     break;
                 }
-
-                // Return the buffer to pipewire.
-                if (timed_buffer) |old| {
-                    self.queueBufferFromWorker(old.buffer);
-                }
-
-                timed_buffer = tmp.?;
-            }
-
-            // Wait for the buffer queue if we still don't have a buffer.
-            if (timed_buffer == null) {
-                timed_buffer = self.buffer_queue.recv() catch |err| {
-                    // If we exit here, we must also close the tx_chan so we
-                    // don't hold anything up on the consumer side.
-                    if (err == ChanError.Closed) {
-                        log.info("latest buffer_queue closed, exiting workerMain", .{});
-                        return;
-                    }
-                    return err;
-                };
-            }
-
-            assert(timed_buffer != null);
-
-            const latest_buffer = timed_buffer.?;
-
-            if (!self.isBufferActive(latest_buffer.buffer)) {
-                continue;
-            }
-
-            // Return the buffer to pipewire when we are done with it.
-            defer self.queueBufferFromWorker(latest_buffer.buffer);
-
-            if (latest_buffer.buffer.buffer == null or latest_buffer.buffer.buffer[0].datas[0].chunk[0].size <= 0) {
-                continue;
-            }
-
-            var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, 0);
-            defer subresource_layouts.deinit(self.allocator);
-
-            for (0..latest_buffer.buffer.buffer[0].n_datas) |i| {
-                const buf_data = latest_buffer.buffer.buffer[0].datas[i];
-                const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
-                const subresource_layout = vk.SubresourceLayout{
-                    .offset = buf_data.chunk[0].offset,
-                    .size = 0,
-                    .array_pitch = 0,
-                    .depth_pitch = 0,
-                    .row_pitch = row_pitch,
-                };
-                try subresource_layouts.append(self.allocator, subresource_layout);
-            }
-
-            const buffer_images = self.getOrCreateBufferImage(
-                latest_buffer.buffer,
-                self.info.?,
-                latest_buffer.buffer.buffer[0].datas[0].fd,
-                subresource_layouts.items,
-            ) catch |err| {
-                if (err == error.InactiveBuffer) {
-                    continue;
-                }
+                log.err("[workerMain] vulkan_image_buffer_chan error: {}", .{err});
                 return err;
             };
 
-            const images = types.VkImages{
-                .image = buffer_images.image,
-                .image_view = buffer_images.image_view,
-                .frame_time_ns = latest_buffer.frame_time_ns,
-            };
-
-            self.tx_chan.send(images) catch |err| {
+            // Send the buffer to the consumer.
+            self.tx_chan.send(vulkan_image_buffer) catch |err| {
                 switch (err) {
-                    ChanError.Closed => {},
-                    else => return error.sendChanClosed,
+                    ChanError.Closed => {
+                        if (vulkan_image_buffer.releaseUnwrap()) |val| val.deinit();
+                        break;
+                    },
+                    else => {
+                        log.err("[workerMain] tx_chan error: {}", .{err});
+                        return err;
+                    },
                 }
             };
-
-            util.printElapsed(self.frame_time, "frame time");
-            self.frame_time = latest_buffer.frame_time_ns;
         }
     }
 
@@ -408,6 +405,10 @@ pub const Pipewire = struct {
         if (new_state == c.PW_STREAM_STATE_ERROR) {
             log.debug("[streamStateChangedCallback] pipewire stream error: {s}", .{error_});
         }
+
+        if (new_state == c.PW_STREAM_STATE_STREAMING) {
+            log.debug("[streamStateChangedCallback] pipewire state streaming", .{});
+        }
     }
 
     fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const c.spa_pod) callconv(.c) void {
@@ -424,8 +425,6 @@ pub const Pipewire = struct {
 
         const fmt = c_def.spa_format_parse(param, &media_type, &media_subtype);
 
-        log.debug("[streamParamChangedCallback] fmt: {}", .{fmt});
-
         if (fmt < 0 or
             media_type != c.SPA_MEDIA_TYPE_video or
             media_subtype != c.SPA_MEDIA_SUBTYPE_raw)
@@ -441,12 +440,22 @@ pub const Pipewire = struct {
             return;
         }
 
-        if (self.has_format) {
-            self.format_changed = true;
-            self.resetImagePool();
-            return;
+        {
+            self.vulkan.destroyCaptureRingBuffer();
+            // TODO: Figure out how to bubble this error up and display it on the UI.
+            self.vulkan.initCaptureRingBuffer(self.info.?.size.width, self.info.?.size.height) catch unreachable;
         }
 
+        self.sendStreamParams();
+
+        log.debug("[streamParamChangedCallback] stream format: {}", .{self.info.?.format});
+        self.has_format = true;
+        self.format_changed = false;
+
+        c.pw_thread_loop_signal(self.thread_loop, false);
+    }
+
+    fn sendStreamParams(self: *Self) void {
         var buffer = std.mem.zeroes([1024]u8);
 
         var builder = c.spa_pod_builder{
@@ -500,158 +509,22 @@ pub const Pipewire = struct {
         })))) catch unreachable;
 
         _ = c.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
-
-        log.debug("[streamParamChangedCallback] stream format: {}", .{self.info.?.format});
-        self.has_format = true;
-
-        c.pw_thread_loop_signal(self.thread_loop, false);
     }
 
-    fn streamAddBufferCallback(data: ?*anyopaque, pw_buffer: [*c]c.struct_pw_buffer) callconv(.c) void {
+    fn streamAddBufferCallback(data: ?*anyopaque, pwb: [*c]c.struct_pw_buffer) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
-        _ = self;
-        _ = pw_buffer;
         log.debug("[streamAddBufferCallback]", .{});
-    }
 
-    fn getOrCreateBufferImage(
-        self: *Self,
-        pw_buffer: *c.struct_pw_buffer,
-        info: c.spa_video_info_raw,
-        fd: i64,
-        subresource_layouts: []vk.SubresourceLayout,
-    ) !BufferImage {
-        self.buffer_images_mutex.lock();
-        defer self.buffer_images_mutex.unlock();
-
-        if (!self.active_buffers.contains(pw_buffer)) {
-            return error.InactiveBuffer;
-        }
-
-        if (self.vk_foreign_semaphore == null) {
-            self.vk_foreign_semaphore = try self.vulkan.device.createSemaphore(&.{}, null);
-        }
-
-        try pipewire_util.dmabufExportSyncFile(self.vulkan, fd, self.vk_foreign_semaphore.?);
-
-        if (self.buffer_images.getPtr(pw_buffer)) |existing| {
-            if (existing.fd == fd) {
-                return existing.*;
-            }
-
-            // The fd for this pw_buffer changed, rebuild the image.
-            log.debug("[getOrCreateBufferImage] fd changed for buffer {x}: old {}, new {}", .{
-                @intFromPtr(pw_buffer),
-                existing.fd,
-                fd,
-            });
-            const new_buffer_image = try self.createVulkanImage(info, fd, subresource_layouts);
-            self.destroyBufferImage(existing.*);
-            existing.* = new_buffer_image;
-            return existing.*;
-        }
-
-        const buffer_image = try self.createVulkanImage(info, fd, subresource_layouts);
-        log.debug("[getOrCreateBufferImage] new buffer image for buffer {x}, fd {}", .{
-            @intFromPtr(pw_buffer),
-            fd,
-        });
-        try self.buffer_images.put(pw_buffer, buffer_image);
-        return buffer_image;
-    }
-
-    fn createVulkanImage(
-        self: *Self,
-        info: c.spa_video_info_raw,
-        fd: i64,
-        subresource_layouts: []vk.SubresourceLayout,
-    ) !BufferImage {
-        const modifier_info = vk.ImageDrmFormatModifierExplicitCreateInfoEXT{
-            .drm_format_modifier = info.modifier,
-            .drm_format_modifier_plane_count = @intCast(subresource_layouts.len),
-            .p_plane_layouts = subresource_layouts.ptr,
-        };
-
-        const external_memory_image_info = vk.ExternalMemoryImageCreateInfo{
-            .handle_types = .{ .dma_buf_bit_ext = true },
-            .p_next = &modifier_info,
-        };
-
-        const image_create_info = vk.ImageCreateInfo{
-            .p_next = &external_memory_image_info,
-            .image_type = .@"2d",
-            .format = pipewire_util.spaToVkFormat(info.format),
-            .extent = .{ .depth = 1, .width = info.size.width, .height = info.size.height },
-            .mip_levels = 1,
-            .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
-            .tiling = .drm_format_modifier_ext,
-            .usage = .{
-                .storage_bit = true,
-                .color_attachment_bit = true,
-                .transfer_src_bit = true,
-            },
-            .sharing_mode = .exclusive,
-            .initial_layout = .undefined,
-        };
-
-        const image = try self.vulkan.device.createImage(&image_create_info, null);
-        errdefer self.vulkan.device.destroyImage(image, null);
-
-        const mem_reqs = self.vulkan.device.getImageMemoryRequirements(image);
-
-        var import_fd_info = vk.ImportMemoryFdInfoKHR{
-            .handle_type = .{ .dma_buf_bit_ext = true },
-            .fd = c.fcntl(@intCast(fd), c.F_DUPFD_CLOEXEC, @as(u32, 0)),
-        };
-
-        // NOTE: This is critical for Nvidia cards. Causes buffer to be empty without it.
-        const memory_dedicated_allocate_info = vk.MemoryDedicatedAllocateInfo{
-            .image = image,
-        };
-
-        import_fd_info.p_next = &memory_dedicated_allocate_info;
-
-        // CRITICAL: If this call succeeds, Vulkan owns the FD.
-        const device_memory = try self.vulkan.allocate(mem_reqs, .{ .device_local_bit = true }, @ptrCast(&import_fd_info));
-        errdefer self.vulkan.device.freeMemory(device_memory, null);
-
-        try self.vulkan.device.bindImageMemory(image, device_memory, 0);
-
-        const view_info = vk.ImageViewCreateInfo{
-            .image = image,
-            .view_type = .@"2d",
-            .format = pipewire_util.spaToVkFormat(info.format),
-            .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
-                .base_mip_level = 0,
-                .level_count = 1,
-                .base_array_layer = 0,
-                .layer_count = 1,
-            },
-            .components = .{
-                .r = .identity,
-                .g = .identity,
-                .b = .identity,
-                .a = .identity,
-            },
-        };
-
-        const image_view = try self.vulkan.device.createImageView(&view_info, null);
-        errdefer self.vulkan.device.destroyImageView(image_view, null);
-
-        return .{
-            .image = image,
-            .image_view = image_view,
-            .device_memory = device_memory,
-            .fd = fd,
+        self.pipewire_frame_buffer_manager.?.addPipewireBuffer(pwb) catch |err| {
+            log.err("[streamAddBufferCallback] failed to add to active_buffers: {}", .{err});
         };
     }
 
-    fn streamRemoveBufferCallback(data: ?*anyopaque, pw_buffer: [*c]c.struct_pw_buffer) callconv(.c) void {
+    fn streamRemoveBufferCallback(data: ?*anyopaque, pwb: [*c]c.struct_pw_buffer) callconv(.c) void {
         log.debug("[streamRemoveBufferCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
-        self.removeBuffer(@ptrCast(pw_buffer));
+
+        self.pipewire_frame_buffer_manager.?.removePipewireBuffer(pwb);
     }
 
     const stream_events = c.pw_stream_events{
@@ -685,123 +558,5 @@ pub const Pipewire = struct {
                 message,
             },
         );
-    }
-
-    fn destroyBufferImage(self: *Self, buffer_image: BufferImage) void {
-        self.vulkan.device.destroyImageView(buffer_image.image_view, null);
-        self.vulkan.device.destroyImage(buffer_image.image, null);
-        self.vulkan.device.freeMemory(buffer_image.device_memory, null);
-    }
-
-    fn resetImagePool(self: *Self) void {
-        self.buffer_images_mutex.lock();
-        defer self.buffer_images_mutex.unlock();
-        var it = self.buffer_images.valueIterator();
-        while (it.next()) |buffer_image| {
-            self.destroyBufferImage(buffer_image.*);
-        }
-        self.buffer_images.clearRetainingCapacity();
-    }
-
-    fn addActiveBuffer(self: *Self, pw_buffer: *c.struct_pw_buffer) !void {
-        self.buffer_images_mutex.lock();
-        defer self.buffer_images_mutex.unlock();
-        try self.active_buffers.put(pw_buffer, {});
-    }
-
-    fn removeBuffer(self: *Self, pw_buffer: *c.struct_pw_buffer) void {
-        var buffer_image: ?BufferImage = null;
-
-        {
-            self.buffer_images_mutex.lock();
-            defer self.buffer_images_mutex.unlock();
-
-            _ = self.active_buffers.remove(pw_buffer);
-
-            if (self.buffer_images.fetchRemove(pw_buffer)) |entry| {
-                buffer_image = entry.value;
-            }
-        }
-
-        if (buffer_image) |image| {
-            self.destroyBufferImage(image);
-        }
-    }
-
-    fn isBufferActive(self: *Self, pw_buffer: *c.struct_pw_buffer) bool {
-        self.buffer_images_mutex.lock();
-        defer self.buffer_images_mutex.unlock();
-        return self.active_buffers.contains(pw_buffer);
-    }
-
-    fn queueBufferFromWorker(self: *Self, buffer: *c.struct_pw_buffer) void {
-        if (!self.isBufferActive(buffer)) {
-            return;
-        }
-        const stream = self.stream orelse return;
-        const loop = self.thread_loop orelse return;
-        c.pw_thread_loop_lock(loop);
-        defer c.pw_thread_loop_unlock(loop);
-        _ = c.pw_stream_queue_buffer(stream, buffer);
-    }
-
-    pub fn deinit(self: *Self) void {
-        // Stop the thread loop so we don't get anymore process callbacks.
-        if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_lock(thread_loop);
-            // Make sure no signals are waiting.
-            c.pw_thread_loop_accept(thread_loop);
-            c.pw_thread_loop_unlock(thread_loop);
-            c.pw_thread_loop_stop(thread_loop);
-        }
-
-        // Drain the buffer queue and requeue any held pipewire buffers.
-        while (self.buffer_queue.tryRecv() catch null) |buffer| {
-            self.queueBufferFromWorker(buffer.buffer);
-        }
-
-        // Deinit all channels. This should terminate the worker thread.
-        self.rx_chan.deinit();
-        self.tx_chan.deinit();
-        self.buffer_queue.deinit();
-
-        if (self.worker_thread) |thread| {
-            thread.join();
-            self.worker_thread = null;
-        }
-
-        if (self.vk_foreign_semaphore) |vk_foreign_semaphore| {
-            self.vulkan.device.destroySemaphore(vk_foreign_semaphore, null);
-            self.vk_foreign_semaphore = null;
-        }
-
-        if (self.stream) |stream| {
-            _ = c.pw_stream_disconnect(stream);
-            _ = c.pw_stream_destroy(stream);
-            self.stream = null;
-        }
-
-        if (self.core) |core| {
-            _ = c.pw_core_disconnect(core);
-            self.core = null;
-        }
-
-        if (self.context) |context| {
-            _ = c.pw_context_destroy(context);
-            self.context = null;
-        }
-
-        if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_destroy(thread_loop);
-            self.thread_loop = null;
-        }
-
-        c.pw_deinit();
-
-        self.portal.deinit();
-        self.resetImagePool();
-        self.active_buffers.deinit();
-        self.buffer_images.deinit();
-        self.allocator.destroy(self);
     }
 };

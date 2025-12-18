@@ -3,6 +3,8 @@ const std = @import("std");
 const types = @import("../types.zig");
 const vk = @import("vulkan");
 const ChanError = @import("../channel.zig").ChanError;
+const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const rc = @import("zigrc");
 
 pub const CaptureSourceType = enum { window, desktop };
 
@@ -21,9 +23,8 @@ pub const Capture = struct {
         selectSource: *const fn (*anyopaque, CaptureSourceType) anyerror!void,
         nextFrame: *const fn (*anyopaque) ChanError!void,
         closeAllChannels: *const fn (*anyopaque) void,
-        waitForFrame: *const fn (*anyopaque) ChanError!types.VkImages,
+        waitForFrame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
         size: *const fn (*anyopaque) ?types.Size,
-        externalWaitSemaphore: *const fn (*anyopaque) ?vk.Semaphore,
         stop: *const fn (*anyopaque) anyerror!void,
         deinit: *const fn (*anyopaque) void,
     };
@@ -44,16 +45,12 @@ pub const Capture = struct {
         return self.vtable.closeAllChannels(self.ptr);
     }
 
-    pub fn waitForFrame(self: *Self) ChanError!types.VkImages {
+    pub fn waitForFrame(self: *Self) ChanError!rc.Arc(*VulkanImageBuffer) {
         return self.vtable.waitForFrame(self.ptr);
     }
 
     pub fn size(self: *Self) ?types.Size {
         return self.vtable.size(self.ptr);
-    }
-
-    pub fn externalWaitSemaphore(self: *Self) ?vk.Semaphore {
-        return self.vtable.externalWaitSemaphore(self.ptr);
     }
 
     pub fn stop(self: *Self) !void {

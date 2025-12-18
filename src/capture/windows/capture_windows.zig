@@ -7,7 +7,9 @@ const util = @import("../../util.zig");
 const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
 const Capture = @import("../capture.zig").Capture;
+const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const ChanError = @import("../../channel.zig").ChanError;
+const rc = @import("zigrc");
 
 const DWORD = u32;
 
@@ -48,23 +50,13 @@ pub const WindowsCapture = struct {
         _ = self;
     }
 
-    pub fn waitForFrame(context: *anyopaque) ChanError!types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
-        return .{
-            .image = .null_handle,
-            .image_view = .null_handle,
-            .frame_time_ns = std.time.nanoTimestamp(),
-        };
+        return ChanError.Closed;
     }
 
     pub fn size(context: *anyopaque) ?types.Size {
-        const self: *Self = @ptrCast(@alignCast(context));
-        _ = self;
-        return null;
-    }
-
-    pub fn externalWaitSemaphore(context: *anyopaque) ?vk.Semaphore {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return null;
@@ -95,7 +87,6 @@ pub const WindowsCapture = struct {
                 .closeAllChannels = closeAllChannels,
                 .waitForFrame = waitForFrame,
                 .size = size,
-                .externalWaitSemaphore = externalWaitSemaphore,
                 .stop = stop,
                 .deinit = deinit,
             },

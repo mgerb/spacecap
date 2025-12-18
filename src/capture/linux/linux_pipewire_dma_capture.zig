@@ -11,6 +11,8 @@ const ChanError = @import("../../channel.zig").ChanError;
 const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
 const Capture = @import("../capture.zig").Capture;
 const CaptureError = @import("../capture.zig").CaptureError;
+const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const rc = @import("zigrc");
 
 pub const LinuxPipewireDmaCapture = struct {
     const Self = @This();
@@ -59,11 +61,11 @@ pub const LinuxPipewireDmaCapture = struct {
         if (self.pipewire) |pipewire| {
             pipewire.tx_chan.close();
             pipewire.rx_chan.close();
-            pipewire.buffer_queue.close();
+            pipewire.vulkan_image_buffer_chan.close();
         }
     }
 
-    pub fn waitForFrame(context: *anyopaque) ChanError!types.VkImages {
+    pub fn waitForFrame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.tx_chan.recv();
     }
@@ -79,11 +81,6 @@ pub const LinuxPipewireDmaCapture = struct {
             null;
     }
 
-    pub fn externalWaitSemaphore(context: *anyopaque) ?vk.Semaphore {
-        const self: *Self = @ptrCast(@alignCast(context));
-        return self.pipewire.?.vk_foreign_semaphore;
-    }
-
     pub fn stop(context: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
@@ -93,13 +90,6 @@ pub const LinuxPipewireDmaCapture = struct {
             self.pipewire = null;
         }
     }
-
-    // pub fn selectedScreenCastIdentifier(self: *Self) ?[]const u8 {
-    //     if (self.pipewire) |pw| {
-    //         return pw.portal.selected_screen_name;
-    //     }
-    //     return null;
-    // }
 
     pub fn deinit(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
@@ -118,7 +108,6 @@ pub const LinuxPipewireDmaCapture = struct {
                 .closeAllChannels = closeAllChannels,
                 .waitForFrame = waitForFrame,
                 .size = size,
-                .externalWaitSemaphore = externalWaitSemaphore,
                 .stop = stop,
                 .deinit = deinit,
             },

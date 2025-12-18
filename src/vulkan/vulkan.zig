@@ -2,6 +2,15 @@ const std = @import("std");
 
 const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
+const util = @import("../util.zig");
+const Encoder = @import("./encoder.zig").Encoder;
+const EncodeResult = @import("./encoder.zig").EncodeResult;
+const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
+const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
+const CapturePreviewTexture = @import("./capture_preview_texture.zig").CapturePreviewTexture;
+const rc = @import("zigrc");
+const Mutex = @import("../mutex.zig").Mutex;
+
 const BaseDispatch = vk.BaseWrapper;
 const InstanceDispatch = vk.InstanceWrapper;
 const DeviceDispatch = vk.DeviceWrapper;
@@ -9,11 +18,6 @@ pub const Instance = vk.InstanceProxy;
 pub const Device = vk.DeviceProxy;
 pub const CommandBuffer = vk.CommandBufferProxy;
 pub const API_VERSION = vk.API_VERSION_1_4;
-
-const util = @import("../util.zig");
-const Encoder = @import("./encoder.zig").Encoder;
-const EncodeResult = @import("./encoder.zig").EncodeResult;
-const CapturePreviewSwapchain = @import("./capture_preview_swapchain.zig").CapturePreviewSwapchain;
 
 // TODO: update before release
 const DEBUG = true;
@@ -93,7 +97,15 @@ pub const Vulkan = struct {
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
     encoder: ?*Encoder = null,
-    capture_preview_swapchain: ?*CapturePreviewSwapchain = null,
+    /// Ring buffer that holds the preview images that are rendered on the UI.
+    capture_preview_ring_buffer: ?*VulkanImageRingBuffer = null,
+    /// We need to create textures to render the capture preview.
+    /// They will be stored here so that we don't couple the UI
+    /// to the vulkan image ring buffer.
+    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, CapturePreviewTexture),
+    /// Ring buffer that can be used in the capture method to hold frames
+    /// in which the encoded can grab from.
+    capture_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
 
     /// The window used to render the UI with imgui
     window: ?imguiz.ImGui_ImplVulkanH_Window = null,
@@ -211,11 +223,32 @@ pub const Vulkan = struct {
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
+            .capture_preview_textures = .init(allocator),
         };
 
         std.log.info("Using device: {s}\n", .{self.props.device_name});
 
         return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.destroyVideoEncoder();
+        self.destroyCapturePreviewRingBuffer() catch |err| {
+            std.log.err("failed to destroy capture preview ring buffer: {}\n", .{err});
+        };
+        self.destroyCaptureRingBuffer();
+        self.capture_preview_textures.deinit();
+
+        if (self.debug_messenger) |debug_messenger| {
+            self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);
+        }
+
+        self.device.destroyDevice(null);
+        self.instance.destroyInstance(null);
+
+        self.allocator.destroy(self.device.wrapper);
+        self.allocator.destroy(self.instance.wrapper);
+        self.allocator.destroy(self);
     }
 
     pub fn initVideoEncoder(
@@ -242,16 +275,85 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn initCapturePreviewSwapchain(self: *Self, width: u32, height: u32) !void {
-        self.capture_preview_swapchain = try CapturePreviewSwapchain.init(self.allocator, self, width, height);
+    pub fn getCapturePreviewTexture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !*CapturePreviewTexture {
+        if (self.capture_preview_textures.getPtr(vulkan_image_buffer)) |capture_preview_texture| {
+            return capture_preview_texture;
+        } else {
+            const capture_preview_texture = try CapturePreviewTexture.init(self, vulkan_image_buffer.image_view);
+            try self.capture_preview_textures.put(vulkan_image_buffer, capture_preview_texture);
+            return self.capture_preview_textures.getPtr(vulkan_image_buffer).?;
+        }
     }
 
-    pub fn destroyCapturePreviewSwapchain(self: *Self) !void {
-        if (self.capture_preview_swapchain) |capture_preview_swapchain| {
-            try self.waitForUIFences();
-            capture_preview_swapchain.deinit();
-            self.capture_preview_swapchain = null;
+    fn clearCapturePreviewTextures(self: *Self) void {
+        var iter = self.capture_preview_textures.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
         }
+        self.capture_preview_textures.clearRetainingCapacity();
+    }
+
+    pub fn initCapturePreviewRingBuffer(self: *Self, width: u32, height: u32) !void {
+        self.capture_preview_ring_buffer = try VulkanImageRingBuffer.init(
+            .{
+                .allocator = self.allocator,
+                .vulkan = self,
+                .dst_access_mask = .{ .shader_read_bit = true },
+                .dst_stage_mask = .{ .fragment_shader_bit = true },
+                .image_component_mapping = .{
+                    .r = .b,
+                    .g = .identity,
+                    .b = .r,
+                    .a = .one,
+                },
+                .image_layout = .shader_read_only_optimal,
+                .width = width,
+                .height = height,
+                .usage = .{ .sampled_bit = true },
+                .src_queue_family_index = self.graphics_queue.family,
+            },
+        );
+    }
+
+    /// Destroy the ring buffer, but also clear the capture preview textures.
+    pub fn destroyCapturePreviewRingBuffer(self: *Self) !void {
+        try self.waitForUIFences();
+        if (self.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
+            capture_preview_ring_buffer.deinit();
+            self.capture_preview_ring_buffer = null;
+        }
+        self.clearCapturePreviewTextures();
+    }
+
+    pub fn initCaptureRingBuffer(self: *Self, width: u32, height: u32) !void {
+        self.capture_ring_buffer.set(try VulkanImageRingBuffer.init(
+            .{
+                .allocator = self.allocator,
+                .vulkan = self,
+                .dst_access_mask = .{ .transfer_write_bit = true },
+                .dst_stage_mask = .{ .all_transfer_bit = true },
+                .image_layout = .color_attachment_optimal,
+                .image_component_mapping = .{
+                    .r = .identity,
+                    .g = .identity,
+                    .b = .identity,
+                    .a = .identity,
+                },
+                .width = width,
+                .height = height,
+                .usage = .{ .storage_bit = true, .transfer_src_bit = true, .color_attachment_bit = true },
+                .src_queue_family_index = vk.QUEUE_FAMILY_EXTERNAL,
+            },
+        ));
+    }
+
+    pub fn destroyCaptureRingBuffer(self: *Self) void {
+        const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
+        defer capture_ring_buffer_locked.unlock();
+        if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
+            capture_ring_buffer.deinit();
+        }
+        capture_ring_buffer_locked.unwrapPtr().* = null;
     }
 
     /// Caller owns the memory - must free
@@ -528,11 +630,23 @@ pub const Vulkan = struct {
             });
         }
 
-        if (self.capture_preview_swapchain) |capture_preview_swapchain| {
-            for (capture_preview_swapchain.buffers) |buffer| {
-                try wait_fences.append(self.allocator, buffer.fence);
+        if (self.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
+            for (capture_preview_ring_buffer.buffers) |buffer| {
+                try wait_fences.append(self.allocator, buffer.value.*.fence);
             }
         }
+
+        // TODO: This causes a deadlock when the window is resized. We may not need
+        // this here actually...
+        // {
+        //     const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
+        //     defer capture_ring_buffer_locked.unlock();
+        //     if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
+        //         for (capture_ring_buffer.buffers) |buffer| {
+        //             try wait_fences.append(self.allocator, buffer.value.*.fence);
+        //         }
+        //     }
+        // }
 
         if (self.window) |window| {
             const fd = &window.Frames.Data[window.FrameIndex];
@@ -552,22 +666,185 @@ pub const Vulkan = struct {
         self.encode_queue.mutex.unlock();
     }
 
-    pub fn deinit(self: *Self) void {
-        self.destroyVideoEncoder();
-        self.destroyCapturePreviewSwapchain() catch |err| {
-            std.log.err("failed to destroy capture preview swapchain: {}\n", .{err});
+    /// Copy a vulkan image on the GPU.
+    /// NOTE: This is only for the graphics queue.
+    pub fn copyImage(
+        self: *Self,
+        command_buffer: vk.CommandBuffer,
+        src_image: vk.Image,
+        dst_image: vk.Image,
+        src_width: u32,
+        src_height: u32,
+        dst_width: u32,
+        dst_height: u32,
+        args: struct {
+            new_layout: vk.ImageLayout,
+            dst_stage_mask: vk.PipelineStageFlags2,
+            dst_access_mask: vk.AccessFlags2,
+            src_queue_family_index: u32,
+            wait_semaphores: []vk.Semaphore = &.{},
+            signal_semaphores: []vk.Semaphore = &.{},
+            fence: vk.Fence = .null_handle,
+        },
+    ) !void {
+        try self.device.beginCommandBuffer(command_buffer, &.{});
+
+        const src_barrier = vk.ImageMemoryBarrier2{
+            .dst_stage_mask = .{ .all_transfer_bit = true },
+            .dst_access_mask = .{ .transfer_read_bit = true },
+            .old_layout = .color_attachment_optimal,
+            .new_layout = .transfer_src_optimal,
+            .src_queue_family_index = args.src_queue_family_index,
+            .dst_queue_family_index = self.graphics_queue.family,
+            .image = src_image,
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        };
+        const initial_dep_info = vk.DependencyInfoKHR{
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&src_barrier),
+        };
+        self.device.cmdPipelineBarrier2(command_buffer, &initial_dep_info);
+
+        const dst_barrier = vk.ImageMemoryBarrier2{
+            .src_stage_mask = .{},
+            .src_access_mask = .{},
+            .dst_stage_mask = .{ .all_transfer_bit = true },
+            .dst_access_mask = .{ .transfer_write_bit = true },
+            .old_layout = .undefined,
+            .new_layout = .transfer_dst_optimal,
+            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .image = dst_image,
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
         };
 
-        if (self.debug_messenger) |debug_messenger| {
-            self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);
-        }
+        const dst_dep_info = vk.DependencyInfoKHR{
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&dst_barrier),
+        };
 
-        self.device.destroyDevice(null);
-        self.instance.destroyInstance(null);
+        self.device.cmdPipelineBarrier2(command_buffer, &dst_dep_info);
 
-        // allocator destroys
-        self.allocator.destroy(self.device.wrapper);
-        self.allocator.destroy(self.instance.wrapper);
-        self.allocator.destroy(self);
+        // Clear the image, otherwise if the window resizes smaller, the
+        // background will have the previous frames.
+        const clear_value = vk.ClearColorValue{ .float_32 = .{ 0, 0, 0, 1 } };
+        const clear_range = vk.ImageSubresourceRange{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .level_count = 1,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        };
+        self.device.cmdClearColorImage(
+            command_buffer,
+            dst_image,
+            .transfer_dst_optimal,
+            &clear_value,
+            1,
+            @ptrCast(&clear_range),
+        );
+
+        const copy_width = @min(dst_width, src_width);
+        const copy_height = @min(dst_height, src_height);
+
+        const copy_region = vk.ImageCopy{
+            .src_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
+            .src_offset = .{ .x = 0, .y = 0, .z = 0 },
+            .dst_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
+            .dst_offset = .{ .x = 0, .y = 0, .z = 0 },
+            .extent = .{ .width = copy_width, .height = copy_height, .depth = 1 },
+        };
+
+        self.device.cmdCopyImage(
+            command_buffer,
+            src_image,
+            .transfer_src_optimal,
+            dst_image,
+            .transfer_dst_optimal,
+            1,
+            @ptrCast(&copy_region),
+        );
+
+        // Transfer the source image back to its original layout.
+        const src_restore_barrier = vk.ImageMemoryBarrier2{
+            .src_stage_mask = .{ .all_transfer_bit = true },
+            .src_access_mask = .{ .transfer_read_bit = true },
+            .dst_stage_mask = .{ .color_attachment_output_bit = true },
+            .dst_access_mask = .{ .color_attachment_write_bit = true },
+            .old_layout = .transfer_src_optimal,
+            .new_layout = .color_attachment_optimal,
+            .src_queue_family_index = args.src_queue_family_index,
+            .dst_queue_family_index = self.graphics_queue.family,
+            .image = src_image,
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        };
+
+        const src_restore_dep_info = vk.DependencyInfoKHR{
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&src_restore_barrier),
+        };
+
+        self.device.cmdPipelineBarrier2(command_buffer, &src_restore_dep_info);
+
+        const post_copy_barrier = vk.ImageMemoryBarrier2{
+            .src_stage_mask = .{ .all_transfer_bit = true },
+            .src_access_mask = .{ .transfer_write_bit = true },
+            .dst_stage_mask = args.dst_stage_mask,
+            .dst_access_mask = args.dst_access_mask,
+            .old_layout = .transfer_dst_optimal,
+            .new_layout = args.new_layout,
+            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .image = dst_image,
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .level_count = 1,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+        };
+
+        const shader_dep_info = vk.DependencyInfoKHR{
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&post_copy_barrier),
+        };
+
+        self.device.cmdPipelineBarrier2(command_buffer, &shader_dep_info);
+
+        try self.device.endCommandBuffer(command_buffer);
+
+        const dst_stage_mask = vk.PipelineStageFlags{
+            .transfer_bit = true,
+        };
+        const submit_info = vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&command_buffer),
+            .p_wait_dst_stage_mask = @ptrCast(&dst_stage_mask),
+            .p_wait_semaphores = args.wait_semaphores.ptr,
+            .wait_semaphore_count = @intCast(args.wait_semaphores.len),
+            .p_signal_semaphores = args.signal_semaphores.ptr,
+            .signal_semaphore_count = @intCast(args.signal_semaphores.len),
+        };
+
+        try self.queueSubmit(.graphics, &.{submit_info}, .{ .fence = args.fence });
     }
 };
