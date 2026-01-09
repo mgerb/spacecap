@@ -226,6 +226,25 @@ pub const UI = struct {
         //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
         //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
         //IM_ASSERT(font != nullptr);
+        const font_data = @embedFile("../fonts/LilexNerdFontMono-Regular.ttf");
+        const font_cfg: c.ImFontConfig = .{
+            .GlyphMaxAdvanceX = std.math.floatMax(f32),
+            .RasterizerMultiply = 1.0,
+            .RasterizerDensity = 1.0,
+        };
+
+        const font = c.ImFontAtlas_AddFontFromMemoryTTF(
+            io.*.Fonts,
+            @constCast(font_data.ptr),
+            @intCast(font_data.len),
+            18.0,
+            &font_cfg,
+            null,
+        );
+        if (font == null) {
+            return error.ImGuiFontLoadFailure;
+        }
+        io.*.FontDefault = font;
 
         // black background
         const clear_color: c.ImVec4 = .{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 1.0 };
