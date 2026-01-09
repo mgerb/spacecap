@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("libavutil/adler32.h");
+    @cInclude("libavutil/channel_layout.h");
+    @cInclude("libavutil/samplefmt.h");
     @cInclude("libavformat/avformat.h");
     @cInclude("libavcodec/avcodec.h");
 });
@@ -8,6 +10,71 @@ const c = @cImport({
 const replay_buffer_mod = @import("./vulkan/replay_buffer.zig");
 const ReplayBuffer = replay_buffer_mod.ReplayBuffer;
 const ReplayBufferNode = replay_buffer_mod.ReplayBufferNode;
+
+pub fn writeAudioToFile(allocator: std.mem.Allocator, sample_rate: u32, channels: u32, samples: []const f32) !void {
+    if (samples.len == 0) return error.NoAudioSamples;
+
+    var format_context: *c.AVFormatContext = undefined;
+
+    const file_name = try std.fmt.allocPrintSentinel(allocator, "audio_{}.wav", .{std.time.nanoTimestamp()}, 0);
+    defer allocator.free(file_name);
+
+    var ret = c.avformat_alloc_output_context2(@ptrCast(&format_context), null, "wav", file_name);
+    try checkErr(ret);
+
+    defer c.avformat_free_context(format_context);
+
+    const out_stream = c.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
+    const stream_idx = out_stream.*.index;
+
+    const codecpar = out_stream.*.codecpar;
+    codecpar.*.codec_id = c.AV_CODEC_ID_PCM_F32LE;
+    codecpar.*.codec_type = c.AVMEDIA_TYPE_AUDIO;
+    codecpar.*.format = c.AV_SAMPLE_FMT_FLT;
+    codecpar.*.sample_rate = @intCast(sample_rate);
+    c.av_channel_layout_default(&codecpar.*.ch_layout, @intCast(channels));
+    codecpar.*.bits_per_coded_sample = 32;
+    codecpar.*.bits_per_raw_sample = 32;
+    codecpar.*.block_align = @intCast(channels * @sizeOf(f32));
+    codecpar.*.bit_rate = @intCast(sample_rate * channels * 32);
+
+    out_stream.*.time_base = c.AVRational{ .num = 1, .den = @intCast(sample_rate) };
+
+    if (format_context.oformat.*.flags & c.AVFMT_NOFILE == 0) {
+        ret = c.avio_open(&format_context.pb, file_name, c.AVIO_FLAG_WRITE);
+        try checkErr(ret);
+    }
+    defer {
+        if (format_context.pb != null) {
+            _ = c.avio_closep(&format_context.pb);
+        }
+    }
+
+    ret = c.avformat_write_header(format_context, null);
+    try checkErr(ret);
+
+    var pkt = c.av_packet_alloc() orelse return error.FFmpegError;
+    defer c.av_packet_free(&pkt);
+
+    const bytes = std.mem.sliceAsBytes(samples);
+    ret = c.av_new_packet(pkt, @intCast(bytes.len));
+    try checkErr(ret);
+    @memcpy(pkt.*.data[0..bytes.len], bytes);
+
+    const frames: usize = if (channels > 0) samples.len / @as(usize, @intCast(channels)) else 0;
+    pkt.*.stream_index = stream_idx;
+    pkt.*.pts = 0;
+    pkt.*.dts = 0;
+    pkt.*.duration = @intCast(frames);
+    pkt.*.flags = 0;
+
+    ret = c.av_interleaved_write_frame(format_context, pkt);
+    c.av_packet_unref(pkt);
+    try checkErr(ret);
+
+    ret = c.av_write_trailer(format_context);
+    try checkErr(ret);
+}
 
 /// Write replay_buffer to a file.
 /// NOTE: This consumes the replay_buffer and takes ownership of the memory.
