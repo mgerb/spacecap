@@ -23,6 +23,11 @@ pub fn Mutex(T: type) type {
             pub fn unlock(self: @This()) void {
                 self.private.mutex.unlock();
             }
+
+            /// Helper function for setting the value.
+            pub fn set(self: *@This(), value: T) void {
+                self.private.value.* = value;
+            }
         };
 
         private: struct {
@@ -48,11 +53,13 @@ pub fn Mutex(T: type) type {
             };
         }
 
-        /// Thread safe set.
+        /// Thread safe set. This differs than the `set` in the locked type
+        /// in that it will lock/unlock the mutex. This cannot be used while
+        /// the mutex is already locked.
         pub fn set(self: *Self, value: T) void {
-            const locked = self.lock();
+            var locked = self.lock();
             defer locked.unlock();
-            locked.unwrapPtr().* = value;
+            locked.set(value);
         }
     };
 }

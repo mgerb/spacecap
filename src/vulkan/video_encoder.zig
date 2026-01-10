@@ -4,7 +4,7 @@ const Device = @import("./vulkan.zig").Device;
 const Instance = @import("./vulkan.zig").Instance;
 const Vulkan = @import("./vulkan.zig").Vulkan;
 const Queue = @import("./vulkan.zig").Queue;
-const ReplayBuffer = @import("./replay_buffer.zig").ReplayBuffer;
+const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
 const h264_parameters = @import("./h264_parameters.zig");
 const types = @import("../types.zig");
 
@@ -106,6 +106,9 @@ pub const VideoEncoder = struct {
         const even_width = width & ~@as(u32, 1);
         const even_height = height & ~@as(u32, 1);
         var self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
+
+        // TODO: Handle cleanup on error. Currently leaks if any of these allocations fail.
         self.* = Self{
             .allocator = allocator,
             .vulkan = vulkan,
@@ -1242,11 +1245,11 @@ pub const VideoEncoder = struct {
     pub fn finishEncode(
         self: *Self,
         encode_result: EncodeResult,
-        replay_buffer: *ReplayBuffer,
+        video_replay_buffer: *VideoReplayBuffer,
         frame_time_ns: i128,
     ) !void {
         const data = try self.getOutputVideoPacket();
-        try replay_buffer.addFrame(data.data[0..data.size], frame_time_ns, encode_result.idr);
+        try video_replay_buffer.addFrame(data.data[0..data.size], frame_time_ns, encode_result.idr);
     }
 
     fn getOutputVideoPacket(self: *Self) !EncodeData {

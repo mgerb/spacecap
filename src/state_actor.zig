@@ -1,34 +1,41 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 const vk = @import("vulkan");
 
 const Util = @import("./util.zig");
-const Capture = @import("./capture/capture.zig").Capture;
+const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
+const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
+const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
+const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
+const SelectedAudioDevice = @import("./capture/audio/audio_capture.zig").SelectedAudioDevice;
+const SAMPLE_RATE = @import("./capture/audio/audio_capture.zig").SAMPLE_RATE;
+const CHANNELS = @import("./capture/audio/audio_capture.zig").CHANNELS;
+const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
 const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
-const CaptureError = @import("./capture/capture.zig").CaptureError;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
-const Chan = @import("./channel.zig").Chan;
+const Mutex = @import("./mutex.zig").Mutex;
 const State = @import("./state.zig");
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
-const ReplayBuffer = @import("./vulkan/replay_buffer.zig").ReplayBuffer;
-const ffmpeg = @import("./ffmpeg.zig");
-const CaptureSourceType = @import("./capture/capture.zig").CaptureSourceType;
-const UserSettings = @import("./user_settings.zig").UserSettings;
-const types = @import("./types.zig");
+const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
+const exporter = @import("./exporter.zig");
+const AudioActions = @import("./state/audio_state.zig").AudioActions;
+const handleAudioActions = @import("./state/audio_state.zig").handleAudioActions;
+const UserSettingsActions = @import("./state/user_settings_state.zig").UserSettingsActions;
 
 const log = std.log.scoped(.state_actor);
 
 pub const Actions = union(enum) {
     start_record,
     stop_record,
-    select_video_source: CaptureSourceType,
+    select_video_source: VideoCaptureSourceType,
     save_replay,
     show_demo,
     exit,
-    set_gui_foreground_fps: u32,
-    set_gui_background_fps: u32,
     open_global_shortcuts,
+    user_settings: UserSettingsActions,
+    audio: AudioActions,
 };
 
 const ActionChan = BufferedChan(Actions, 100);
@@ -39,46 +46,68 @@ pub const StateActor = struct {
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
-    capture: *Capture,
+    video_capture: *VideoCapture,
+    audio_capture: *AudioCapture,
     global_shortcuts: *GlobalShortcuts,
-    replay_buffer: ?*ReplayBuffer = null,
-    replay_buffer_mutex: std.Thread.Mutex = .{},
+    video_replay_buffer: Mutex(?*VideoReplayBuffer) = .init(null),
+    audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
     action_chan: ActionChan,
     thread_pool: std.Thread.Pool = undefined,
     /// WARNING: This locks the UI thread. This should only be locked
     /// when making updates to the UI state.
     ui_mutex: std.Thread.Mutex = .{},
+    // TODO: Put a mutex around State and then remove ui_mutex.
     state: State,
-    record_thread: ?std.Thread = null,
+    video_record_thread: ?std.Thread = null,
+    audio_record_thread: ?std.Thread = null,
 
     /// Caller owns the memory. Be sure to deinit.
     pub fn init(
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
-        capture: *Capture,
+        video_capture: *VideoCapture,
+        audio_capture: *AudioCapture,
         global_shortcuts: *GlobalShortcuts,
     ) !*Self {
         const self = try allocator.create(Self);
-
-        // Just log the error. We don't want the app to crash if settings can't be
-        // loaded for some unexpected error such as permissions issues.
-        const user_settings = UserSettings.load(allocator) catch |err| blk: {
-            log.err("unable to load user settings: {}\n", .{err});
-            break :blk UserSettings{};
-        };
+        errdefer allocator.destroy(self);
 
         self.* = Self{
             .allocator = allocator,
             .vulkan = vulkan,
-            .capture = capture,
+            .video_capture = video_capture,
+            .audio_capture = audio_capture,
             .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
-            .state = State.init(user_settings, vulkan.video_encode_queue != null),
+            .state = try State.init(allocator, vulkan.video_encode_queue != null),
         };
+        errdefer self.state.deinit();
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
+        try self.dispatch(.{ .audio = .get_available_audio_devices });
+
         return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.thread_pool.deinit();
+
+        const video_locked = self.video_replay_buffer.lock();
+        defer video_locked.unlock();
+        if (video_locked.unwrap()) |video_replay_buffer| {
+            video_replay_buffer.deinit();
+        }
+
+        const audio_locked = self.audio_replay_buffer.lock();
+        defer audio_locked.unlock();
+        if (audio_locked.unwrap()) |audio_replay_buffer| {
+            audio_replay_buffer.deinit();
+        }
+
+        self.state.deinit();
+        self.action_chan.deinit();
+        self.allocator.destroy(self);
     }
 
     /// Does not return an error because this should always run.
@@ -116,6 +145,21 @@ pub const StateActor = struct {
         }
     }
 
+    // fn updateSelectedAudioDevices(self: *Self) !void {
+    //     var selected_devices = try std.ArrayList(SelectedAudioDevice).initCapacity(self.allocator, 0);
+    //     defer selected_devices.deinit(self.allocator);
+    //
+    //     for (self.state.audio_devices.items) |device| {
+    //         if (!device.selected) continue;
+    //         try selected_devices.append(self.allocator, .{
+    //             .id = device.id,
+    //             .device_type = device.device_type,
+    //         });
+    //     }
+    //
+    //     try self.audio_capture.updateSelectedDevices(selected_devices.items);
+    // }
+
     fn handleAction(self: *Self, action: Actions) !void {
         switch (action) {
             .start_record => {
@@ -129,28 +173,72 @@ pub const StateActor = struct {
             .save_replay => {
                 log.info("[action] save_replay\n", .{});
 
-                if (self.replay_buffer) |replay_buffer| {
-                    self.replay_buffer_mutex.lock();
-                    self.replay_buffer = try ReplayBuffer.init(
+                // NOTE: Both audio/video replay buffers must not be null here.
+
+                var audio_replay_buffer: ?*AudioReplayBuffer = null;
+                {
+                    var audio_locked = self.audio_replay_buffer.lock();
+                    defer audio_locked.unlock();
+                    audio_replay_buffer = audio_locked.unwrap();
+                    audio_locked.set(try .init(
+                        self.allocator,
+                        self.state.replay_seconds,
+                    ));
+                }
+
+                assert(audio_replay_buffer != null);
+
+                var video_replay_buffer: ?*VideoReplayBuffer = null;
+                {
+                    var video_locked = self.video_replay_buffer.lock();
+                    defer video_locked.unlock();
+                    video_replay_buffer = video_locked.unwrap();
+                    video_locked.set(try .init(
                         self.allocator,
                         self.state.replay_seconds,
                         self.vulkan.video_encoder.?.bit_stream_header.items,
-                    );
-                    self.replay_buffer_mutex.unlock();
-
-                    self.ui_mutex.lock();
-                    const size = self.capture.size().?;
-                    const fps = self.state.fps;
-                    self.ui_mutex.unlock();
-
-                    try ffmpeg.writeToFile(
-                        self.allocator,
-                        size.width,
-                        size.height,
-                        fps,
-                        replay_buffer,
-                    );
+                    ));
                 }
+
+                assert(video_replay_buffer != null);
+
+                const size = self.video_capture.size().?;
+                var source_gains = try std.ArrayList(exporter.AudioSourceGain).initCapacity(self.allocator, 0);
+                defer {
+                    for (source_gains.items) |source_gain| {
+                        self.allocator.free(source_gain.id);
+                    }
+                    source_gains.deinit(self.allocator);
+                }
+
+                const fps = blk: {
+                    self.ui_mutex.lock();
+                    defer self.ui_mutex.unlock();
+
+                    for (self.state.audio.devices.items) |device| {
+                        if (!device.selected) continue;
+                        const id_copy = try self.allocator.dupe(u8, device.id);
+                        errdefer self.allocator.free(id_copy);
+                        try source_gains.append(self.allocator, .{
+                            .id = id_copy,
+                            .gain = device.gain,
+                        });
+                    }
+
+                    break :blk self.state.fps;
+                };
+
+                try exporter.exportReplayBuffers(
+                    self.allocator,
+                    size.width,
+                    size.height,
+                    fps,
+                    video_replay_buffer.?,
+                    audio_replay_buffer.?,
+                    SAMPLE_RATE,
+                    CHANNELS,
+                    source_gains.items,
+                );
             },
             .select_video_source => |source_type| {
                 log.info("[action] select_video_source\n", .{});
@@ -158,8 +246,8 @@ pub const StateActor = struct {
                     try self.stopRecord();
                 }
 
-                self.capture.selectSource(source_type) catch |err| {
-                    if (err != CaptureError.source_picker_cancelled) {
+                self.video_capture.selectSource(source_type) catch |err| {
+                    if (err != VideoCaptureError.source_picker_cancelled) {
                         log.err("selectSource error: {}\n", .{err});
                         return err;
                     } else {
@@ -171,15 +259,6 @@ pub const StateActor = struct {
                 self.ui_mutex.lock();
                 defer self.ui_mutex.unlock();
                 self.state.has_source = true;
-                // TODO: pass allocator to state and copy this string into it
-                if (self.state.selected_screen_cast_identifier) |old_name| {
-                    self.allocator.free(old_name);
-                    self.state.selected_screen_cast_identifier = null;
-                }
-                // TODO:
-                // if (self.capture.selectedScreenCastIdentifier()) |name| {
-                //     self.state.selected_screen_cast_identifier = try self.allocator.dupe(u8, name);
-                // }
             },
             .show_demo => {
                 self.ui_mutex.lock();
@@ -189,25 +268,14 @@ pub const StateActor = struct {
             .exit => {
                 try self.stopRecord();
             },
-            .set_gui_foreground_fps => |fps| {
-                self.ui_mutex.lock();
-                self.state.user_settings.gui_foreground_fps = fps;
-                const user_settings_copy = self.state.user_settings;
-                self.ui_mutex.unlock();
-                // Write the settings outside of the lock
-                try user_settings_copy.save(self.allocator);
-            },
-            .set_gui_background_fps => |fps| {
-                self.ui_mutex.lock();
-                self.state.user_settings.gui_background_fps = fps;
-                const user_settings_copy = self.state.user_settings;
-                self.ui_mutex.unlock();
-                // Write the settings outside of the lock
-                try user_settings_copy.save(self.allocator);
-            },
-
             .open_global_shortcuts => {
                 try self.global_shortcuts.open();
+            },
+            .user_settings => {
+                try self.state.user_settings.handleActions(self, action.user_settings);
+            },
+            .audio => {
+                try self.state.audio.handleActions(self, action.audio);
             },
         }
     }
@@ -221,14 +289,53 @@ pub const StateActor = struct {
         }
     }
 
+    // TODO: Start here. Segfault here. Need to close this thread handler before state_actor is destroyed,
+    // because the audio source closes the channel and destroys it immediately after.
+    fn startAudioRecordThreadHandler(self: *Self) !void {
+        // Initialize the audio replay buffer. It should already be null.
+        {
+            const audio_locked = self.audio_replay_buffer.lock();
+            defer audio_locked.unlock();
+            const ptr = audio_locked.unwrapPtr();
+            // TODO: Got an assert here - figure out why this happened. It happened when
+            // a window was recording, then stopped, then a new window was selected. This
+            // happened when it was running for around 10 minutes.
+            assert(ptr.* == null);
+            ptr.* = try AudioReplayBuffer.init(self.allocator, self.state.replay_seconds);
+        }
+
+        while (true) {
+            const data = self.audio_capture.receiveData() catch |err| {
+                if (err == ChanError.Closed) {
+                    log.debug("[startAudioRecordThreadHandler] chan closed", .{});
+                    break;
+                }
+                log.err("[startAudioRecordThreadHandler] data_chan error: {}", .{err});
+                return err;
+            };
+            log.debug("[startAudioRecordThreadHandler] got audio data: {s}", .{data.id});
+            const audio_locked = self.audio_replay_buffer.lock();
+            defer audio_locked.unlock();
+            if (audio_locked.unwrap()) |buffer| {
+                buffer.addData(data) catch |err| {
+                    audio_locked.unlock();
+                    data.deinit();
+                    return err;
+                };
+            } else {
+                data.deinit();
+            }
+        }
+    }
+
     /// TODO: move most of this to capture?
     /// This is the main capture loop.
-    fn startRecordThreadHandler(self: *Self) !void {
+    fn startVideoRecordThreadHandler(self: *Self) !void {
         self.ui_mutex.lock();
         const fps = self.state.fps;
         const bit_rate = self.state.bit_rate;
-        const width = self.capture.size().?.width;
-        const height = self.capture.size().?.height;
+        const width = self.video_capture.size().?.width;
+        const height = self.video_capture.size().?.height;
         self.ui_mutex.unlock();
         // Initialize the video encoder here. It will be destroyed
         // when the record thread terminates.
@@ -243,10 +350,10 @@ pub const StateActor = struct {
         // Initialize the replay buffer. This replay buffer
         // will be destroyed/recreated each time a replay is saved.
         {
-            self.replay_buffer_mutex.lock();
-            defer self.replay_buffer_mutex.unlock();
-
-            self.replay_buffer = try ReplayBuffer.init(
+            const video_locked = self.video_replay_buffer.lock();
+            defer video_locked.unlock();
+            const video_replay_buffer = video_locked.unwrapPtr();
+            video_replay_buffer.* = try VideoReplayBuffer.init(
                 self.allocator,
                 self.state.replay_seconds,
                 self.vulkan.video_encoder.?.bit_stream_header.items,
@@ -272,7 +379,7 @@ pub const StateActor = struct {
 
             previous_frame_start_time = std.time.nanoTimestamp();
 
-            self.capture.nextFrame() catch |err| {
+            self.video_capture.nextFrame() catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("self.capture.nextFrame: chan closed, exiting record thread\n", .{});
                     break;
@@ -281,7 +388,7 @@ pub const StateActor = struct {
             };
 
             // This thing is ref counted so release when we are done with it here.
-            const vulkan_image_buffer = self.capture.waitForFrame() catch |err| {
+            const vulkan_image_buffer = self.video_capture.waitForFrame() catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("self.capture.waitForFrame: chan closed, exiting record thread\n", .{});
                     break;
@@ -305,6 +412,7 @@ pub const StateActor = struct {
                     .src_height = vulkan_image_buffer.value.*.height,
                     .wait_semaphore = null,
                     .use_signal_semaphore = true,
+                    .timestamp_ns = vulkan_image_buffer.value.*.timestamp_ns,
                 },
             );
 
@@ -319,13 +427,18 @@ pub const StateActor = struct {
             });
 
             const encode_result = try self.vulkan.video_encoder.?.encode(0);
-            self.replay_buffer_mutex.lock();
-            defer self.replay_buffer_mutex.unlock();
-            try self.vulkan.video_encoder.?.finishEncode(encode_result, self.replay_buffer.?, vulkan_image_buffer.value.*.copy_image_timestamp);
+            const video_locked = self.video_replay_buffer.lock();
+            defer video_locked.unlock();
+            const video_replay_buffer = video_locked.unwrap();
+            try self.vulkan.video_encoder.?.finishEncode(
+                encode_result,
+                video_replay_buffer.?,
+                vulkan_image_buffer.value.*.timestamp_ns,
+            );
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            self.state.replay_buffer_state.size = self.replay_buffer.?.size;
-            self.state.replay_buffer_state.seconds = self.replay_buffer.?.getSeconds();
+            self.state.replay_buffer.size = video_replay_buffer.?.size;
+            self.state.replay_buffer.seconds = video_replay_buffer.?.getSeconds();
         }
     }
 
@@ -338,21 +451,24 @@ pub const StateActor = struct {
         }
 
         // Force the record loop to exit by closing all capture channels.
-        self.capture.closeAllChannels();
+        self.video_capture.closeAllChannels();
 
-        // Wait for the thread loop to complete
-        if (self.record_thread) |record_thread| {
-            defer self.record_thread = null;
-            record_thread.join();
+        // Wait for the video record thread loop to complete.
+        if (self.video_record_thread) |video_record_thread| {
+            video_record_thread.join();
+            self.video_record_thread = null;
         }
 
         try self.vulkan.destroyCapturePreviewRingBuffer();
 
-        try self.capture.stop();
+        try self.video_capture.stop();
 
-        if (self.replay_buffer) |replay_buffer| {
-            replay_buffer.deinit();
-            self.replay_buffer = null;
+        var video_locked = self.video_replay_buffer.lock();
+        defer video_locked.unlock();
+        const video_replay_buffer = video_locked.unwrap();
+        if (video_replay_buffer) |vrb| {
+            vrb.deinit();
+            video_locked.set(null);
         }
     }
 
@@ -362,7 +478,8 @@ pub const StateActor = struct {
 
         if (self.state.has_source and !self.state.recording) {
             self.state.recording = true;
-            self.record_thread = try std.Thread.spawn(.{}, startRecordThreadHandler, .{self});
+            self.video_record_thread = try std.Thread.spawn(.{}, startVideoRecordThreadHandler, .{self});
+            self.audio_record_thread = try std.Thread.spawn(.{}, startAudioRecordThreadHandler, .{self});
         }
     }
 
@@ -373,18 +490,5 @@ pub const StateActor = struct {
     /// Be careful when using this from the UI thread.
     pub fn dispatch(self: *Self, action: Actions) !void {
         try self.action_chan.send(action);
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.thread_pool.deinit();
-        if (self.replay_buffer) |replay_buffer| {
-            replay_buffer.deinit();
-        }
-        // TODO: move this to state
-        if (self.state.selected_screen_cast_identifier) |selected_screen_name| {
-            self.allocator.free(selected_screen_name);
-        }
-        self.action_chan.deinit();
-        self.allocator.destroy(self);
     }
 };

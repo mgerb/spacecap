@@ -1,7 +1,13 @@
+const std = @import("std");
 const Self = @This();
-const UserSettings = @import("./user_settings.zig").UserSettings;
+const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
+const UserSettingsState = @import("./state/user_settings_state.zig").UserSettingsState;
+const AudioDeviceType = @import("./capture/audio/audio_capture.zig").AudioDeviceType;
+const AudioState = @import("./state/audio_state.zig").AudioState;
 
-const ReplayBufferState = struct {
+// TODO: add audio size
+const ReplayBufferViewModel = struct {
     size: u64 = 0,
     seconds: u64 = 0,
 
@@ -12,7 +18,7 @@ const ReplayBufferState = struct {
 };
 
 // User settings
-user_settings: UserSettings,
+user_settings: UserSettingsState,
 replay_seconds: u32 = 60,
 fps: u32 = 60,
 bit_rate: u64 = 20_000_000,
@@ -20,14 +26,23 @@ bit_rate: u64 = 20_000_000,
 recording: bool = false,
 has_source: bool = false,
 show_demo: bool = false,
-selected_screen_cast_identifier: ?[]u8 = null,
 is_video_capture_supprted: bool,
+audio: AudioState,
 
-replay_buffer_state: ReplayBufferState = .{},
+replay_buffer: ReplayBufferViewModel = .{},
 
-pub fn init(user_settings: UserSettings, is_video_capture_supprted: bool) Self {
+pub fn init(
+    allocator: Allocator,
+    is_video_capture_supprted: bool,
+) !Self {
     return .{
-        .user_settings = user_settings,
+        .user_settings = try .init(allocator),
         .is_video_capture_supprted = is_video_capture_supprted,
+        .audio = try .init(allocator),
     };
+}
+
+pub fn deinit(self: *Self) void {
+    self.audio.deinit();
+    self.user_settings.deinit();
 }

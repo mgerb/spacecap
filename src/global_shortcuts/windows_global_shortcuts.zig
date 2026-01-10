@@ -7,6 +7,7 @@ pub const WindowsGlobalShortcuts = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,

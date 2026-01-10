@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const c = @import("./pipewire_include.zig").c;
+const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
+const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const vk = @import("vulkan");
 
 /// Export a semaphore from a dmabuf file descriptor. This

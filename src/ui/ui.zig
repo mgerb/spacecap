@@ -39,6 +39,7 @@ pub const UI = struct {
         vulkan: *Vulkan,
     ) !*Self {
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
 
         self.* = Self{
             .allocator = allocator,
@@ -391,8 +392,8 @@ pub const UI = struct {
             // We use mailbox present mode so unlimited FPS can get
             // pretty high e.g. 2k+
             self.state_actor.ui_mutex.lock();
-            const fg_fps = self.state_actor.state.user_settings.gui_foreground_fps;
-            const bg_fps = self.state_actor.state.user_settings.gui_background_fps;
+            const fg_fps = self.state_actor.state.user_settings.settings.gui_foreground_fps;
+            const bg_fps = self.state_actor.state.user_settings.settings.gui_background_fps;
             self.state_actor.ui_mutex.unlock();
 
             const frame_duration_ns = if (window_has_focus) (1_000_000_000 / fg_fps) else (1_000_000_000 / bg_fps);

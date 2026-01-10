@@ -1,10 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const c = @import("./pipewire_include.zig").c;
+const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const vk = @import("vulkan");
-const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const BufferedChan = @import("../../../channel.zig").BufferedChan;
+const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
+const BufferedChan = @import("../../../../channel.zig").BufferedChan;
 const pipewire_util = @import("./pipewire_util.zig");
 
 const PipewireFrameBufferImage = struct {
@@ -37,6 +37,7 @@ pub const PipewireFrameBufferManager = struct {
         vulkan: *Vulkan,
     ) !*Self {
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,

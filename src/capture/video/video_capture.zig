@@ -1,26 +1,26 @@
-const util = @import("../util.zig");
+const util = @import("../../util.zig");
 const std = @import("std");
-const types = @import("../types.zig");
+const types = @import("../../types.zig");
 const vk = @import("vulkan");
-const ChanError = @import("../channel.zig").ChanError;
-const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const ChanError = @import("../../channel.zig").ChanError;
+const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const rc = @import("zigrc");
 
-pub const CaptureSourceType = enum { window, desktop };
+pub const VideoCaptureSourceType = enum { window, desktop };
 
-pub const CaptureError = error{
+pub const VideoCaptureError = error{
     portal_service_not_found,
     source_picker_cancelled,
 };
 
-/// Capture interface.
-pub const Capture = struct {
+/// VideoCapture interface.
+pub const VideoCapture = struct {
     const Self = @This();
     ptr: *anyopaque,
     vtable: *const VTable,
 
     const VTable = struct {
-        selectSource: *const fn (*anyopaque, CaptureSourceType) anyerror!void,
+        selectSource: *const fn (*anyopaque, VideoCaptureSourceType) anyerror!void,
         nextFrame: *const fn (*anyopaque) ChanError!void,
         closeAllChannels: *const fn (*anyopaque) void,
         waitForFrame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
@@ -29,7 +29,7 @@ pub const Capture = struct {
         deinit: *const fn (*anyopaque) void,
     };
 
-    pub fn selectSource(self: *Self, source_type: CaptureSourceType) (CaptureError || anyerror)!void {
+    pub fn selectSource(self: *Self, source_type: VideoCaptureSourceType) (VideoCaptureError || anyerror)!void {
         return self.vtable.selectSource(self.ptr, source_type);
     }
 

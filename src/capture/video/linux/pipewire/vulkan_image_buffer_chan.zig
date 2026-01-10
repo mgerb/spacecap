@@ -1,9 +1,9 @@
 const std = @import("std");
 const rc = @import("zigrc");
 
-const ChanError = @import("../../../channel.zig").ChanError;
-const BufferedChan = @import("../../../channel.zig").BufferedChan;
-const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const ChanError = @import("../../../../channel.zig").ChanError;
+const BufferedChan = @import("../../../../channel.zig").BufferedChan;
+const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 /// Buffered channel wrapper that drains and releases queued VulkanImageBuffer refs on shutdown.
 pub const VulkanImageBufferChan = struct {
@@ -25,7 +25,7 @@ pub const VulkanImageBufferChan = struct {
     /// Drain any queued buffers and close the channel.
     pub fn close(self: *Self) void {
         self.drain();
-        self.chan.close();
+        self.chan.close(.{});
     }
 
     /// Increment the buffer ref count, set to in use, then send on the channel.

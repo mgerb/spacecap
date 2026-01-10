@@ -20,6 +20,7 @@ pub const VulkanImageRingBuffer = struct {
     pub fn init(
         args: VulkanImageBuffer.InitArgs,
     ) !*Self {
+        // TODO: add errdefer to clean up allocations.
         const self = try args.allocator.create(Self);
 
         self.* = .{
@@ -51,6 +52,7 @@ pub const VulkanImageRingBuffer = struct {
         src_height: u32,
         wait_semaphore: ?vk.Semaphore,
         use_signal_semaphore: bool,
+        timestamp_ns: i128,
     }) !struct {
         vulkan_image_buffer: ?rc.Arc(*VulkanImageBuffer) = null,
         semaphore: ?vk.Semaphore = null,
@@ -79,6 +81,7 @@ pub const VulkanImageRingBuffer = struct {
                     .src_height = args.src_height,
                     .wait_semaphore = args.wait_semaphore,
                     .use_signal_semaphore = args.use_signal_semaphore,
+                    .timestamp_ns = args.timestamp_ns,
                 });
                 return .{
                     .vulkan_image_buffer = vulkan_image_buffer,
