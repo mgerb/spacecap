@@ -6,6 +6,7 @@ const Util = @import("./util.zig");
 const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
 const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
 const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
+const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
 const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
@@ -39,7 +40,8 @@ pub const StateActor = struct {
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
-    capture: *VideoCapture,
+    video_capture: *VideoCapture,
+    audio_capture: *AudioCapture,
     global_shortcuts: *GlobalShortcuts,
     replay_buffer: ?*ReplayBuffer = null,
     replay_buffer_mutex: std.Thread.Mutex = .{},
@@ -49,13 +51,15 @@ pub const StateActor = struct {
     /// when making updates to the UI state.
     ui_mutex: std.Thread.Mutex = .{},
     state: State,
-    record_thread: ?std.Thread = null,
+    video_record_thread: ?std.Thread = null,
+    audio_record_thread: ?std.Thread = null,
 
     /// Caller owns the memory. Be sure to deinit.
     pub fn init(
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
-        capture: *VideoCapture,
+        video_capture: *VideoCapture,
+        audio_capture: *AudioCapture,
         global_shortcuts: *GlobalShortcuts,
     ) !*Self {
         const self = try allocator.create(Self);
@@ -70,7 +74,8 @@ pub const StateActor = struct {
         self.* = Self{
             .allocator = allocator,
             .vulkan = vulkan,
-            .capture = capture,
+            .video_capture = video_capture,
+            .audio_capture = audio_capture,
             .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
             .state = State.init(user_settings),
@@ -139,7 +144,7 @@ pub const StateActor = struct {
                     self.replay_buffer_mutex.unlock();
 
                     self.ui_mutex.lock();
-                    const size = self.capture.size().?;
+                    const size = self.video_capture.size().?;
                     const fps = self.state.fps;
                     self.ui_mutex.unlock();
 
@@ -158,7 +163,7 @@ pub const StateActor = struct {
                     try self.stopRecord();
                 }
 
-                self.capture.selectSource(source_type) catch |err| {
+                self.video_capture.selectSource(source_type) catch |err| {
                     if (err != VideoCaptureError.source_picker_cancelled) {
                         log.err("selectSource error: {}\n", .{err});
                         return err;
@@ -221,14 +226,31 @@ pub const StateActor = struct {
         }
     }
 
+    fn startAudioRecordThreadHandler(self: *Self) !void {
+        const data_chan = self.audio_capture.getDataChan();
+
+        while (true) {
+            const data = data_chan.recv() catch |err| {
+                if (err == ChanError.Closed) {
+                    log.debug("[startAudioRecordThreadHandler] chan closed", .{});
+                    break;
+                }
+                log.err("[startAudioRecordThreadHandler] data_chan error: {}", .{err});
+                return err;
+            };
+
+            _ = data;
+        }
+    }
+
     /// TODO: move most of this to capture?
     /// This is the main capture loop.
-    fn startRecordThreadHandler(self: *Self) !void {
+    fn startVideoRecordThreadHandler(self: *Self) !void {
         self.ui_mutex.lock();
         const fps = self.state.fps;
         const bit_rate = self.state.bit_rate;
-        const width = self.capture.size().?.width;
-        const height = self.capture.size().?.height;
+        const width = self.video_capture.size().?.width;
+        const height = self.video_capture.size().?.height;
         // Initialize the video encoder here. It will be destroyed
         // when the record thread terminates.
         try self.vulkan.initVideoEncoder(
@@ -269,7 +291,7 @@ pub const StateActor = struct {
 
             previous_frame_start_time = std.time.nanoTimestamp();
 
-            self.capture.nextFrame() catch |err| {
+            self.video_capture.nextFrame() catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("self.capture.nextFrame: chan closed, exiting record thread\n", .{});
                     break;
@@ -278,7 +300,7 @@ pub const StateActor = struct {
             };
 
             // This thing is ref counted so release when we are done with it here.
-            const vulkan_image_buffer = self.capture.waitForFrame() catch |err| {
+            const vulkan_image_buffer = self.video_capture.waitForFrame() catch |err| {
                 if (err == ChanError.Closed) {
                     log.info("self.capture.waitForFrame: chan closed, exiting record thread\n", .{});
                     break;
@@ -335,17 +357,24 @@ pub const StateActor = struct {
         }
 
         // Force the record loop to exit by closing all capture channels.
-        self.capture.closeAllChannels();
+        self.video_capture.closeAllChannels();
+        self.audio_capture.closeAllChannels();
 
-        // Wait for the thread loop to complete
-        if (self.record_thread) |record_thread| {
-            defer self.record_thread = null;
-            record_thread.join();
+        // Wait for the video record thread loop to complete.
+        if (self.video_record_thread) |video_record_thread| {
+            video_record_thread.join();
+            self.video_record_thread = null;
+        }
+
+        // Wait for the audio record thread loop to complete.
+        if (self.audio_record_thread) |audio_record_thread| {
+            audio_record_thread.join();
+            self.video_record_thread = null;
         }
 
         try self.vulkan.destroyCapturePreviewRingBuffer();
 
-        try self.capture.stop();
+        try self.video_capture.stop();
 
         if (self.replay_buffer) |replay_buffer| {
             replay_buffer.deinit();
@@ -359,7 +388,8 @@ pub const StateActor = struct {
 
         if (self.state.has_source and !self.state.recording) {
             self.state.recording = true;
-            self.record_thread = try std.Thread.spawn(.{}, startRecordThreadHandler, .{self});
+            self.video_record_thread = try std.Thread.spawn(.{}, startVideoRecordThreadHandler, .{self});
+            self.audio_record_thread = try std.Thread.spawn(.{}, startAudioRecordThreadHandler, .{self});
         }
     }
 

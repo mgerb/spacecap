@@ -14,7 +14,7 @@ const VideoCaptureError = @import("../video_capture.zig").VideoCaptureError;
 const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const rc = @import("zigrc");
 
-pub const VideoLinuxPipewireDmaCapture = struct {
+pub const LinuxPipewireDmaCapture = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -99,7 +99,7 @@ pub const VideoLinuxPipewireDmaCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn capture(self: *Self) VideoCapture {
+    pub fn videoCapture(self: *Self) VideoCapture {
         return .{
             .ptr = self,
             .vtable = &.{

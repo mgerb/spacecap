@@ -56,7 +56,6 @@ pub const Pipewire = struct {
             .vulkan_image_buffer_chan = try VulkanImageBufferChan.init(allocator),
         };
 
-        c.pw_init(null, null);
         return self;
     }
 
@@ -100,8 +99,6 @@ pub const Pipewire = struct {
             c.pw_thread_loop_destroy(thread_loop);
             self.thread_loop = null;
         }
-
-        c.pw_deinit();
 
         if (self.pipewire_frame_buffer_manager) |frame_buffer_manager| {
             frame_buffer_manager.deinit();
