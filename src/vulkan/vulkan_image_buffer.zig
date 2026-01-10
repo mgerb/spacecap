@@ -22,7 +22,7 @@ pub const VulkanImageBuffer = struct {
     signal_semaphore: vk.Semaphore,
     fence: vk.Fence,
     /// Time when the image was last copied.
-    copy_image_timestamp: i128 = 0,
+    timestamp_ns: i128 = 0,
     src_queue_family_index: u32,
 
     width: u32,
@@ -64,8 +64,10 @@ pub const VulkanImageBuffer = struct {
         };
 
         const image = try args.vulkan.device.createImage(&image_create_info, null);
+        errdefer args.vulkan.device.destroyImage(image, null);
         const mem_req = args.vulkan.device.getImageMemoryRequirements(image);
         const image_memory = try args.vulkan.allocate(mem_req, .{ .device_local_bit = true }, null);
+        errdefer args.vulkan.device.freeMemory(image_memory, null);
         try args.vulkan.device.bindImageMemory(image, image_memory, 0);
 
         const image_view_create_info = vk.ImageViewCreateInfo{
@@ -82,24 +84,31 @@ pub const VulkanImageBuffer = struct {
             },
         };
         const image_view = try args.vulkan.device.createImageView(&image_view_create_info, null);
+        errdefer args.vulkan.device.destroyImageView(image_view, null);
 
         const command_pool = try args.vulkan.device.createCommandPool(&.{
             .queue_family_index = args.vulkan.graphics_queue.family,
             .flags = .{ .reset_command_buffer_bit = true },
         }, null);
+        errdefer args.vulkan.device.destroyCommandPool(command_pool, null);
 
+        const command_buffer_count = 1;
         const cmd_alloc_info = vk.CommandBufferAllocateInfo{
             .command_pool = command_pool,
             .level = .primary,
-            .command_buffer_count = 1,
+            .command_buffer_count = command_buffer_count,
         };
 
         var command_buffer: vk.CommandBuffer = undefined;
         try args.vulkan.device.allocateCommandBuffers(&cmd_alloc_info, @ptrCast(&command_buffer));
+        errdefer args.vulkan.device.freeCommandBuffers(command_pool, command_buffer_count, @ptrCast(&command_buffer));
         const signal_semaphore = try args.vulkan.device.createSemaphore(&.{}, null);
+        errdefer args.vulkan.device.destroySemaphore(signal_semaphore, null);
         const fence = try args.vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
+        errdefer args.vulkan.device.destroyFence(fence, null);
 
         const self = try args.allocator.create(Self);
+        errdefer args.allocator.destroy(self);
 
         self.* = .{
             .allocator = args.allocator,
@@ -147,9 +156,10 @@ pub const VulkanImageBuffer = struct {
             src_height: u32,
             wait_semaphore: ?vk.Semaphore,
             use_signal_semaphore: bool = false,
+            timestamp_ns: i128,
         },
     ) !void {
-        self.copy_image_timestamp = std.time.nanoTimestamp();
+        self.timestamp_ns = args.timestamp_ns;
         const result = try self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64));
 
         if (result != .success) {

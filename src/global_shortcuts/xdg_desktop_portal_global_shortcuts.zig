@@ -1,7 +1,7 @@
 //// Credits to Ghostty for the implementation reference: https://github.com/ghostty-org/ghostty/pull/7083
 
 const std = @import("std");
-const TokenManager = @import("../capture/linux/pipewire/token_manager.zig");
+const TokenManager = @import("../common/linux/token_manager.zig");
 const TokenStorage = @import("../common/linux/token_storage.zig");
 const GlobalShortcuts = @import("./global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
@@ -45,6 +45,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
 
         const g_error: ?*?*glib.Error = null;
         const dbus = gio.busGetSync(.session, null, g_error) orelse return error.dbus;

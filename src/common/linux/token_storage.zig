@@ -1,5 +1,5 @@
 const std = @import("std");
-const UserSettings = @import("../../user_settings.zig");
+const util = @import("../../util.zig");
 
 const log = std.log.scoped(.token_storage);
 
@@ -9,7 +9,7 @@ pub fn loadToken(
     allocator: std.mem.Allocator,
     token_file_name: []const u8,
 ) !?[]u8 {
-    const dir = try UserSettings.getAppDataDir(allocator);
+    const dir = try util.getAppDataDir(allocator);
     defer allocator.free(dir);
     const file_path = try std.fmt.allocPrint(
         allocator,
@@ -55,7 +55,7 @@ pub fn saveToken(
     token_file_name: []const u8,
     token_value: []const u8,
 ) !void {
-    const dir = try UserSettings.getAppDataDir(allocator);
+    const dir = try util.getAppDataDir(allocator);
     defer allocator.free(dir);
     const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}.txt", .{
         dir,

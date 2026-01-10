@@ -2,17 +2,17 @@ const std = @import("std");
 const rc = @import("zigrc");
 
 const pipewire_util = @import("./pipewire_util.zig");
-const Chan = @import("../../../channel.zig").Chan;
-const ChanError = @import("../../../channel.zig").ChanError;
+const Chan = @import("../../../../channel.zig").Chan;
+const ChanError = @import("../../../../channel.zig").ChanError;
 const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanImageBufferChan;
-const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const CaptureError = @import("../../capture.zig").CaptureError;
-const c = @import("./pipewire_include.zig").c;
-const c_def = @import("./pipewire_include.zig").c_def;
+const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
+const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
+const VideoCaptureSourceType = @import("../../video_capture.zig").VideoCaptureSourceType;
+const c = @import("../../../../common/linux/pipewire_include.zig").c;
+const c_def = @import("../../../../common/linux/pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
-const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
 const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
-const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 pub const Pipewire = struct {
     const log = std.log.scoped(.Pipewire);
@@ -41,11 +41,12 @@ pub const Pipewire = struct {
     /// to the worker thread. The worker thread must be separate from the
     /// main pipewire loop, because it blocks and waits for the consumer.
     vulkan_image_buffer_chan: VulkanImageBufferChan,
+    previous_frame_timestamp_ns: ?i128 = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
-    ) (CaptureError || anyerror)!*Self {
+    ) (VideoCaptureError || anyerror)!*Self {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
@@ -56,7 +57,6 @@ pub const Pipewire = struct {
             .vulkan_image_buffer_chan = try VulkanImageBufferChan.init(allocator),
         };
 
-        c.pw_init(null, null);
         return self;
     }
 
@@ -101,8 +101,6 @@ pub const Pipewire = struct {
             self.thread_loop = null;
         }
 
-        c.pw_deinit();
-
         if (self.pipewire_frame_buffer_manager) |frame_buffer_manager| {
             frame_buffer_manager.deinit();
         }
@@ -114,16 +112,17 @@ pub const Pipewire = struct {
 
     pub fn selectSource(
         self: *Self,
-        source_type: CaptureSourceType,
-    ) (CaptureError || anyerror)!void {
+        source_type: VideoCaptureSourceType,
+    ) (VideoCaptureError || anyerror)!void {
         const pipewire_node = try self.portal.selectSource(source_type);
         const pipewire_fd = try self.portal.openPipewireRemote();
         errdefer _ = c.close(pipewire_fd);
 
         self.thread_loop = c.pw_thread_loop_new(
-            "spacecap-pipewire-capture",
+            "spacecap-pipewire-capture-video",
             null,
         ) orelse return error.pw_thread_loop_new;
+        errdefer c.pw_thread_loop_destroy(self.thread_loop);
 
         self.context = c.pw_context_new(
             c.pw_thread_loop_get_loop(self.thread_loop),
@@ -283,7 +282,7 @@ pub const Pipewire = struct {
     }
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
-        log.debug("[streamProcessCallback]", .{});
+        // log.debug("[streamProcessCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
@@ -323,6 +322,24 @@ pub const Pipewire = struct {
             unreachable;
         };
 
+        const header = c.spa_buffer_find_meta_data(pwb.buffer, c.SPA_META_Header, @sizeOf(c.spa_meta_header));
+        if (header == null) {
+            log.err("[streamProcessCallback] unable to get metadata header. This should never happen.", .{});
+            return;
+        }
+        const metadata = @as(*c.spa_meta_header, @ptrCast(@alignCast(header.?)));
+        var timestamp_ns: i128 = @intCast(metadata.pts);
+
+        // Pipewire can occasionally queue a buffer with the same timestamp as the previous
+        // frame. In this case, increment it by one. We can't have multiple frames with
+        // the same pts.
+        if (self.previous_frame_timestamp_ns) |previous| {
+            if (timestamp_ns <= previous) {
+                timestamp_ns = timestamp_ns + 1;
+            }
+        }
+        self.previous_frame_timestamp_ns = timestamp_ns;
+
         const copy_data = blk: {
             const capture_ring_buffer = self.vulkan.capture_ring_buffer.lock();
             defer capture_ring_buffer.unlock();
@@ -332,8 +349,9 @@ pub const Pipewire = struct {
                 .src_height = self.info.?.size.height,
                 .wait_semaphore = vulkan_image.wait_semaphore,
                 .use_signal_semaphore = false,
+                .timestamp_ns = timestamp_ns,
             }) catch |err| {
-                log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
+                log.err("[streamProcessCallback] copyImageToRingBuffer error: {}", .{err});
                 unreachable;
             };
         };
@@ -465,6 +483,21 @@ pub const Pipewire = struct {
 
         var params = std.ArrayList(*c.struct_spa_pod).initCapacity(self.allocator, 0) catch unreachable;
         defer params.deinit(self.allocator);
+
+        // This allows us to get the frame timestamp.
+        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
+            &builder,
+            c.SPA_TYPE_OBJECT_ParamMeta,
+            c.SPA_PARAM_Meta,
+            .{
+                c.SPA_PARAM_META_type,
+                "I",
+                @as(i32, c.SPA_META_Header),
+                c.SPA_PARAM_META_size,
+                "i",
+                @as(i32, @intCast(@sizeOf(c.spa_meta_header))),
+            },
+        )))) catch unreachable;
 
         // damage
         params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(

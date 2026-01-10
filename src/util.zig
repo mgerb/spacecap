@@ -86,3 +86,43 @@ pub fn checkFd(fd: i64) !void {
 
     std.debug.print("FD {} points to: {s}\n", .{ fd, target });
 }
+
+/// Returns the platform-specific application data directory.
+/// For example:
+/// - Windows: %APPDATA%\spacecap
+/// - Linux: $XDG_CONFIG_HOME/spacecap or $HOME/.config/spacecap
+/// The returned path is owned by the caller and must be freed.
+/// This function will create the directory if it does not exist.
+pub fn getAppDataDir(allocator: std.mem.Allocator) ![]u8 {
+    // TODO: test on windows
+    const base_dir: []u8 = if (@import("builtin").os.tag == .windows) blk: {
+        // On Windows, use %APPDATA%
+        break :blk try std.process.getEnvVarOwned(allocator, "APPDATA");
+    } else if (@import("builtin").os.tag == .linux) blk: {
+        // On Linux, use $XDG_CONFIG_HOME or $HOME/.config
+        if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME")) |xdg_config_home| {
+            break :blk xdg_config_home;
+        } else |err| switch (err) {
+            error.EnvironmentVariableNotFound => {
+                const home = try std.process.getEnvVarOwned(allocator, "HOME");
+                defer allocator.free(home);
+                break :blk try std.fs.path.join(allocator, &.{ home, ".config" });
+            },
+            else => return err,
+        }
+    } else {
+        @compileError("Unsupported OS");
+    };
+    defer allocator.free(base_dir);
+
+    const app_config_dir = try std.fs.path.join(allocator, &.{ base_dir, "spacecap" });
+
+    // Ensure the directory exists
+    std.fs.makeDirAbsolute(app_config_dir) catch |err| {
+        if (err != error.PathAlreadyExists) {
+            return err;
+        }
+    };
+
+    return app_config_dir;
+}

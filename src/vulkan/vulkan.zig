@@ -222,6 +222,7 @@ pub const Vulkan = struct {
         // We use an allocator here because we don't want the
         // reference to change when we return this object.
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
         self.* = Self{
             .allocator = allocator,
             .vkb = vkbd,
