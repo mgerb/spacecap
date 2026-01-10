@@ -2,17 +2,17 @@ const std = @import("std");
 const rc = @import("zigrc");
 
 const pipewire_util = @import("./pipewire_util.zig");
-const Chan = @import("../../../channel.zig").Chan;
-const ChanError = @import("../../../channel.zig").ChanError;
+const Chan = @import("../../../../channel.zig").Chan;
+const ChanError = @import("../../../../channel.zig").ChanError;
 const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanImageBufferChan;
-const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const CaptureError = @import("../../capture.zig").CaptureError;
+const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
+const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
+const VideoCaptureSourceType = @import("../../video_capture.zig").VideoCaptureSourceType;
 const c = @import("./pipewire_include.zig").c;
 const c_def = @import("./pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
-const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
 const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
-const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 pub const Pipewire = struct {
     const log = std.log.scoped(.Pipewire);
@@ -45,7 +45,7 @@ pub const Pipewire = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
-    ) (CaptureError || anyerror)!*Self {
+    ) (VideoCaptureError || anyerror)!*Self {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
@@ -114,8 +114,8 @@ pub const Pipewire = struct {
 
     pub fn selectSource(
         self: *Self,
-        source_type: CaptureSourceType,
-    ) (CaptureError || anyerror)!void {
+        source_type: VideoCaptureSourceType,
+    ) (VideoCaptureError || anyerror)!void {
         const pipewire_node = try self.portal.selectSource(source_type);
         const pipewire_fd = try self.portal.openPipewireRemote();
         errdefer _ = c.close(pipewire_fd);

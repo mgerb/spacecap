@@ -1,7 +1,7 @@
 const std = @import("std");
-const CaptureError = @import("../../capture.zig").CaptureError;
-const CaptureSourceType = @import("../../capture.zig").CaptureSourceType;
-const TokenStorage = @import("../../../common/linux/token_storage.zig");
+const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
+const VideoCaptureSourceType = @import("../../video_capture.zig").VideoCaptureSourceType;
+const TokenStorage = @import("../../../../common/linux/token_storage.zig");
 
 const log = std.log.scoped(.portal);
 
@@ -21,13 +21,13 @@ fn freeErrorMaybe(err: ?*c.GError) void {
     }
 }
 
-fn mapGError(err: *c.GError) ?CaptureError {
+fn mapGError(err: *c.GError) ?VideoCaptureError {
     // When the portal service is missing or the user cancels, match the old portal.zig errors.
     if (err.code == c.G_IO_ERROR_INVAL) {
-        return CaptureError.portal_service_not_found;
+        return VideoCaptureError.portal_service_not_found;
     }
     if (err.code == c.G_IO_ERROR_CANCELLED) {
-        return CaptureError.source_picker_cancelled;
+        return VideoCaptureError.source_picker_cancelled;
     }
     return null;
 }
@@ -55,8 +55,8 @@ pub const Portal = struct {
 
     pub fn selectSource(
         self: *Self,
-        source_type: CaptureSourceType,
-    ) (CaptureError || anyerror)!u32 {
+        source_type: VideoCaptureSourceType,
+    ) (VideoCaptureError || anyerror)!u32 {
         try self.createSession(source_type);
         return try self.startSession();
     }
@@ -109,7 +109,7 @@ pub const Portal = struct {
         c.g_main_loop_quit(ctx.loop);
     }
 
-    fn createSession(self: *Self, source_type: CaptureSourceType) !void {
+    fn createSession(self: *Self, source_type: VideoCaptureSourceType) !void {
         if (self.session != null) {
             return;
         }
@@ -172,7 +172,7 @@ pub const Portal = struct {
         c.g_main_loop_quit(ctx.loop);
     }
 
-    fn startSession(self: *Self) (CaptureError || anyerror)!u32 {
+    fn startSession(self: *Self) (VideoCaptureError || anyerror)!u32 {
         const loop = c.g_main_loop_new(null, 0) orelse return error.g_main_loop_new_failed;
         var ctx = StartSessionContext{
             .loop = loop,

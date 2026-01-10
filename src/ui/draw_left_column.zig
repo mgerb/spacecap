@@ -29,7 +29,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
     if (c.ImGui_BeginTabBar("MainTabBar", 0)) {
         defer c.ImGui_EndTabBar();
 
-        if (c.ImGui_BeginTabItem("Capture", null, 0)) {
+        if (c.ImGui_BeginTabItem("VideoCapture", null, 0)) {
             defer c.ImGui_EndTabItem();
 
             if (c.ImGui_BeginTable("source_table", 2, c.ImGuiTableFlags_None)) {

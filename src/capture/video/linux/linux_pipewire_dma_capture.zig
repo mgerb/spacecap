@@ -2,19 +2,19 @@ const std = @import("std");
 
 const vk = @import("vulkan");
 
-const types = @import("../../types.zig");
-const util = @import("../../util.zig");
-const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
+const types = @import("../../../types.zig");
+const util = @import("../../../util.zig");
+const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
 const Pipewire = @import("./pipewire/pipewire.zig").Pipewire;
-const Chan = @import("../../channel.zig").Chan;
-const ChanError = @import("../../channel.zig").ChanError;
-const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
-const Capture = @import("../capture.zig").Capture;
-const CaptureError = @import("../capture.zig").CaptureError;
-const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const Chan = @import("../../../channel.zig").Chan;
+const ChanError = @import("../../../channel.zig").ChanError;
+const VideoCaptureSourceType = @import("../video_capture.zig").VideoCaptureSourceType;
+const VideoCapture = @import("../video_capture.zig").VideoCapture;
+const VideoCaptureError = @import("../video_capture.zig").VideoCaptureError;
+const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const rc = @import("zigrc");
 
-pub const LinuxPipewireDmaCapture = struct {
+pub const VideoLinuxPipewireDmaCapture = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -31,7 +31,7 @@ pub const LinuxPipewireDmaCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, source_type: CaptureSourceType) (CaptureError || anyerror)!void {
+    pub fn selectSource(context: *anyopaque, source_type: VideoCaptureSourceType) (VideoCaptureError || anyerror)!void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
@@ -99,7 +99,7 @@ pub const LinuxPipewireDmaCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn capture(self: *Self) Capture {
+    pub fn capture(self: *Self) VideoCapture {
         return .{
             .ptr = self,
             .vtable = &.{

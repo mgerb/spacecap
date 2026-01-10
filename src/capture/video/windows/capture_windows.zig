@@ -2,18 +2,18 @@ const std = @import("std");
 
 const vk = @import("vulkan");
 
-const types = @import("../../types.zig");
-const util = @import("../../util.zig");
-const Vulkan = @import("../../vulkan/vulkan.zig").Vulkan;
-const CaptureSourceType = @import("../capture.zig").CaptureSourceType;
-const Capture = @import("../capture.zig").Capture;
-const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const ChanError = @import("../../channel.zig").ChanError;
+const types = @import("../../../types.zig");
+const util = @import("../../../util.zig");
+const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
+const VideoCaptureSourceType = @import("../video_capture.zig").VideoCaptureSourceType;
+const VideoCapture = @import("../video_capture.zig").VideoCapture;
+const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const ChanError = @import("../../../channel.zig").ChanError;
 const rc = @import("zigrc");
 
 const DWORD = u32;
 
-pub const WindowsCapture = struct {
+pub const VideoWindowsCapture = struct {
     const Self = @This();
     const DWORD = u32;
 
@@ -29,7 +29,7 @@ pub const WindowsCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, source_type: CaptureSourceType) !void {
+    pub fn selectSource(context: *anyopaque, source_type: VideoCaptureSourceType) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = source_type;
@@ -78,7 +78,7 @@ pub const WindowsCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn capture(self: *Self) Capture {
+    pub fn capture(self: *Self) VideoCapture {
         return .{
             .ptr = self,
             .vtable = &.{

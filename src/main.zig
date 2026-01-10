@@ -7,9 +7,9 @@ const UserSettings = @import("./user_settings.zig").UserSettings;
 const Util = @import("./util.zig");
 
 const PlatformCapture = if (Util.isLinux())
-    @import("./capture/linux/linux_pipewire_dma_capture.zig").LinuxPipewireDmaCapture
+    @import("./capture/video/linux/linux_pipewire_dma_capture.zig").VideoLinuxPipewireDmaCapture
 else
-    @import("./capture/windows/capture_windows.zig").WindowsCapture;
+    @import("./capture/video/windows/capture_windows.zig").VideoWindowsCapture;
 
 const PlatformGlobalShortcuts = if (Util.isLinux())
     @import("./global_shortcuts/xdg_desktop_portal_global_shortcuts.zig").XdgDesktopPortalGlobalShortcuts

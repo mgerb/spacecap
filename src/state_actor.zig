@@ -3,9 +3,10 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 const Util = @import("./util.zig");
-const Capture = @import("./capture/capture.zig").Capture;
+const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
+const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
+const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
 const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
-const CaptureError = @import("./capture/capture.zig").CaptureError;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
 const Chan = @import("./channel.zig").Chan;
@@ -13,7 +14,6 @@ const State = @import("./state.zig");
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
 const ReplayBuffer = @import("./vulkan/replay_buffer.zig").ReplayBuffer;
 const ffmpeg = @import("./ffmpeg.zig");
-const CaptureSourceType = @import("./capture/capture.zig").CaptureSourceType;
 const UserSettings = @import("./user_settings.zig").UserSettings;
 const types = @import("./types.zig");
 
@@ -22,7 +22,7 @@ const log = std.log.scoped(.state_actor);
 pub const Actions = union(enum) {
     start_record,
     stop_record,
-    select_video_source: CaptureSourceType,
+    select_video_source: VideoCaptureSourceType,
     save_replay,
     show_demo,
     exit,
@@ -39,7 +39,7 @@ pub const StateActor = struct {
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
-    capture: *Capture,
+    capture: *VideoCapture,
     global_shortcuts: *GlobalShortcuts,
     replay_buffer: ?*ReplayBuffer = null,
     replay_buffer_mutex: std.Thread.Mutex = .{},
@@ -55,7 +55,7 @@ pub const StateActor = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
-        capture: *Capture,
+        capture: *VideoCapture,
         global_shortcuts: *GlobalShortcuts,
     ) !*Self {
         const self = try allocator.create(Self);
@@ -159,7 +159,7 @@ pub const StateActor = struct {
                 }
 
                 self.capture.selectSource(source_type) catch |err| {
-                    if (err != CaptureError.source_picker_cancelled) {
+                    if (err != VideoCaptureError.source_picker_cancelled) {
                         log.err("selectSource error: {}\n", .{err});
                         return err;
                     } else {

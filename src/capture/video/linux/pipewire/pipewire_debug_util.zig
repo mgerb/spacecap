@@ -1,6 +1,6 @@
 const c = @import("./pipewire_include.zig");
 const std = @import("std");
-const util = @import("../../../util.zig");
+const util = @import("../../../../util.zig");
 
 fn saveFrameToBmp(
     allocator: std.mem.Allocator,

@@ -2,7 +2,11 @@ const std = @import("std");
 
 pub const c = @cImport({
     @cInclude("pipewire/pipewire.h");
+    @cInclude("pipewire/extensions/metadata.h");
     @cInclude("spa/param/video/format-utils.h");
+    @cInclude("spa/param/audio/format-utils.h");
+    @cInclude("spa/param/audio/format.h");
+    @cInclude("spa/param/audio/raw.h");
     @cInclude("spa/param/format.h");
     @cInclude("spa/pod/builder.h");
     @cInclude("spa/debug/types.h");
