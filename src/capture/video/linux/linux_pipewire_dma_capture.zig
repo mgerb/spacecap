@@ -59,8 +59,8 @@ pub const LinuxPipewireDmaCapture = struct {
     pub fn closeAllChannels(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
-            pipewire.tx_chan.close();
-            pipewire.rx_chan.close();
+            pipewire.tx_chan.close(.{});
+            pipewire.rx_chan.close(.{});
             pipewire.vulkan_image_buffer_chan.close();
         }
     }

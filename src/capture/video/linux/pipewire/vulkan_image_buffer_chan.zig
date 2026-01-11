@@ -25,7 +25,7 @@ pub const VulkanImageBufferChan = struct {
     /// Drain any queued buffers and close the channel.
     pub fn close(self: *Self) void {
         self.drain();
-        self.chan.close();
+        self.chan.close(.{});
     }
 
     /// Increment the buffer ref count, set to in use, then send on the channel.

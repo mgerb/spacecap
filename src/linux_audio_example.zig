@@ -1,6 +1,6 @@
 const std = @import("std");
 const ffmpeg = @import("./ffmpeg.zig");
-const pipewire_include = @import("./capture/video/linux/pipewire/pipewire_include.zig");
+const pipewire_include = @import("./common/linux/pipewire_include.zig");
 const c = pipewire_include.c;
 const c_def = pipewire_include.c_def;
 
@@ -438,6 +438,7 @@ const PipewireAudio = struct {
             c.NULL,
         ) orelse return error.pw_properties_new;
         if (targets.source) |source_name| {
+            std.log.debug("source name: {s}", .{source_name});
             const source_z = try alloc.dupeZ(u8, source_name);
             defer alloc.free(source_z);
             _ = c.pw_properties_set(mic_props, c.PW_KEY_TARGET_OBJECT, source_z);
@@ -454,6 +455,7 @@ const PipewireAudio = struct {
         ) orelse return error.pw_properties_new;
         _ = c.pw_properties_set(sink_props, c.PW_KEY_STREAM_CAPTURE_SINK, "true");
         if (targets.sink) |sink_name| {
+            std.log.debug("sink name: {s}", .{sink_name});
             const sink_z = try alloc.dupeZ(u8, sink_name);
             defer alloc.free(sink_z);
             _ = c.pw_properties_set(sink_props, c.PW_KEY_TARGET_OBJECT, sink_z);

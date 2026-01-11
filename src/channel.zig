@@ -14,7 +14,7 @@ pub fn Chan(comptime T: type) type {
     return BufferedChan(T, 0);
 }
 
-pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
+pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
     return struct {
         const Self = @This();
         const bufType = [bufSize]?T;
@@ -24,7 +24,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
         alloc: std.mem.Allocator = undefined,
         recvQ: std.ArrayList(*Receiver) = undefined,
         sendQ: std.ArrayList(*Sender) = undefined,
-        len: u8 = 0,
+        len: u32 = 0,
 
         // represents a thread waiting on recv
         const Receiver = struct {
@@ -64,7 +64,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
 
         pub fn deinit(self: *Self) void {
             if (!self.closed) {
-                self.close();
+                self.close(.{});
             }
             self.recvQ.deinit(self.alloc);
             self.sendQ.deinit(self.alloc);
@@ -72,7 +72,10 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
 
         /// Close the channel. Any sender/receiver currently
         /// waiting will be terminated with ChanError.Closed.
-        pub fn close(self: *Self) void {
+        pub fn close(self: *Self, comptime args: struct {
+            /// If true, remove and call "deinit" on all items remaining in the queue.
+            drain: bool = false,
+        }) void {
             self.mut.lock();
             defer self.mut.unlock();
             self.closed = true;
@@ -84,9 +87,20 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u8) type {
             for (self.recvQ.items) |recvQ| {
                 recvQ.cond.signal();
             }
+
+            if (args.drain) {
+                if (@hasDecl(T, "deinit")) {
+                    for (self.buf, 0..) |buf, i| {
+                        if (buf) |*b| {
+                            @constCast(b).deinit();
+                        }
+                        self.buf[i] = null;
+                    }
+                }
+            }
         }
 
-        pub fn capacity(self: *Self) u8 {
+        pub fn capacity(self: *Self) u32 {
             return self.buf.len;
         }
 

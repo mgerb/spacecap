@@ -29,12 +29,12 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
+    PlatformCaptureSetup.init();
+    defer PlatformCaptureSetup.deinit();
+
     // if (comptime Util.isLinux()) {
     //     try @import("./linux_audio_example.zig").record_audio_clip(allocator);
     // }
-
-    PlatformCaptureSetup.init();
-    defer PlatformCaptureSetup.deinit();
 
     // TODO: move to state
     const user_settings = try UserSettings.load(allocator);

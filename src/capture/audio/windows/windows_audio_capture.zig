@@ -1,6 +1,8 @@
 const std = @import("std");
 const AudioCapture = @import("../audio_capture.zig").AudioCapture;
 const AudioCaptureBufferedChan = @import("../audio_capture.zig").AudioCaptureBufferedChan;
+const AudioCaptureData = @import("../audio_capture.zig").AudioCaptureData;
+const ChanError = @import("../../../channel.zig").ChanError;
 
 pub const WindowsAudioCapture = struct {
     const Self = @This();
@@ -24,14 +26,9 @@ pub const WindowsAudioCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn closeAllChannels(context: *anyopaque) void {
+    pub fn receiveData(context: *anyopaque) ChanError!AudioCaptureData {
         const self: *Self = @ptrCast(@alignCast(context));
-        _ = self;
-    }
-
-    pub fn getDataChan(context: *anyopaque) *AudioCaptureBufferedChan {
-        const self: *Self = @ptrCast(@alignCast(context));
-        return &self.data_chan;
+        return self.data_chan.recv();
     }
 
     pub fn stop(context: *anyopaque) !void {
@@ -42,8 +39,7 @@ pub const WindowsAudioCapture = struct {
     pub fn audioCapture(self: *Self) AudioCapture {
         return .{ .ptr = self, .vtable = &.{
             .deinit = deinit,
-            .closeAllChannels = closeAllChannels,
-            .getDataChan = getDataChan,
+            .receiveData = receiveData,
             .stop = stop,
         } };
     }

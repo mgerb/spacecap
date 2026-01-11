@@ -50,6 +50,11 @@ pub const c_def = struct {
         arg_info: [*c]c.struct_spa_video_info_raw,
     ) callconv(.c) c_int;
 
+    pub extern fn spa_format_audio_raw_parse(
+        arg_format: [*c]const c.struct_spa_pod,
+        arg_info: [*c]c.struct_spa_audio_info_raw,
+    ) callconv(.c) c_int;
+
     pub extern fn spa_pod_builder_long(arg_builder: [*c]c.struct_spa_pod_builder, arg_val: i64) callconv(.c) c_int;
 
     pub extern fn spa_pod_builder_pop(

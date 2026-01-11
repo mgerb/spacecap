@@ -226,11 +226,11 @@ pub const StateActor = struct {
         }
     }
 
+    // TODO: Start here. Segfault here. Need to close this thread handler before state_actor is destroyed,
+    // because the audio source closes the channel and destroys it immediately after.
     fn startAudioRecordThreadHandler(self: *Self) !void {
-        const data_chan = self.audio_capture.getDataChan();
-
         while (true) {
-            const data = data_chan.recv() catch |err| {
+            var data = self.audio_capture.receiveData() catch |err| {
                 if (err == ChanError.Closed) {
                     log.debug("[startAudioRecordThreadHandler] chan closed", .{});
                     break;
@@ -238,8 +238,9 @@ pub const StateActor = struct {
                 log.err("[startAudioRecordThreadHandler] data_chan error: {}", .{err});
                 return err;
             };
+            defer data.deinit();
 
-            _ = data;
+            log.debug("[startAudioRecordThreadHandler] got audio data: {s}", .{data.id});
         }
     }
 
@@ -358,17 +359,10 @@ pub const StateActor = struct {
 
         // Force the record loop to exit by closing all capture channels.
         self.video_capture.closeAllChannels();
-        self.audio_capture.closeAllChannels();
 
         // Wait for the video record thread loop to complete.
         if (self.video_record_thread) |video_record_thread| {
             video_record_thread.join();
-            self.video_record_thread = null;
-        }
-
-        // Wait for the audio record thread loop to complete.
-        if (self.audio_record_thread) |audio_record_thread| {
-            audio_record_thread.join();
             self.video_record_thread = null;
         }
 

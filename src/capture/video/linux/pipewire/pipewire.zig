@@ -8,8 +8,8 @@ const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanIm
 const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
 const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
 const VideoCaptureSourceType = @import("../../video_capture.zig").VideoCaptureSourceType;
-const c = @import("./pipewire_include.zig").c;
-const c_def = @import("./pipewire_include.zig").c_def;
+const c = @import("../../../../common/linux/pipewire_include.zig").c;
+const c_def = @import("../../../../common/linux/pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
 const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
 const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
@@ -118,9 +118,10 @@ pub const Pipewire = struct {
         errdefer _ = c.close(pipewire_fd);
 
         self.thread_loop = c.pw_thread_loop_new(
-            "spacecap-pipewire-capture",
+            "spacecap-pipewire-capture-video",
             null,
         ) orelse return error.pw_thread_loop_new;
+        errdefer c.pw_thread_loop_destroy(self.thread_loop);
 
         self.context = c.pw_context_new(
             c.pw_thread_loop_get_loop(self.thread_loop),

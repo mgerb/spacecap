@@ -3,7 +3,7 @@
 const Util = @import("../util.zig");
 
 pub const PlatformCaptureSetup = if (Util.isLinux()) struct {
-    const c = @import("./video/linux/pipewire/pipewire_include.zig").c;
+    const c = @import("../common/linux/pipewire_include.zig").c;
 
     pub fn init() void {
         c.pw_init(null, null);
