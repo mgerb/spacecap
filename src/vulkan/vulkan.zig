@@ -1,10 +1,11 @@
 const std = @import("std");
+const assert = std.debug.assert;
 
 const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const util = @import("../util.zig");
-const Encoder = @import("./encoder.zig").Encoder;
-const EncodeResult = @import("./encoder.zig").EncodeResult;
+const Encoder = @import("./video_encoder.zig").VideoEncoder;
+const EncodeResult = @import("./video_encoder.zig").EncodeResult;
 const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
 const CapturePreviewTexture = @import("./capture_preview_texture.zig").CapturePreviewTexture;
@@ -26,14 +27,17 @@ const INSTANCE_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_get_physical_device_properties_2.name,
 };
 
-const DEVICE_EXTENSIONS = blk: {
+const DEVICE_EXTENSIONS = [_][*:0]const u8{
+    vk.extensions.khr_dynamic_rendering.name,
+    vk.extensions.khr_synchronization_2.name,
+    vk.extensions.khr_swapchain.name,
+};
+
+const DEVICE_VIDEO_EXTENSIONS = blk: {
     const base_device_extensions = [_][*:0]const u8{
-        vk.extensions.khr_dynamic_rendering.name,
         vk.extensions.khr_video_queue.name,
         vk.extensions.khr_video_encode_queue.name,
         vk.extensions.khr_video_encode_h_264.name,
-        vk.extensions.khr_synchronization_2.name,
-        vk.extensions.khr_swapchain.name,
     };
 
     // linux specific device extensions
@@ -61,13 +65,15 @@ pub extern fn vkGetInstanceProcAddr(instance: vk.Instance, procname: [*:0]const 
 
 const QueueAllocation = struct {
     graphics_family: u32,
-    video_encode_family: u32,
+    /// Could be null on machines that don't support Vulkan video.
+    video_encode_family: ?u32,
 };
 
 pub const DeviceCandidate = struct {
     pdev: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
     queues: QueueAllocation,
+    video_extensions_supported: bool,
 };
 
 pub const Queue = struct {
@@ -84,6 +90,7 @@ pub const Queue = struct {
 };
 
 pub const Vulkan = struct {
+    const log = std.log.scoped(.Vulkan);
     const Self = @This();
     allocator: std.mem.Allocator,
     vkb: BaseDispatch,
@@ -91,12 +98,12 @@ pub const Vulkan = struct {
     device: Device,
     debug_messenger: ?vk.DebugUtilsMessengerEXT,
     graphics_queue: Queue,
-    encode_queue: Queue,
+    video_encode_queue: ?Queue,
     physical_device: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
-    encoder: ?*Encoder = null,
+    video_encoder: ?*Encoder = null,
     /// Ring buffer that holds the preview images that are rendered on the UI.
     capture_preview_ring_buffer: ?*VulkanImageRingBuffer = null,
     /// We need to create textures to render the capture preview.
@@ -116,7 +123,7 @@ pub const Vulkan = struct {
     ) !*Self {
         if (extra_instance_extensions) |e| {
             for (e) |ee| {
-                std.debug.print("extra_instance_extension: {s}\n", .{ee});
+                log.debug("[init] extra_instance_extension: {s}", .{ee});
             }
         }
         const vkbd = BaseDispatch.load(vkGetInstanceProcAddr);
@@ -199,7 +206,7 @@ pub const Vulkan = struct {
         const props = candidate.props;
         const mem_props = instance.getPhysicalDeviceMemoryProperties(pdev);
 
-        const device_candidate = try initializeCandidate(instance, candidate);
+        const device_candidate = try initializeCandidate(allocator, instance, candidate);
         const vkd = try allocator.create(DeviceDispatch);
         errdefer allocator.destroy(vkd);
         vkd.* = DeviceDispatch.load(device_candidate, instance.wrapper.dispatch.vkGetDeviceProcAddr.?);
@@ -207,7 +214,10 @@ pub const Vulkan = struct {
         errdefer device.destroyDevice(null);
 
         const graphics_queue = Queue.init(device, candidate.queues.graphics_family);
-        const video_encode_queue = Queue.init(device, candidate.queues.video_encode_family);
+        const video_encode_queue = if (candidate.queues.video_encode_family != null)
+            Queue.init(device, candidate.queues.video_encode_family.?)
+        else
+            null;
 
         // We use an allocator here because we don't want the
         // reference to change when we return this object.
@@ -219,14 +229,12 @@ pub const Vulkan = struct {
             .debug_messenger = debug_messenger,
             .device = device,
             .graphics_queue = graphics_queue,
-            .encode_queue = video_encode_queue,
+            .video_encode_queue = video_encode_queue,
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
             .capture_preview_textures = .init(allocator),
         };
-
-        std.log.info("Using device: {s}\n", .{self.props.device_name});
 
         return self;
     }
@@ -234,7 +242,7 @@ pub const Vulkan = struct {
     pub fn deinit(self: *Self) void {
         self.destroyVideoEncoder();
         self.destroyCapturePreviewRingBuffer() catch |err| {
-            std.log.err("failed to destroy capture preview ring buffer: {}\n", .{err});
+            log.err("[deinit] failed to destroy capture preview ring buffer: {}", .{err});
         };
         self.destroyCaptureRingBuffer();
         self.capture_preview_textures.deinit();
@@ -258,7 +266,11 @@ pub const Vulkan = struct {
         fps: u32,
         bit_rate: u64,
     ) !void {
-        self.encoder = try Encoder.init(
+        if (self.video_encode_queue == null) {
+            return error.video_not_supported;
+        }
+
+        self.video_encoder = try Encoder.init(
             self.allocator,
             self,
             width,
@@ -269,9 +281,9 @@ pub const Vulkan = struct {
     }
 
     pub fn destroyVideoEncoder(self: *Self) void {
-        if (self.encoder) |encoder| {
+        if (self.video_encoder) |encoder| {
             encoder.deinit();
-            self.encoder = null;
+            self.video_encoder = null;
         }
     }
 
@@ -389,32 +401,48 @@ pub const Vulkan = struct {
         const pdevs = try instance.enumeratePhysicalDevicesAlloc(allocator);
         defer allocator.free(pdevs);
 
+        var best_candidate: ?DeviceCandidate = null;
+        var best_score: u32 = 0;
+
         for (pdevs) |pdev| {
             if (try checkSuitable(instance, pdev, allocator)) |candidate| {
-                return candidate;
+                const score = deviceScore(candidate.props, candidate.queues);
+                if (best_candidate == null or score > best_score) {
+                    best_candidate = candidate;
+                    best_score = score;
+                }
             }
         }
 
-        return error.NoSuitableDevice;
+        if (best_candidate == null) {
+            return error.NoSuitableDevice;
+        }
+
+        const device = best_candidate.?;
+
+        log.info("[pickPhysicalDevice] using device: {s}", .{device.props.device_name});
+
+        return device;
     }
 
-    fn debugCallback(
-        message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
-        message_types: vk.DebugUtilsMessageTypeFlagsEXT,
-        p_callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT,
-        p_user_data: ?*anyopaque,
-    ) callconv(vk.vulkan_call_conv) vk.Bool32 {
-        _ = message_severity;
-        _ = message_types;
-        _ = p_user_data;
-        b: {
-            const msg = (p_callback_data orelse break :b).p_message orelse break :b;
-            std.log.scoped(.validation).warn("{s}", .{msg});
+    /// Simple score function to determine what GPU to auto select based on its capabilties.
+    /// Prefer devices that support Vulkan video encoding above all, because the app doesn't
+    /// work otherwise.
+    fn deviceScore(props: vk.PhysicalDeviceProperties, queues: QueueAllocation) u32 {
+        var score: u32 = 0;
 
-            return .false;
+        if (queues.video_encode_family != null) {
+            score += 10;
         }
-        std.log.scoped(.validation).warn("unrecognized validation layer debug message", .{});
-        return .true;
+
+        switch (props.device_type) {
+            .discrete_gpu => score += 3,
+            .integrated_gpu => score += 2,
+            .virtual_gpu => score += 1,
+            else => {},
+        }
+
+        return score;
     }
 
     fn checkSuitable(
@@ -422,23 +450,58 @@ pub const Vulkan = struct {
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
     ) !?DeviceCandidate {
-        if (!try checkDeviceExtensionSupport(instance, pdev, allocator)) {
+        const props = instance.getPhysicalDeviceProperties(pdev);
+        log.debug("[checkSuitable] checking potential device: {s}, device type: {}", .{ props.device_name, props.device_type });
+
+        if (!try checkDeviceExtensionSupport(.device, instance, pdev, allocator)) {
             return null;
         }
 
-        if (try allocateQueues(instance, pdev, allocator)) |allocation| {
-            const props = instance.getPhysicalDeviceProperties(pdev);
+        if (try initQueues(instance, pdev, allocator)) |allocation| {
             return DeviceCandidate{
                 .pdev = pdev,
                 .props = props,
                 .queues = allocation,
+                .video_extensions_supported = try checkDeviceExtensionSupport(.video, instance, pdev, allocator),
             };
         }
 
         return null;
     }
 
-    fn extensionEnabled(
+    fn checkDeviceExtensionSupport(
+        extension_type: enum { device, video },
+        instance: Instance,
+        pdev: vk.PhysicalDevice,
+        allocator: std.mem.Allocator,
+    ) !bool {
+        var supported = true;
+        // TODO: Combine these branches.
+        switch (extension_type) {
+            .device => {
+                // Loop through all extensions so that we can log all the unsupported ones.
+                for (DEVICE_EXTENSIONS) |extension| {
+                    if (!try extensionSupported(instance, pdev, allocator, extension)) {
+                        log.info("[extensionEnabled] extension is not supported on device: {s}", .{extension});
+                        supported = false;
+                    }
+                }
+            },
+            .video => {
+                // Loop through all extensions so that we can log all the unsupported ones.
+                for (DEVICE_VIDEO_EXTENSIONS) |extension| {
+                    if (!try extensionSupported(instance, pdev, allocator, extension)) {
+                        log.info("[extensionEnabled] extension is not supported on device: {s}", .{extension});
+                        supported = false;
+                    }
+                }
+            },
+        }
+
+        return supported;
+    }
+
+    fn extensionSupported(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -452,27 +515,13 @@ pub const Vulkan = struct {
                 break;
             }
         } else {
-            std.log.err("Extension is not supported by device: {s}\n", .{extension});
             return false;
         }
         return true;
     }
 
-    fn checkDeviceExtensionSupport(
-        instance: Instance,
-        pdev: vk.PhysicalDevice,
-        allocator: std.mem.Allocator,
-    ) !bool {
-        for (DEVICE_EXTENSIONS) |ext| {
-            if (!try extensionEnabled(instance, pdev, allocator, ext)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    fn allocateQueues(
+    /// Does not actually allocate anything in Vulkan. It just gets the queue family indexes.
+    fn initQueues(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -495,10 +544,10 @@ pub const Vulkan = struct {
             }
         }
 
-        if (graphics_family != null and video_encode_family != null) {
+        if (graphics_family != null) {
             return QueueAllocation{
                 .graphics_family = graphics_family.?,
-                .video_encode_family = video_encode_family.?,
+                .video_encode_family = video_encode_family,
             };
         }
 
@@ -508,25 +557,26 @@ pub const Vulkan = struct {
     /// - create device
     /// - add device extensions
     /// - add device queues
-    fn initializeCandidate(instance: Instance, candidate: DeviceCandidate) !vk.Device {
+    fn initializeCandidate(allocator: std.mem.Allocator, instance: Instance, candidate: DeviceCandidate) !vk.Device {
         const priority = [_]f32{1};
-        const qci = [_]vk.DeviceQueueCreateInfo{
-            .{
-                .queue_family_index = candidate.queues.graphics_family,
-                .queue_count = 1,
-                .p_queue_priorities = &priority,
-            },
-            .{
-                .queue_family_index = candidate.queues.video_encode_family,
-                .queue_count = 1,
-                .p_queue_priorities = &priority,
-            },
-        };
+        var qci = try std.ArrayList(vk.DeviceQueueCreateInfo).initCapacity(allocator, 1);
+        defer qci.deinit(allocator);
 
-        const queue_count: u32 = if (candidate.queues.graphics_family == candidate.queues.video_encode_family)
-            1
-        else
-            2;
+        try qci.append(allocator, .{
+            .queue_family_index = candidate.queues.graphics_family,
+            .queue_count = 1,
+            .p_queue_priorities = &priority,
+        });
+
+        if (candidate.queues.video_encode_family) |video_encode_family| {
+            if (video_encode_family != candidate.queues.graphics_family) {
+                try qci.append(allocator, .{
+                    .queue_family_index = video_encode_family,
+                    .queue_count = 1,
+                    .p_queue_priorities = &priority,
+                });
+            }
+        }
 
         const synchronization2_features = vk.PhysicalDeviceSynchronization2Features{
             .synchronization_2 = .true,
@@ -537,13 +587,41 @@ pub const Vulkan = struct {
             .dynamic_rendering = .true,
         };
 
+        var enabled_extensions = try std.ArrayList([*:0]const u8).initCapacity(allocator, 2);
+        defer enabled_extensions.deinit(allocator);
+
+        try enabled_extensions.appendSlice(allocator, DEVICE_EXTENSIONS[0..]);
+
+        if (candidate.video_extensions_supported) {
+            try enabled_extensions.appendSlice(allocator, DEVICE_VIDEO_EXTENSIONS[0..]);
+        }
+
         return try instance.createDevice(candidate.pdev, &.{
             .p_next = &dynamic_rendering_features,
-            .queue_create_info_count = queue_count,
-            .p_queue_create_infos = &qci,
-            .enabled_extension_count = DEVICE_EXTENSIONS.len,
-            .pp_enabled_extension_names = @ptrCast(&DEVICE_EXTENSIONS),
+            .queue_create_info_count = @intCast(qci.items.len),
+            .p_queue_create_infos = qci.items.ptr,
+            .enabled_extension_count = @intCast(enabled_extensions.items.len),
+            .pp_enabled_extension_names = enabled_extensions.items.ptr,
         }, null);
+    }
+
+    fn debugCallback(
+        message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+        message_types: vk.DebugUtilsMessageTypeFlagsEXT,
+        p_callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT,
+        p_user_data: ?*anyopaque,
+    ) callconv(vk.vulkan_call_conv) vk.Bool32 {
+        _ = message_severity;
+        _ = message_types;
+        _ = p_user_data;
+        b: {
+            const msg = (p_callback_data orelse break :b).p_message orelse break :b;
+            log.warn("[debugCallback] {s}", .{msg});
+
+            return .false;
+        }
+        log.warn("[debugCallback] unrecognized validation layer debug message", .{});
+        return .true;
     }
 
     pub fn allocate(
@@ -581,18 +659,21 @@ pub const Vulkan = struct {
             fence: vk.Fence = .null_handle,
         },
     ) !void {
-        const _queue = switch (queue) {
+        const _queue: ?*Queue = switch (queue) {
             // NOTE: Queues must be referenced. Mutexes cannot be copied.
             .graphics => &self.graphics_queue,
-            .encode => &self.encode_queue,
+            .encode => if (self.video_encode_queue != null) &self.video_encode_queue.? else null,
         };
 
-        _queue.mutex.lock();
-        defer _queue.mutex.unlock();
+        // It should never get to this point. The caller of this function should always have valid queues.
+        assert(_queue != null);
+
+        _queue.?.mutex.lock();
+        defer _queue.?.mutex.unlock();
         if (args.fence != .null_handle) {
             try self.device.resetFences(1, @ptrCast(&args.fence));
         }
-        try self.device.queueSubmit(_queue.handle, @intCast(submit_info.len), submit_info.ptr, args.fence);
+        try self.device.queueSubmit(_queue.?.handle, @intCast(submit_info.len), submit_info.ptr, args.fence);
     }
 
     /// Lock graphics mutex and present.
@@ -618,12 +699,14 @@ pub const Vulkan = struct {
     /// WARNING: Must be followed up by `waitForAllFencesEnd` to unlock mutexes.
     pub fn waitForAllFencesBegin(self: *Self) !void {
         self.graphics_queue.mutex.lock();
-        self.encode_queue.mutex.lock();
+        if (self.video_encode_queue) |*video_encode_queue| {
+            video_encode_queue.mutex.lock();
+        }
 
         var wait_fences = try std.ArrayList(vk.Fence).initCapacity(self.allocator, 0);
         defer wait_fences.deinit(self.allocator);
 
-        if (self.encoder) |encoder| {
+        if (self.video_encoder) |encoder| {
             try wait_fences.appendSlice(self.allocator, &.{
                 encoder.compute_finished_fence,
                 encoder.encode_finished_fence,
@@ -663,7 +746,9 @@ pub const Vulkan = struct {
 
     pub fn waitForAllFencesEnd(self: *Self) void {
         self.graphics_queue.mutex.unlock();
-        self.encode_queue.mutex.unlock();
+        if (self.video_encode_queue) |*video_encode_queue| {
+            video_encode_queue.mutex.unlock();
+        }
     }
 
     /// Copy a vulkan image on the GPU.

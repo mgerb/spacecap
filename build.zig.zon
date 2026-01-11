@@ -75,7 +75,7 @@
         },
         .vulkan_zig = .{
             .url = "https://github.com/Snektron/vulkan-zig/archive/zig-0.15-compat.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx6hBAwBUnt0XA-uOkR2hda4fAHFhQITNTgJpnFkY",
+            .hash = "vulkan-0.0.0-r7Ytx_VDAwAiMl0YSu2UOkVMIGJN7CeIQaxJR-hUSfD6",
         },
         .imguiz = .{
             .url = "git+https://github.com/mgerb/imguiz#7d6e1a4dfb2f31da24c9f76e0c4ba8285e89d289",
@@ -87,11 +87,11 @@
         },
         .ffmpeg_linux = .{
             .url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-shared-7.1.tar.xz",
-            .hash = "N-V-__8AANQu9gvRFBkaaFdsPBJ0O0P4i6uctG8P4vczdjEK",
+            .hash = "N-V-__8AAMVhFwyEn-loOh3RvLuNHFbK-_cUx6F781wmKELD",
         },
         .ffmpeg_windows = .{
             .url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip",
-            .hash = "N-V-__8AALCxywofrbiZJX6duwGaBapY7KZ8mphf_0Dbt7Lg",
+            .hash = "N-V-__8AAJk_Dgsw1bGPOwZaDiVZlSS6gFZfdqjg2ObF4vOu",
         },
         .libportal = .{
             .url = "https://github.com/flatpak/libportal/archive/refs/tags/0.9.1.tar.gz",

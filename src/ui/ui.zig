@@ -8,6 +8,7 @@ const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
 const drawVideoPreview = @import("./draw_video_preview.zig").drawVideoPreview;
+const drawVideoPreviewUnavailable = @import("./draw_video_preview.zig").drawVideoPreviewUnavailable;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 // TODO: save and restore window size
@@ -346,12 +347,18 @@ pub const UI = struct {
 
                 try drawLeftColumn(self.allocator, self.state_actor);
 
-                if (self.state_actor.state.recording) {
+                if (!self.state_actor.state.is_video_capture_supprted) {
+                    try drawVideoPreview(.vulkan_video_not_supported);
+                } else if (self.state_actor.state.recording) {
                     if (self.vulkan.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
                         if (capture_preview_ring_buffer.getMostRecentBuffer()) |buffer| {
                             capture_preview_buffer = buffer;
                             const capture_preview_texture = try self.vulkan.getCapturePreviewTexture(buffer);
-                            try drawVideoPreview(capture_preview_texture, buffer.width, buffer.height);
+                            try drawVideoPreview(.{ .capture_preview = .{
+                                .capture_preview_buffer = capture_preview_texture,
+                                .width = buffer.width,
+                                .height = buffer.height,
+                            } });
                         }
                     }
                 }
