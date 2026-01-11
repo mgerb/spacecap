@@ -78,7 +78,7 @@ pub const StateActor = struct {
             .audio_capture = audio_capture,
             .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
-            .state = State.init(user_settings),
+            .state = State.init(user_settings, vulkan.video_encode_queue != null),
         };
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -139,7 +139,7 @@ pub const StateActor = struct {
                     self.replay_buffer = try ReplayBuffer.init(
                         self.allocator,
                         self.state.replay_seconds,
-                        self.vulkan.encoder.?.bit_stream_header.items,
+                        self.vulkan.video_encoder.?.bit_stream_header.items,
                     );
                     self.replay_buffer_mutex.unlock();
 
@@ -252,6 +252,7 @@ pub const StateActor = struct {
         const bit_rate = self.state.bit_rate;
         const width = self.video_capture.size().?.width;
         const height = self.video_capture.size().?.height;
+        self.ui_mutex.unlock();
         // Initialize the video encoder here. It will be destroyed
         // when the record thread terminates.
         try self.vulkan.initVideoEncoder(
@@ -264,14 +265,16 @@ pub const StateActor = struct {
 
         // Initialize the replay buffer. This replay buffer
         // will be destroyed/recreated each time a replay is saved.
-        self.replay_buffer_mutex.lock();
-        self.replay_buffer = try ReplayBuffer.init(
-            self.allocator,
-            self.state.replay_seconds,
-            self.vulkan.encoder.?.bit_stream_header.items,
-        );
-        self.replay_buffer_mutex.unlock();
-        self.ui_mutex.unlock();
+        {
+            self.replay_buffer_mutex.lock();
+            defer self.replay_buffer_mutex.unlock();
+
+            self.replay_buffer = try ReplayBuffer.init(
+                self.allocator,
+                self.state.replay_seconds,
+                self.vulkan.video_encoder.?.bit_stream_header.items,
+            );
+        }
 
         try self.vulkan.initCapturePreviewRingBuffer(width, height);
 
@@ -328,7 +331,7 @@ pub const StateActor = struct {
                 },
             );
 
-            try self.vulkan.encoder.?.prepareEncode(.{
+            try self.vulkan.video_encoder.?.prepareEncode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
                 .input_size = .{
@@ -338,10 +341,10 @@ pub const StateActor = struct {
                 .external_wait_semaphore = copy_data.semaphore,
             });
 
-            const encode_result = try self.vulkan.encoder.?.encode(0);
+            const encode_result = try self.vulkan.video_encoder.?.encode(0);
             self.replay_buffer_mutex.lock();
             defer self.replay_buffer_mutex.unlock();
-            try self.vulkan.encoder.?.finishEncode(encode_result, self.replay_buffer.?, vulkan_image_buffer.value.*.copy_image_timestamp);
+            try self.vulkan.video_encoder.?.finishEncode(encode_result, self.replay_buffer.?, vulkan_image_buffer.value.*.copy_image_timestamp);
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
             self.state.replay_buffer_state.size = self.replay_buffer.?.size;

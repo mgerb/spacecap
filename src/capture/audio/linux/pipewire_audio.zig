@@ -204,7 +204,7 @@ pub const PipewireAudio = struct {
             return;
         };
 
-        self.data_chan.trySend(audio_capture_data) catch |err| {
+        const did_send = self.data_chan.trySend(audio_capture_data) catch |err| {
             if (err == ChanError.Closed) {
                 log.debug("[streamProcessCallback] chan closed", .{});
             } else {
@@ -213,6 +213,10 @@ pub const PipewireAudio = struct {
             audio_capture_data.deinit();
             return;
         };
+
+        if (!did_send) {
+            audio_capture_data.deinit();
+        }
     }
 
     fn streamParamChangedCallback(userdata: ?*anyopaque, id: u32, param: [*c]const c.struct_spa_pod) callconv(.c) void {

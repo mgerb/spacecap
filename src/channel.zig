@@ -120,14 +120,17 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Try to send
         /// Chan - will skip if no receiver is receiving
         /// BufferedChan - will skip if at capacity
-        pub fn trySend(self: *Self, data: T) ChanError!void {
+        /// Returns bool if sent successfully.
+        pub fn trySend(self: *Self, data: T) ChanError!bool {
             self.mut.lock();
             if ((bufSize == 0 and self.recvQ.items.len > 0) or
                 (bufSize > 0 and self.len < self.capacity()))
             {
                 try self._send(data);
+                return true;
             } else {
                 self.mut.unlock();
+                return false;
             }
         }
 
