@@ -25,7 +25,7 @@ const PushConstants = extern struct {
     input_height: u32,
 };
 
-pub const Encoder = struct {
+pub const VideoEncoder = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -225,7 +225,7 @@ pub const Encoder = struct {
     fn createCommandPools(self: *Self) !void {
         const create_info = vk.CommandPoolCreateInfo{
             .flags = .{ .reset_command_buffer_bit = true },
-            .queue_family_index = self.vulkan.encode_queue.family,
+            .queue_family_index = self.vulkan.video_encode_queue.?.family,
         };
         self.encode_command_pool = try self.vulkan.device.createCommandPool(&create_info, null);
         self.graphics_command_pool = try self.vulkan.device.createCommandPool(&.{
@@ -389,7 +389,7 @@ pub const Encoder = struct {
 
         var create_info = std.mem.zeroes(vk.VideoSessionCreateInfoKHR);
         create_info.s_type = .video_session_create_info_khr;
-        create_info.queue_family_index = self.vulkan.encode_queue.family;
+        create_info.queue_family_index = self.vulkan.video_encode_queue.?.family;
         create_info.picture_format = self.chosen_src_image_format.?;
         create_info.max_coded_extent = .{ .width = self.width, .height = self.height };
         create_info.max_dpb_slots = 16;
@@ -565,7 +565,7 @@ pub const Encoder = struct {
                 .usage = .{ .video_encode_dpb_bit_khr = true },
                 .sharing_mode = .exclusive,
                 .queue_family_index_count = 1,
-                .p_queue_family_indices = @ptrCast(&self.vulkan.encode_queue.family),
+                .p_queue_family_indices = @ptrCast(&self.vulkan.video_encode_queue.?.family),
                 .initial_layout = .undefined,
                 .flags = .{},
             };
@@ -615,9 +615,9 @@ pub const Encoder = struct {
             .flags = .{ .mutable_format_bit = true, .extended_usage_bit = true },
         };
 
-        const queue_families = [_]u32{ self.vulkan.encode_queue.family, self.vulkan.graphics_queue.family };
+        const queue_families = [_]u32{ self.vulkan.video_encode_queue.?.family, self.vulkan.graphics_queue.family };
 
-        if (self.vulkan.encode_queue.family != self.vulkan.graphics_queue.family) {
+        if (self.vulkan.video_encode_queue.?.family != self.vulkan.graphics_queue.family) {
             image_create_info.sharing_mode = .concurrent;
             image_create_info.queue_family_index_count = 2;
             image_create_info.p_queue_family_indices = &queue_families;
