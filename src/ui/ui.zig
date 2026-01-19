@@ -288,7 +288,9 @@ pub const UI = struct {
             // Resize swap chain?
             var fb_width: i32 = undefined;
             var fb_height: i32 = undefined;
-            if (!c.SDL_GetWindowSize(self.window.?, &fb_width, &fb_height)) return error.SDL_GetWindowSizeFailure;
+            if (!c.SDL_GetWindowSizeInPixels(self.window.?, &fb_width, &fb_height)) {
+                return error.SDL_GetWindowSizeInPixelsFailure;
+            }
             if (fb_width > 0 and fb_height > 0 and
                 (self.swapchain_rebuild or
                     self.vulkan.window.?.Width != fb_width or
@@ -543,6 +545,12 @@ pub const UI = struct {
         );
 
         // Create SwapChain, RenderPass, Framebuffer, etc.
+        var fb_width: i32 = undefined;
+        var fb_height: i32 = undefined;
+        if (!c.SDL_GetWindowSizeInPixels(self.window.?, &fb_width, &fb_height)) {
+            return error.SDL_GetWindowSizeInPixelsFailure;
+        }
+
         c.cImGui_ImplVulkanH_CreateOrResizeWindow(
             self.vkInstance(),
             self.vkPhysicalDevice(),
@@ -550,8 +558,8 @@ pub const UI = struct {
             &self.vulkan.window.?,
             self.vulkan.graphics_queue.family,
             null,
-            WIDTH,
-            HEIGHT,
+            fb_width,
+            fb_height,
             MIN_IMAGE_COUNT,
         );
     }
