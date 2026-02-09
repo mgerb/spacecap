@@ -293,6 +293,8 @@ fn buildUnitTestsDefault(
         const exe = b.addTest(.{
             .root_module = root_module,
             .test_runner = .{ .path = b.path("./src/test_runner.zig"), .mode = .simple },
+            // Keep test linking behavior aligned with Linux executable builds.
+            .use_llvm = true,
         });
 
         exe.linkLibC();

@@ -381,3 +381,62 @@ test "mixReplayAudioForWindow applies source gain" {
         try std.testing.expectApproxEqAbs(sample, mixed.items[idx], 0.0001);
     }
 }
+
+test "mixReplayAudioForWindow smooths small timestamp jitter between chunks" {
+    const allocator = std.testing.allocator;
+    var audio_replay_buffer = try AudioReplayBuffer.init(allocator, 10);
+    defer audio_replay_buffer.deinit();
+
+    const sample_rate: u32 = 1000; // 1 frame per ms
+    const channels: u32 = 1;
+    const start_ns: i128 = 1_000_000_000;
+
+    const first = [_]f32{ 1.0, 2.0, 3.0 };
+    const second = [_]f32{ 4.0, 5.0, 6.0 };
+
+    const chunk1 = try AudioCaptureData.init(
+        allocator,
+        "mic",
+        &first,
+        start_ns,
+        sample_rate,
+        channels,
+    );
+    try audio_replay_buffer.addData(chunk1);
+
+    // Expected next chunk start is start_ns + 3ms. We inject +5ms jitter,
+    // which is within the 10ms threshold and should be snapped.
+    const chunk2 = try AudioCaptureData.init(
+        allocator,
+        "mic",
+        &second,
+        start_ns + 8 * std.time.ns_per_ms,
+        sample_rate,
+        channels,
+    );
+    try audio_replay_buffer.addData(chunk2);
+
+    const window: ReplayWindow = .{
+        .start_ns = start_ns,
+        .end_ns = start_ns + 6 * std.time.ns_per_ms,
+    };
+
+    const mixed_opt = try mixAudio(
+        allocator,
+        audio_replay_buffer,
+        window,
+        sample_rate,
+        channels,
+        &.{},
+    );
+    try std.testing.expect(mixed_opt != null);
+
+    var mixed = mixed_opt.?;
+    defer mixed.deinit(allocator);
+
+    const expected = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    try std.testing.expectEqual(@as(usize, expected.len), mixed.items.len);
+    for (expected, 0..) |sample, idx| {
+        try std.testing.expectApproxEqAbs(sample, mixed.items[idx], 0.0001);
+    }
+}
