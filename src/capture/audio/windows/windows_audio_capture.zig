@@ -36,7 +36,7 @@ pub const WindowsAudioCapture = struct {
 
     pub fn stop(context: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(context));
-        _ = self;
+        self.data_chan.close(.{ .drain = true });
     }
 
     pub fn getAvailableDevices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {

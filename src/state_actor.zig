@@ -8,10 +8,8 @@ const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
 const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
 const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
 const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
-const SelectedAudioDevice = @import("./capture/audio/audio_capture.zig").SelectedAudioDevice;
 const SAMPLE_RATE = @import("./capture/audio/audio_capture.zig").SAMPLE_RATE;
 const CHANNELS = @import("./capture/audio/audio_capture.zig").CHANNELS;
-const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
 const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
@@ -21,7 +19,6 @@ const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
 const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
 const exporter = @import("./exporter.zig");
 const AudioActions = @import("./state/audio_state.zig").AudioActions;
-const handleAudioActions = @import("./state/audio_state.zig").handleAudioActions;
 const UserSettingsActions = @import("./state/user_settings_state.zig").UserSettingsActions;
 
 const log = std.log.scoped(.state_actor);
@@ -47,19 +44,15 @@ pub const StateActor = struct {
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
     video_capture: *VideoCapture,
-    audio_capture: *AudioCapture,
     global_shortcuts: *GlobalShortcuts,
     video_replay_buffer: Mutex(?*VideoReplayBuffer) = .init(null),
-    audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
     action_chan: ActionChan,
     thread_pool: std.Thread.Pool = undefined,
     /// WARNING: This locks the UI thread. This should only be locked
     /// when making updates to the UI state.
     ui_mutex: std.Thread.Mutex = .{},
-    // TODO: Put a mutex around State and then remove ui_mutex.
     state: State,
     video_record_thread: ?std.Thread = null,
-    audio_record_thread: ?std.Thread = null,
 
     /// Caller owns the memory. Be sure to deinit.
     pub fn init(
@@ -76,16 +69,22 @@ pub const StateActor = struct {
             .allocator = allocator,
             .vulkan = vulkan,
             .video_capture = video_capture,
-            .audio_capture = audio_capture,
             .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
-            .state = try State.init(allocator, vulkan.video_encode_queue != null),
+            // TODO: The state is getting a bit unwiedly and coupled.
+            // Need to spend some more time refactoring.
+            .state = try .init(
+                allocator,
+                vulkan.video_encode_queue != null,
+                audio_capture,
+            ),
         };
         errdefer self.state.deinit();
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
         try self.dispatch(.{ .audio = .get_available_audio_devices });
+        try self.dispatch(.{ .audio = .start_record_thread });
 
         return self;
     }
@@ -97,12 +96,6 @@ pub const StateActor = struct {
         defer video_locked.unlock();
         if (video_locked.unwrap()) |video_replay_buffer| {
             video_replay_buffer.deinit();
-        }
-
-        const audio_locked = self.audio_replay_buffer.lock();
-        defer audio_locked.unlock();
-        if (audio_locked.unwrap()) |audio_replay_buffer| {
-            audio_replay_buffer.deinit();
         }
 
         self.state.deinit();
@@ -145,46 +138,21 @@ pub const StateActor = struct {
         }
     }
 
-    // fn updateSelectedAudioDevices(self: *Self) !void {
-    //     var selected_devices = try std.ArrayList(SelectedAudioDevice).initCapacity(self.allocator, 0);
-    //     defer selected_devices.deinit(self.allocator);
-    //
-    //     for (self.state.audio_devices.items) |device| {
-    //         if (!device.selected) continue;
-    //         try selected_devices.append(self.allocator, .{
-    //             .id = device.id,
-    //             .device_type = device.device_type,
-    //         });
-    //     }
-    //
-    //     try self.audio_capture.updateSelectedDevices(selected_devices.items);
-    // }
-
     fn handleAction(self: *Self, action: Actions) !void {
         switch (action) {
             .start_record => {
-                log.info("[action] start_record\n", .{});
                 try self.startRecord();
             },
             .stop_record => {
-                log.info("[action] stop_record\n", .{});
                 try self.stopRecord();
             },
             .save_replay => {
-                log.info("[action] save_replay\n", .{});
-
                 // NOTE: Both audio/video replay buffers must not be null here.
 
-                var audio_replay_buffer: ?*AudioReplayBuffer = null;
-                {
-                    var audio_locked = self.audio_replay_buffer.lock();
-                    defer audio_locked.unlock();
-                    audio_replay_buffer = audio_locked.unwrap();
-                    audio_locked.set(try .init(
-                        self.allocator,
-                        self.state.replay_seconds,
-                    ));
-                }
+                const audio_replay_buffer = try self.state.audio.swapReplayBuffer(
+                    self.allocator,
+                    self.state.replay_seconds,
+                );
 
                 assert(audio_replay_buffer != null);
 
@@ -241,7 +209,6 @@ pub const StateActor = struct {
                 );
             },
             .select_video_source => |source_type| {
-                log.info("[action] select_video_source\n", .{});
                 if (self.state.recording) {
                     try self.stopRecord();
                 }
@@ -286,45 +253,6 @@ pub const StateActor = struct {
             .save_replay => {
                 self.dispatch(.save_replay) catch unreachable;
             },
-        }
-    }
-
-    // TODO: Start here. Segfault here. Need to close this thread handler before state_actor is destroyed,
-    // because the audio source closes the channel and destroys it immediately after.
-    fn startAudioRecordThreadHandler(self: *Self) !void {
-        // Initialize the audio replay buffer. It should already be null.
-        {
-            const audio_locked = self.audio_replay_buffer.lock();
-            defer audio_locked.unlock();
-            const ptr = audio_locked.unwrapPtr();
-            // TODO: Got an assert here - figure out why this happened. It happened when
-            // a window was recording, then stopped, then a new window was selected. This
-            // happened when it was running for around 10 minutes.
-            assert(ptr.* == null);
-            ptr.* = try AudioReplayBuffer.init(self.allocator, self.state.replay_seconds);
-        }
-
-        while (true) {
-            const data = self.audio_capture.receiveData() catch |err| {
-                if (err == ChanError.Closed) {
-                    log.debug("[startAudioRecordThreadHandler] chan closed", .{});
-                    break;
-                }
-                log.err("[startAudioRecordThreadHandler] data_chan error: {}", .{err});
-                return err;
-            };
-            log.debug("[startAudioRecordThreadHandler] got audio data: {s}", .{data.id});
-            const audio_locked = self.audio_replay_buffer.lock();
-            defer audio_locked.unlock();
-            if (audio_locked.unwrap()) |buffer| {
-                buffer.addData(data) catch |err| {
-                    audio_locked.unlock();
-                    data.deinit();
-                    return err;
-                };
-            } else {
-                data.deinit();
-            }
         }
     }
 
@@ -479,7 +407,6 @@ pub const StateActor = struct {
         if (self.state.has_source and !self.state.recording) {
             self.state.recording = true;
             self.video_record_thread = try std.Thread.spawn(.{}, startVideoRecordThreadHandler, .{self});
-            self.audio_record_thread = try std.Thread.spawn(.{}, startAudioRecordThreadHandler, .{self});
         }
     }
 
@@ -489,6 +416,7 @@ pub const StateActor = struct {
     /// and it will block the caller if it fills up.
     /// Be careful when using this from the UI thread.
     pub fn dispatch(self: *Self, action: Actions) !void {
+        log.debug("[dispatch] dispatching action: {}", .{action});
         try self.action_chan.send(action);
     }
 };
