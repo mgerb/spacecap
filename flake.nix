@@ -44,7 +44,6 @@
             self.packages.${system}.zls-custom
 
             shaderc
-            sdl3
             libxkbcommon
             vulkan-loader
             vulkan-validation-layers
@@ -62,7 +61,6 @@
 
             # Windows
             pkgsCross.mingwW64.vulkan-loader
-            pkgsCross.mingwW64.sdl3
 
             # NOTE: no longer needed since switching build target - may be needed if changing zig build to explicitly target linux
             # glibc
@@ -73,13 +71,10 @@
           GLIB_OUT = "${pkgs.glib.out}/lib/glib-2.0/include";
           GLIB_DEV = "${pkgs.glib.dev}/include/glib-2.0";
           PIPEWIRE_DEV = "${pkgs.pipewire.dev}/include";
-          SDL3_DEV = "${pkgs.sdl3.dev}/include";
-          SDL3_WINDOWS = "${pkgs.pkgsCross.mingwW64.sdl3.out}/bin";
           LIBXKBCOMMON = "${pkgs.libxkbcommon}/lib";
 
           # library paths
           PIPEWIRE_LIB = "${pkgs.pipewire}";
-          SDL3 = "${pkgs.sdl3}/lib";
           GLIB = "${pkgs.glib.out}/lib";
           LIBDRM = "${pkgs.libdrm}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";

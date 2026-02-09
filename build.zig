@@ -33,8 +33,6 @@ fn addSharedDependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
-    _ = target;
-    _ = optimize;
     try compileShader(allocator, b, exe, "random.frag", "random_frag_shader");
     try compileShader(allocator, b, exe, "random.vert", "random_vert_shader");
     try compileShader(allocator, b, exe, "bgr-ycbcr-shader-2plane.comp", "bgr-ycbcr-shader-2plane");
@@ -52,7 +50,12 @@ fn addSharedDependencies(
     exe.addIncludePath(vulkan_headers.path(""));
 
     // SDL3
-    exe.addIncludePath(.{ .cwd_relative = std.posix.getenv("SDL3_DEV").? });
+    const sdl = b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        .linkage = .static,
+    });
+    exe.linkLibrary(sdl.artifact("SDL3"));
 
     // imguiz
     const imguiz = b.dependency("imguiz", .{}).module("imguiz");
@@ -80,10 +83,6 @@ fn addSharedDependencies(
 }
 
 fn addLinuxDependencies(allocator: std.mem.Allocator, b: *std.Build, exe: *std.Build.Step.Compile) !void {
-    // sdl3
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("SDL3").? });
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("SDL3").?, "SDL3", .linux, "libSDL3.so.0");
-
     // xkbcommon
     // NOTE: may not be used actually?
     // exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("LIBXKBCOMMON").? });
@@ -221,14 +220,11 @@ fn buildWindows(
     try addSharedDependencies(allocator, b, exe, target, optimize);
 
     exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").? });
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("SDL3_WINDOWS").? });
 
     try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").?, "vulkan-1", .windows, null);
 
     // All windows machines should be able to link to this by default
     exe.linkSystemLibrary("gdi32");
-
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("SDL3_WINDOWS").?, "SDL3", .windows, null);
 
     const zigwin32 = b.dependency("zigwin32", .{});
     exe.root_module.addImport("win32", zigwin32.module("win32"));
