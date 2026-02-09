@@ -78,6 +78,9 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         }) void {
             self.mut.lock();
             defer self.mut.unlock();
+            if (self.closed) {
+                return;
+            }
             self.closed = true;
 
             for (self.sendQ.items) |sendQ| {
@@ -547,6 +550,64 @@ test "close - Chan" {
     chan.close(.{});
 
     std.Thread.sleep(std.time.ns_per_ms);
+}
+
+test "close - Chan is idempotent" {
+    const T = Chan(u8);
+
+    {
+        var chan = try T.init(std.testing.allocator);
+        defer chan.deinit();
+
+        const ReceiverThread = struct {
+            fn run(c: *T) !void {
+                _ = c.recv() catch |err| {
+                    try std.testing.expectEqual(ChanError.Closed, err);
+                    return;
+                };
+                return error.ExpectedCloseError;
+            }
+        };
+
+        const receiver = try std.Thread.spawn(.{}, ReceiverThread.run, .{&chan});
+        std.Thread.sleep(std.time.ns_per_ms * 10);
+        chan.close(.{});
+        receiver.join();
+
+        chan.close(.{});
+        _ = chan.recv() catch |err| {
+            try std.testing.expectEqual(ChanError.Closed, err);
+            return;
+        };
+        return error.ExpectedClosedReceiveError;
+    }
+
+    {
+        var chan = try T.init(std.testing.allocator);
+        defer chan.deinit();
+
+        const SenderThread = struct {
+            fn run(c: *T) !void {
+                c.send(42) catch |err| {
+                    try std.testing.expectEqual(ChanError.Closed, err);
+                    return;
+                };
+                return error.ExpectedCloseError;
+            }
+        };
+
+        const sender = try std.Thread.spawn(.{}, SenderThread.run, .{&chan});
+        std.Thread.sleep(std.time.ns_per_ms * 10);
+        chan.close(.{});
+        sender.join();
+
+        chan.close(.{});
+        chan.send(42) catch |err| {
+            try std.testing.expectEqual(ChanError.Closed, err);
+            return;
+        };
+        return error.ExpectedClosedSendError;
+    }
 }
 
 test "close - BufferedChan drains queued items" {

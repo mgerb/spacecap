@@ -40,7 +40,7 @@ pub const LinuxAudioCapture = struct {
 
     pub fn stop(context: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(context));
-        _ = self;
+        self.pipewire_audio.data_chan.close(.{ .drain = true });
     }
 
     pub fn getAvailableDevices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {

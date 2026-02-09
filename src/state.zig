@@ -2,6 +2,7 @@ const std = @import("std");
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
 const UserSettingsState = @import("./state/user_settings_state.zig").UserSettingsState;
 const AudioDeviceType = @import("./capture/audio/audio_capture.zig").AudioDeviceType;
 const AudioState = @import("./state/audio_state.zig").AudioState;
@@ -34,11 +35,12 @@ replay_buffer: ReplayBufferViewModel = .{},
 pub fn init(
     allocator: Allocator,
     is_video_capture_supprted: bool,
+    audio_capture: *AudioCapture,
 ) !Self {
     return .{
         .user_settings = try .init(allocator),
         .is_video_capture_supprted = is_video_capture_supprted,
-        .audio = try .init(allocator),
+        .audio = try .init(allocator, audio_capture),
     };
 }
 
