@@ -40,7 +40,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            zigpkgs."0.15.1"
+            zigpkgs."0.15.2"
             self.packages.${system}.zls-custom
 
             shaderc
