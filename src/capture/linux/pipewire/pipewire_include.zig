@@ -6,8 +6,6 @@ pub const c = @cImport({
     @cInclude("spa/param/format.h");
     @cInclude("spa/pod/builder.h");
     @cInclude("spa/debug/types.h");
-    @cInclude("gio/gio.h");
-    @cInclude("gobject/gobject.h");
     @cInclude("sys/mman.h");
     @cInclude("fcntl.h");
     @cInclude("linux/dma-buf.h");

@@ -109,14 +109,6 @@ fn addLinuxDependencies(allocator: std.mem.Allocator, b: *std.Build, exe: *std.B
     exe.addLibraryPath(.{ .cwd_relative = pipewire_lib_spa });
     try installAndLinkSystemLibrary(allocator, b, exe, pipewire_lib_spa, "spa", .linux, null);
 
-    // glib
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("GLIB").? });
-    exe.addIncludePath(.{ .cwd_relative = std.posix.getenv("GLIB_DEV").? });
-    exe.addIncludePath(.{ .cwd_relative = std.posix.getenv("GLIB_OUT").? }); // glibconfig.h
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("GLIB").?, "glib-2.0", .linux, "libglib-2.0.so");
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("GLIB").?, "gio-2.0", .linux, "libgio-2.0.so");
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("GLIB").?, "gobject-2.0", .linux, "libgobject-2.0.so.0");
-
     const gobject = b.dependency("gobject", .{});
     exe.root_module.addImport("glib", gobject.module("glib2"));
     exe.root_module.addImport("gio", gobject.module("gio2"));
