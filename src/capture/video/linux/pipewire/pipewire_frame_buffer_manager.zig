@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const pw = @import("pipewire").c;
 const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const vk = @import("vulkan");
 const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
@@ -15,7 +16,7 @@ const PipewireFrameBufferImage = struct {
 };
 
 pub const PipewireFrameBuffer = struct {
-    pwb: *c.struct_pw_buffer,
+    pwb: *pw.struct_pw_buffer,
     dequeued: bool = false,
     dequeued_time: ?i128 = null,
     frame_buffer_image: ?PipewireFrameBufferImage = null,
@@ -28,7 +29,7 @@ pub const PipewireFrameBufferManager = struct {
     const log = std.log.scoped(.FrameBufferManager);
     allocator: Allocator,
     vulkan: *Vulkan,
-    frame_buffers: std.AutoHashMap(*c.struct_pw_buffer, PipewireFrameBuffer),
+    frame_buffers: std.AutoHashMap(*pw.struct_pw_buffer, PipewireFrameBuffer),
     /// This is the semaphore for the pipewire dmabuf.
     vk_foreign_semaphore: ?vk.Semaphore = null,
 
@@ -64,13 +65,13 @@ pub const PipewireFrameBufferManager = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addPipewireBuffer(self: *Self, pwb: *c.struct_pw_buffer) !void {
+    pub fn addPipewireBuffer(self: *Self, pwb: *pw.struct_pw_buffer) !void {
         try self.frame_buffers.put(pwb, .{
             .pwb = pwb,
         });
     }
 
-    pub fn removePipewireBuffer(self: *Self, pwb: *c.struct_pw_buffer) void {
+    pub fn removePipewireBuffer(self: *Self, pwb: *pw.struct_pw_buffer) void {
         if (self.frame_buffers.getPtr(pwb)) |frame_buffer| {
             if (frame_buffer.frame_buffer_image) |*frame_buffer_image| {
                 self.destroyBufferImage(frame_buffer_image);
@@ -82,8 +83,8 @@ pub const PipewireFrameBufferManager = struct {
     /// Get a Vulkan image from a pipewire buffer. Vulkan images are lazily created.
     pub fn getVulkanImage(
         self: *Self,
-        pwb: *c.struct_pw_buffer,
-        info: c.spa_video_info_raw,
+        pwb: *pw.struct_pw_buffer,
+        info: pw.spa_video_info_raw,
     ) !struct { frame_buffer: *PipewireFrameBuffer, wait_semaphore: vk.Semaphore } {
         const _frame_buffer = self.frame_buffers.getPtr(pwb);
         // Should never be null here. If it is, there are big problems.
@@ -146,7 +147,7 @@ pub const PipewireFrameBufferManager = struct {
 
     fn createVulkanImage(
         self: *Self,
-        info: c.spa_video_info_raw,
+        info: pw.spa_video_info_raw,
         fd: i64,
         subresource_layouts: []vk.SubresourceLayout,
     ) !PipewireFrameBufferImage {
