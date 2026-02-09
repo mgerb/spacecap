@@ -8,14 +8,15 @@ const SelectedAudioDevice = @import("../audio_capture.zig").SelectedAudioDevice;
 const AudioCaptureData = @import("../audio_capture_data.zig");
 const ChanError = @import("../../../channel.zig").ChanError;
 const pipewire_include = @import("../../../common/linux/pipewire_include.zig");
+const pw = @import("pipewire").c;
 const c = pipewire_include.c;
 const c_def = pipewire_include.c_def;
 
 const AudioStream = struct {
     id: []u8,
-    stream: ?*c.pw_stream = null,
+    stream: ?*pw.pw_stream = null,
     device_type: AudioDeviceType,
-    format: c.spa_audio_info = .{},
+    raw: pw.struct_spa_audio_info_raw = .{},
     pipewire_audio: *PipewireAudio,
 };
 
@@ -24,7 +25,7 @@ pub const PipewireAudio = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
     data_chan: AudioCaptureBufferedChan,
-    thread_loop: ?*c.pw_thread_loop = null,
+    thread_loop: ?*pw.pw_thread_loop = null,
     streams: std.ArrayList(*AudioStream),
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
@@ -48,16 +49,16 @@ pub const PipewireAudio = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_stop(thread_loop);
-            c.pw_thread_loop_lock(thread_loop);
+            pw.pw_thread_loop_stop(thread_loop);
+            pw.pw_thread_loop_lock(thread_loop);
             self.clearStreams();
-            c.pw_thread_loop_unlock(thread_loop);
+            pw.pw_thread_loop_unlock(thread_loop);
         } else {
             self.clearStreams();
         }
 
         if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_destroy(thread_loop);
+            pw.pw_thread_loop_destroy(thread_loop);
         }
 
         self.data_chan.close(.{ .drain = true });
@@ -67,13 +68,13 @@ pub const PipewireAudio = struct {
     }
 
     fn initPipewire(self: *Self) !void {
-        self.thread_loop = c.pw_thread_loop_new(
+        self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-audio",
             null,
         ) orelse return error.pw_main_loop_new;
-        errdefer c.pw_thread_loop_destroy(self.thread_loop);
+        errdefer pw.pw_thread_loop_destroy(self.thread_loop);
 
-        if (c.pw_thread_loop_start(self.thread_loop) < 0) {
+        if (pw.pw_thread_loop_start(self.thread_loop) < 0) {
             return error.pw_thread_loop_start;
         }
     }
@@ -81,8 +82,8 @@ pub const PipewireAudio = struct {
     pub fn updateSelectedDevices(self: *Self, selected_devices: []const SelectedAudioDevice) !void {
         const thread_loop = self.thread_loop orelse return error.pw_thread_loop_not_initialized;
 
-        c.pw_thread_loop_lock(thread_loop);
-        defer c.pw_thread_loop_unlock(thread_loop);
+        pw.pw_thread_loop_lock(thread_loop);
+        defer pw.pw_thread_loop_unlock(thread_loop);
 
         self.clearStreams();
         errdefer self.clearStreams();
@@ -95,8 +96,8 @@ pub const PipewireAudio = struct {
     fn clearStreams(self: *Self) void {
         for (self.streams.items) |stream_data| {
             if (stream_data.stream) |stream| {
-                _ = c.pw_stream_disconnect(stream);
-                c.pw_stream_destroy(stream);
+                _ = pw.pw_stream_disconnect(stream);
+                pw.pw_stream_destroy(stream);
             }
             self.allocator.free(stream_data.id);
             self.allocator.destroy(stream_data);
@@ -115,24 +116,24 @@ pub const PipewireAudio = struct {
         };
         errdefer self.allocator.free(stream_data.id);
 
-        const props = c.pw_properties_new(
-            c.PW_KEY_MEDIA_TYPE,
+        const props = pw.pw_properties_new(
+            pw.PW_KEY_MEDIA_TYPE,
             "Audio",
-            c.PW_KEY_MEDIA_CATEGORY,
+            pw.PW_KEY_MEDIA_CATEGORY,
             "Capture",
-            c.PW_KEY_MEDIA_ROLE,
+            pw.PW_KEY_MEDIA_ROLE,
             "Music",
-            c.NULL,
+            pw.NULL,
         ) orelse return error.pw_properties_new;
         if (selected_device.device_type == .sink) {
-            _ = c.pw_properties_set(props, c.PW_KEY_STREAM_CAPTURE_SINK, "true");
+            _ = pw.pw_properties_set(props, pw.PW_KEY_STREAM_CAPTURE_SINK, "true");
         }
         const target_object = try self.allocator.dupeZ(u8, selected_device.id);
         defer self.allocator.free(target_object);
-        _ = c.pw_properties_set(props, c.PW_KEY_TARGET_OBJECT, target_object);
+        _ = pw.pw_properties_set(props, pw.PW_KEY_TARGET_OBJECT, target_object);
 
-        const stream_events = c.pw_stream_events{
-            .version = c.PW_VERSION_STREAM_EVENTS,
+        const stream_events = pw.pw_stream_events{
+            .version = pw.PW_VERSION_STREAM_EVENTS,
             .param_changed = streamParamChangedCallback,
             .process = streamProcessCallback,
         };
@@ -141,8 +142,8 @@ pub const PipewireAudio = struct {
             .source => "audio-capture-source",
             .sink => "audio-capture-sink",
         };
-        stream_data.stream = c.pw_stream_new_simple(
-            c.pw_thread_loop_get_loop(self.thread_loop),
+        stream_data.stream = pw.pw_stream_new_simple(
+            pw.pw_thread_loop_get_loop(self.thread_loop),
             stream_name,
             props,
             &stream_events,
@@ -150,8 +151,8 @@ pub const PipewireAudio = struct {
         ) orelse return error.pw_stream_new;
         errdefer {
             if (stream_data.stream) |stream| {
-                _ = c.pw_stream_disconnect(stream);
-                c.pw_stream_destroy(stream);
+                _ = pw.pw_stream_disconnect(stream);
+                pw.pw_stream_destroy(stream);
                 stream_data.stream = null;
             }
         }
@@ -166,14 +167,14 @@ pub const PipewireAudio = struct {
         const self = stream_data.pipewire_audio;
         const stream = stream_data.stream orelse return;
 
-        const pwb = c.pw_stream_dequeue_buffer(stream);
+        const pwb = pw.pw_stream_dequeue_buffer(stream);
 
         if (pwb == null) {
             log.debug("[streamProcessCallback] out of buffers to dequeue", .{});
             return;
         }
 
-        defer _ = c.pw_stream_queue_buffer(stream, pwb);
+        defer _ = pw.pw_stream_queue_buffer(stream, pwb);
 
         const buffer = pwb.*.buffer orelse return;
         if (buffer.*.n_datas == 0) {
@@ -198,8 +199,8 @@ pub const PipewireAudio = struct {
             return;
         }
 
-        const rate = stream_data.format.info.raw.rate;
-        const channels = stream_data.format.info.raw.channels;
+        const rate = stream_data.raw.rate;
+        const channels = stream_data.raw.channels;
 
         // If this fails, then to my knowledge, there is an issue with pipewire.
         // The streamParamChangedCallback should always fire before the streamProcessCallback,
@@ -234,11 +235,11 @@ pub const PipewireAudio = struct {
         }
     }
 
-    fn streamParamChangedCallback(userdata: ?*anyopaque, id: u32, param: [*c]const c.struct_spa_pod) callconv(.c) void {
+    fn streamParamChangedCallback(userdata: ?*anyopaque, id: u32, param: [*c]const pw.struct_spa_pod) callconv(.c) void {
         assert(userdata != null);
         const stream_data: *AudioStream = @ptrCast(@alignCast(userdata));
 
-        if (param == null or id != c.SPA_PARAM_Format) {
+        if (param == null or id != pw.SPA_PARAM_Format) {
             return;
         }
 
@@ -249,42 +250,42 @@ pub const PipewireAudio = struct {
             return;
         }
 
-        if (media_type != c.SPA_MEDIA_TYPE_audio or media_subtype != c.SPA_MEDIA_SUBTYPE_raw) {
+        if (media_type != pw.SPA_MEDIA_TYPE_audio or media_subtype != pw.SPA_MEDIA_SUBTYPE_raw) {
             return;
         }
 
-        _ = c_def.spa_format_audio_raw_parse(param, &stream_data.format.info.raw);
+        _ = c_def.spa_format_audio_raw_parse(param, &stream_data.raw);
 
         std.log.debug("[onStreamParamChanged] capturing rate: {}, channels: {}", .{
-            stream_data.format.info.raw.rate,
-            stream_data.format.info.raw.channels,
+            stream_data.raw.rate,
+            stream_data.raw.channels,
         });
     }
 
     fn connectStream(stream_data: *AudioStream) !void {
         var format_buffer = std.mem.zeroes([512]u8);
-        var builder = c.spa_pod_builder{
+        var builder = pw.spa_pod_builder{
             .data = @ptrCast(&format_buffer),
             .size = format_buffer.len,
         };
         const format = c_def.spa_pod_builder_add_object(
             &builder,
-            c.SPA_TYPE_OBJECT_Format,
-            c.SPA_PARAM_EnumFormat,
+            pw.SPA_TYPE_OBJECT_Format,
+            pw.SPA_PARAM_EnumFormat,
             .{
-                c.SPA_FORMAT_mediaType,
+                pw.SPA_FORMAT_mediaType,
                 "I",
-                @as(i32, c.SPA_MEDIA_TYPE_audio),
-                c.SPA_FORMAT_mediaSubtype,
+                @as(i32, pw.SPA_MEDIA_TYPE_audio),
+                pw.SPA_FORMAT_mediaSubtype,
                 "I",
-                @as(i32, c.SPA_MEDIA_SUBTYPE_raw),
-                c.SPA_FORMAT_AUDIO_format,
+                @as(i32, pw.SPA_MEDIA_SUBTYPE_raw),
+                pw.SPA_FORMAT_AUDIO_format,
                 "I",
-                @as(i32, c.SPA_AUDIO_FORMAT_F32),
-                c.SPA_FORMAT_AUDIO_rate,
+                @as(i32, pw.SPA_AUDIO_FORMAT_F32),
+                pw.SPA_FORMAT_AUDIO_rate,
                 "i",
                 @as(i32, SAMPLE_RATE),
-                c.SPA_FORMAT_AUDIO_channels,
+                pw.SPA_FORMAT_AUDIO_channels,
                 "i",
                 @as(i32, CHANNELS),
             },
@@ -292,36 +293,36 @@ pub const PipewireAudio = struct {
 
         // Metadata is required to get the buffer timestamp.
         var meta_buffer = std.mem.zeroes([512]u8);
-        var meta_builder = c.spa_pod_builder{
+        var meta_builder = pw.spa_pod_builder{
             .data = @ptrCast(&meta_buffer),
             .size = meta_buffer.len,
         };
         const meta = c_def.spa_pod_builder_add_object(
             &meta_builder,
-            c.SPA_TYPE_OBJECT_ParamMeta,
-            c.SPA_PARAM_Meta,
+            pw.SPA_TYPE_OBJECT_ParamMeta,
+            pw.SPA_PARAM_Meta,
             .{
-                c.SPA_PARAM_META_type,
+                pw.SPA_PARAM_META_type,
                 "I",
-                @as(i32, c.SPA_META_Header),
-                c.SPA_PARAM_META_size,
+                @as(i32, pw.SPA_META_Header),
+                pw.SPA_PARAM_META_size,
                 "i",
-                @as(i32, @intCast(@sizeOf(c.spa_meta_header))),
+                @as(i32, @intCast(@sizeOf(pw.spa_meta_header))),
             },
         ) orelse return error.pw_meta_build;
 
-        var params = [_]*c.struct_spa_pod{
+        var params = [_]*pw.struct_spa_pod{
             @ptrCast(@alignCast(format)),
             @ptrCast(@alignCast(meta)),
         };
 
-        const status = c.pw_stream_connect(
+        const status = pw.pw_stream_connect(
             stream_data.stream,
-            c.PW_DIRECTION_INPUT,
-            c.PW_ID_ANY,
-            c.PW_STREAM_FLAG_AUTOCONNECT |
-                c.PW_STREAM_FLAG_MAP_BUFFERS |
-                c.PW_STREAM_FLAG_RT_PROCESS,
+            pw.PW_DIRECTION_INPUT,
+            pw.PW_ID_ANY,
+            pw.PW_STREAM_FLAG_AUTOCONNECT |
+                pw.PW_STREAM_FLAG_MAP_BUFFERS |
+                pw.PW_STREAM_FLAG_RT_PROCESS,
             @ptrCast(params[0..].ptr),
             @intCast(params.len),
         );

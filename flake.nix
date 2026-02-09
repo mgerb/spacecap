@@ -48,7 +48,6 @@
             vulkan-loader
             vulkan-validation-layers
             vulkan-tools
-            pipewire
             libdrm
             wayland
             libportal
@@ -67,11 +66,9 @@
 
           # include paths
           LIBDRM_DEV = "${pkgs.libdrm.dev}/include";
-          PIPEWIRE_DEV = "${pkgs.pipewire.dev}/include";
           LIBXKBCOMMON = "${pkgs.libxkbcommon}/lib";
 
           # library paths
-          PIPEWIRE_LIB = "${pkgs.pipewire}";
           LIBDRM = "${pkgs.libdrm}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
 

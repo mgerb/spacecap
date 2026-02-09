@@ -1,5 +1,6 @@
 const std = @import("std");
 const rc = @import("zigrc");
+const pw = @import("pipewire").c;
 
 const pipewire_util = @import("./pipewire_util.zig");
 const Chan = @import("../../../../channel.zig").Chan;
@@ -21,12 +22,12 @@ pub const Pipewire = struct {
     portal: *Portal,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
-    thread_loop: ?*c.pw_thread_loop = null,
-    context: ?*c.pw_context = null,
-    core: ?*c.pw_core = null,
-    core_listener: c.spa_hook = undefined,
-    stream: ?*c.pw_stream = null,
-    stream_listener: c.spa_hook = undefined,
+    thread_loop: ?*pw.pw_thread_loop = null,
+    context: ?*pw.pw_context = null,
+    core: ?*pw.pw_core = null,
+    core_listener: pw.spa_hook = undefined,
+    stream: ?*pw.pw_stream = null,
+    stream_listener: pw.spa_hook = undefined,
     has_format: bool = false,
     format_changed: bool = false,
     // Send messages to Pipewire on this channel.
@@ -36,7 +37,7 @@ pub const Pipewire = struct {
     worker_thread: ?std.Thread = null,
     pipewire_frame_buffer_manager: ?*PipewireFrameBufferManager = null,
     /// Stores all information about the video stream.
-    info: ?c.spa_video_info_raw = null,
+    info: ?pw.spa_video_info_raw = null,
     /// This channel is used to communicate from the main pipewire thread
     /// to the worker thread. The worker thread must be separate from the
     /// main pipewire loop, because it blocks and waits for the consumer.
@@ -63,11 +64,11 @@ pub const Pipewire = struct {
     pub fn deinit(self: *Self) void {
         // Stop the thread loop so we don't get anymore process callbacks.
         if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_lock(thread_loop);
+            pw.pw_thread_loop_lock(thread_loop);
             // Make sure no signals are waiting.
-            c.pw_thread_loop_accept(thread_loop);
-            c.pw_thread_loop_unlock(thread_loop);
-            c.pw_thread_loop_stop(thread_loop);
+            pw.pw_thread_loop_accept(thread_loop);
+            pw.pw_thread_loop_unlock(thread_loop);
+            pw.pw_thread_loop_stop(thread_loop);
         }
 
         // Deinit all channels. This should terminate the worker thread.
@@ -81,23 +82,23 @@ pub const Pipewire = struct {
         }
 
         if (self.stream) |stream| {
-            _ = c.pw_stream_disconnect(stream);
-            _ = c.pw_stream_destroy(stream);
+            _ = pw.pw_stream_disconnect(stream);
+            _ = pw.pw_stream_destroy(stream);
             self.stream = null;
         }
 
         if (self.core) |core| {
-            _ = c.pw_core_disconnect(core);
+            _ = pw.pw_core_disconnect(core);
             self.core = null;
         }
 
         if (self.context) |context| {
-            _ = c.pw_context_destroy(context);
+            _ = pw.pw_context_destroy(context);
             self.context = null;
         }
 
         if (self.thread_loop) |thread_loop| {
-            c.pw_thread_loop_destroy(thread_loop);
+            pw.pw_thread_loop_destroy(thread_loop);
             self.thread_loop = null;
         }
 
@@ -116,16 +117,16 @@ pub const Pipewire = struct {
     ) (VideoCaptureError || anyerror)!void {
         const pipewire_node = try self.portal.selectSource(source_type);
         const pipewire_fd = try self.portal.openPipewireRemote();
-        errdefer _ = c.close(pipewire_fd);
+        errdefer _ = pw.close(pipewire_fd);
 
-        self.thread_loop = c.pw_thread_loop_new(
+        self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-video",
             null,
         ) orelse return error.pw_thread_loop_new;
-        errdefer c.pw_thread_loop_destroy(self.thread_loop);
+        errdefer pw.pw_thread_loop_destroy(self.thread_loop);
 
-        self.context = c.pw_context_new(
-            c.pw_thread_loop_get_loop(self.thread_loop),
+        self.context = pw.pw_context_new(
+            pw.pw_thread_loop_get_loop(self.thread_loop),
             null,
             0,
         );
@@ -134,42 +135,42 @@ pub const Pipewire = struct {
             return error.pw_context_new;
         }
 
-        if (c.pw_thread_loop_start(self.thread_loop) < 0) {
+        if (pw.pw_thread_loop_start(self.thread_loop) < 0) {
             return error.pw_thread_loop_start;
         }
 
-        c.pw_thread_loop_lock(self.thread_loop);
+        pw.pw_thread_loop_lock(self.thread_loop);
 
-        self.core = c.pw_context_connect_fd(
+        self.core = pw.pw_context_connect_fd(
             self.context,
             pipewire_fd,
             null,
             0,
         ) orelse return error.pw_context_connect_fd;
 
-        _ = c.pw_core_add_listener(self.core, &self.core_listener, &core_events, null);
+        _ = pw.pw_core_add_listener(self.core, &self.core_listener, &core_events, null);
 
-        self.stream = c.pw_stream_new(self.core, "Spacecap (host)", c.pw_properties_new(
-            c.PW_KEY_MEDIA_TYPE,
+        self.stream = pw.pw_stream_new(self.core, "Spacecap (host)", pw.pw_properties_new(
+            pw.PW_KEY_MEDIA_TYPE,
             "Video",
-            c.PW_KEY_MEDIA_CATEGORY,
+            pw.PW_KEY_MEDIA_CATEGORY,
             "Capture",
-            c.PW_KEY_MEDIA_ROLE,
+            pw.PW_KEY_MEDIA_ROLE,
             "Screen",
-            c.NULL,
+            pw.NULL,
         )) orelse return error.pw_stream_new;
 
         self.pipewire_frame_buffer_manager = try .init(self.allocator, self.vulkan);
 
-        c.pw_stream_add_listener(self.stream, &self.stream_listener, &stream_events, self);
+        pw.pw_stream_add_listener(self.stream, &self.stream_listener, &stream_events, self);
 
         try self.startStream(pipewire_node);
 
         while (!self.has_format) {
-            c.pw_thread_loop_wait(self.thread_loop);
+            pw.pw_thread_loop_wait(self.thread_loop);
         }
 
-        c.pw_thread_loop_unlock(self.thread_loop);
+        pw.pw_thread_loop_unlock(self.thread_loop);
 
         if (self.info == null or self.info.?.format < 0) {
             return error.bad_format;
@@ -178,21 +179,21 @@ pub const Pipewire = struct {
         self.worker_thread = try std.Thread.spawn(.{}, workerMain, .{self});
     }
 
-    fn build_format(self: *const Self, b: ?*c.spa_pod_builder, format: u32, modifiers: []const u64) ?*c.spa_pod {
+    fn build_format(self: *const Self, b: ?*pw.spa_pod_builder, format: u32, modifiers: []const u64) ?*pw.spa_pod {
         _ = self;
-        var format_frame = std.mem.zeroes(c.spa_pod_frame);
+        var format_frame = std.mem.zeroes(pw.spa_pod_frame);
 
-        _ = c.spa_pod_builder_push_object(b, @ptrCast(&format_frame), c.SPA_TYPE_OBJECT_Format, c.SPA_PARAM_EnumFormat);
-        _ = c.spa_pod_builder_add(b, @as(i32, c.SPA_FORMAT_mediaType), "I", @as(i32, c.SPA_MEDIA_TYPE_video), @as(i32, 0));
-        _ = c.spa_pod_builder_add(b, @as(u32, c.SPA_FORMAT_mediaSubtype), "I", @as(i32, c.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
-        _ = c.spa_pod_builder_add(b, @as(u32, c.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
+        _ = pw.spa_pod_builder_push_object(b, @ptrCast(&format_frame), pw.SPA_TYPE_OBJECT_Format, pw.SPA_PARAM_EnumFormat);
+        _ = pw.spa_pod_builder_add(b, @as(i32, pw.SPA_FORMAT_mediaType), "I", @as(i32, pw.SPA_MEDIA_TYPE_video), @as(i32, 0));
+        _ = pw.spa_pod_builder_add(b, @as(u32, pw.SPA_FORMAT_mediaSubtype), "I", @as(i32, pw.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
+        _ = pw.spa_pod_builder_add(b, @as(u32, pw.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
 
         // TODO: Need to update this to handle single modifiers - see fixate example.
         if (modifiers.len > 0) {
-            var modifier_frame = std.mem.zeroes(c.spa_pod_frame);
+            var modifier_frame = std.mem.zeroes(pw.spa_pod_frame);
 
-            _ = c.spa_pod_builder_prop(b, c.SPA_FORMAT_VIDEO_modifier, c.SPA_POD_PROP_FLAG_MANDATORY | c.SPA_POD_PROP_FLAG_DONT_FIXATE);
-            _ = c.spa_pod_builder_push_choice(b, &modifier_frame, c.SPA_CHOICE_Enum, 0);
+            _ = pw.spa_pod_builder_prop(b, pw.SPA_FORMAT_VIDEO_modifier, pw.SPA_POD_PROP_FLAG_MANDATORY | pw.SPA_POD_PROP_FLAG_DONT_FIXATE);
+            _ = pw.spa_pod_builder_push_choice(b, &modifier_frame, pw.SPA_CHOICE_Enum, 0);
 
             for (modifiers) |mod| {
                 _ = c_def.spa_pod_builder_long(b, @intCast(mod));
@@ -202,20 +203,20 @@ pub const Pipewire = struct {
         }
 
         // TODO: Update fps.
-        _ = c.spa_pod_builder_add(
+        _ = pw.spa_pod_builder_add(
             b,
-            @as(u32, c.SPA_FORMAT_VIDEO_size),
+            @as(u32, pw.SPA_FORMAT_VIDEO_size),
             "?rR",
             @as(u32, 3),
-            &c.SPA_RECTANGLE(32, 32),
-            &c.SPA_RECTANGLE(1, 1),
-            &c.SPA_RECTANGLE(16384, 16384),
-            @as(u32, c.SPA_FORMAT_VIDEO_framerate),
+            &pw.SPA_RECTANGLE(32, 32),
+            &pw.SPA_RECTANGLE(1, 1),
+            &pw.SPA_RECTANGLE(16384, 16384),
+            @as(u32, pw.SPA_FORMAT_VIDEO_framerate),
             "?rF",
             @as(u32, 3),
-            &c.SPA_FRACTION(60, 1), // FPS
-            &c.SPA_FRACTION(0, 1),
-            &c.SPA_FRACTION(500, 1),
+            &pw.SPA_FRACTION(60, 1), // FPS
+            &pw.SPA_FRACTION(0, 1),
+            &pw.SPA_FRACTION(500, 1),
             @as(i32, 0),
         );
 
@@ -233,27 +234,27 @@ pub const Pipewire = struct {
 
         var buffer = std.mem.zeroes([4096]u8);
 
-        var builder = c.spa_pod_builder{
+        var builder = pw.spa_pod_builder{
             .data = buffer[0..].ptr,
             .size = buffer.len,
         };
 
         const formats = [_]u32{
-            c.SPA_VIDEO_FORMAT_RGBx,
-            c.SPA_VIDEO_FORMAT_BGRx,
-            c.SPA_VIDEO_FORMAT_RGBA,
-            c.SPA_VIDEO_FORMAT_BGRA,
-            c.SPA_VIDEO_FORMAT_RGB,
-            c.SPA_VIDEO_FORMAT_BGR,
-            c.SPA_VIDEO_FORMAT_ARGB,
-            c.SPA_VIDEO_FORMAT_ABGR,
-            c.SPA_VIDEO_FORMAT_xRGB_210LE,
-            c.SPA_VIDEO_FORMAT_xBGR_210LE,
-            c.SPA_VIDEO_FORMAT_ARGB_210LE,
-            c.SPA_VIDEO_FORMAT_ABGR_210LE,
+            pw.SPA_VIDEO_FORMAT_RGBx,
+            pw.SPA_VIDEO_FORMAT_BGRx,
+            pw.SPA_VIDEO_FORMAT_RGBA,
+            pw.SPA_VIDEO_FORMAT_BGRA,
+            pw.SPA_VIDEO_FORMAT_RGB,
+            pw.SPA_VIDEO_FORMAT_BGR,
+            pw.SPA_VIDEO_FORMAT_ARGB,
+            pw.SPA_VIDEO_FORMAT_ABGR,
+            pw.SPA_VIDEO_FORMAT_xRGB_210LE,
+            pw.SPA_VIDEO_FORMAT_xBGR_210LE,
+            pw.SPA_VIDEO_FORMAT_ARGB_210LE,
+            pw.SPA_VIDEO_FORMAT_ABGR_210LE,
         };
 
-        var params = try std.ArrayList(*c.spa_pod).initCapacity(self.allocator, 0);
+        var params = try std.ArrayList(*pw.spa_pod).initCapacity(self.allocator, 0);
         defer params.deinit(self.allocator);
 
         for (formats) |format| {
@@ -267,11 +268,11 @@ pub const Pipewire = struct {
             }
         }
 
-        const status = c.pw_stream_connect(
+        const status = pw.pw_stream_connect(
             self.stream,
-            c.PW_DIRECTION_INPUT,
+            pw.PW_DIRECTION_INPUT,
             node,
-            c.PW_STREAM_FLAG_AUTOCONNECT | c.PW_STREAM_FLAG_MAP_BUFFERS,
+            pw.PW_STREAM_FLAG_AUTOCONNECT | pw.PW_STREAM_FLAG_MAP_BUFFERS,
             @ptrCast(params.items.ptr),
             @intCast(params.items.len),
         );
@@ -291,22 +292,22 @@ pub const Pipewire = struct {
         }
 
         // Grab the newest buffer.
-        var pipewire_buffer: ?*c.struct_pw_buffer = null;
+        var pipewire_buffer: ?*pw.struct_pw_buffer = null;
         while (true) {
-            const tmp: ?*c.struct_pw_buffer = c.pw_stream_dequeue_buffer(self.stream);
+            const tmp: ?*pw.struct_pw_buffer = pw.pw_stream_dequeue_buffer(self.stream);
 
             if (tmp == null) {
                 break;
             }
 
             // Only keep buffers that are dmabuf.
-            if (tmp.?.buffer == null or tmp.?.buffer[0].datas[0].type != c.SPA_DATA_DmaBuf) {
-                _ = c.pw_stream_queue_buffer(self.stream.?, tmp.?);
+            if (tmp.?.buffer == null or tmp.?.buffer[0].datas[0].type != pw.SPA_DATA_DmaBuf) {
+                _ = pw.pw_stream_queue_buffer(self.stream.?, tmp.?);
                 continue;
             }
 
             if (pipewire_buffer) |pwb| {
-                _ = c.pw_stream_queue_buffer(self.stream.?, pwb);
+                _ = pw.pw_stream_queue_buffer(self.stream.?, pwb);
             }
 
             pipewire_buffer = tmp;
@@ -315,19 +316,19 @@ pub const Pipewire = struct {
         const pwb = pipewire_buffer.?;
 
         // TODO: Should gracefully handle these errors.
-        defer _ = c.pw_stream_queue_buffer(self.stream.?, pwb);
+        defer _ = pw.pw_stream_queue_buffer(self.stream.?, pwb);
 
         const vulkan_image = self.pipewire_frame_buffer_manager.?.getVulkanImage(pwb, self.info.?) catch |err| {
             log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
             unreachable;
         };
 
-        const header = c.spa_buffer_find_meta_data(pwb.buffer, c.SPA_META_Header, @sizeOf(c.spa_meta_header));
+        const header = pw.spa_buffer_find_meta_data(pwb.buffer, pw.SPA_META_Header, @sizeOf(pw.spa_meta_header));
         if (header == null) {
             log.err("[streamProcessCallback] unable to get metadata header. This should never happen.", .{});
             return;
         }
-        const metadata = @as(*c.spa_meta_header, @ptrCast(@alignCast(header.?)));
+        const metadata = @as(*pw.spa_meta_header, @ptrCast(@alignCast(header.?)));
         var timestamp_ns: i128 = @intCast(metadata.pts);
 
         // Pipewire can occasionally queue a buffer with the same timestamp as the previous
@@ -408,33 +409,33 @@ pub const Pipewire = struct {
 
     fn streamStateChangedCallback(
         data: ?*anyopaque,
-        old_state: c.pw_stream_state,
-        new_state: c.pw_stream_state,
+        old_state: pw.pw_stream_state,
+        new_state: pw.pw_stream_state,
         error_: [*c]const u8,
     ) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
 
         log.debug("[streamStateChangedCallback] pipewire stream state change: {s} -> {s}", .{
-            c.pw_stream_state_as_string(old_state),
-            c.pw_stream_state_as_string(new_state),
+            pw.pw_stream_state_as_string(old_state),
+            pw.pw_stream_state_as_string(new_state),
         });
 
-        if (new_state == c.PW_STREAM_STATE_ERROR) {
+        if (new_state == pw.PW_STREAM_STATE_ERROR) {
             log.debug("[streamStateChangedCallback] pipewire stream error: {s}", .{error_});
         }
 
-        if (new_state == c.PW_STREAM_STATE_STREAMING) {
+        if (new_state == pw.PW_STREAM_STATE_STREAMING) {
             log.debug("[streamStateChangedCallback] pipewire state streaming", .{});
         }
     }
 
-    fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const c.spa_pod) callconv(.c) void {
+    fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const pw.spa_pod) callconv(.c) void {
         log.debug("[streamParamChangedCallback]", .{});
 
         const self: *Self = @ptrCast(@alignCast(data));
 
-        if (param == null or id != c.SPA_PARAM_Format) {
+        if (param == null or id != pw.SPA_PARAM_Format) {
             return;
         }
 
@@ -444,14 +445,14 @@ pub const Pipewire = struct {
         const fmt = c_def.spa_format_parse(param, &media_type, &media_subtype);
 
         if (fmt < 0 or
-            media_type != c.SPA_MEDIA_TYPE_video or
-            media_subtype != c.SPA_MEDIA_SUBTYPE_raw)
+            media_type != pw.SPA_MEDIA_TYPE_video or
+            media_subtype != pw.SPA_MEDIA_SUBTYPE_raw)
         {
             log.debug("[streamParamChangedCallback] media_type: {}, media_subtype: {}", .{ media_type, media_subtype });
             return;
         }
 
-        self.info = std.mem.zeroes(c.spa_video_info_raw);
+        self.info = std.mem.zeroes(pw.spa_video_info_raw);
 
         if (c_def.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
             log.debug("[streamParamChangedCallback] failed to parse video info", .{});
@@ -470,81 +471,81 @@ pub const Pipewire = struct {
         self.has_format = true;
         self.format_changed = false;
 
-        c.pw_thread_loop_signal(self.thread_loop, false);
+        pw.pw_thread_loop_signal(self.thread_loop, false);
     }
 
     fn sendStreamParams(self: *Self) void {
         var buffer = std.mem.zeroes([1024]u8);
 
-        var builder = c.spa_pod_builder{
+        var builder = pw.spa_pod_builder{
             .data = @ptrCast(&buffer),
             .size = 1024,
         };
 
-        var params = std.ArrayList(*c.struct_spa_pod).initCapacity(self.allocator, 0) catch unreachable;
+        var params = std.ArrayList(*pw.struct_spa_pod).initCapacity(self.allocator, 0) catch unreachable;
         defer params.deinit(self.allocator);
 
         // This allows us to get the frame timestamp.
         params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
-            c.SPA_TYPE_OBJECT_ParamMeta,
-            c.SPA_PARAM_Meta,
+            pw.SPA_TYPE_OBJECT_ParamMeta,
+            pw.SPA_PARAM_Meta,
             .{
-                c.SPA_PARAM_META_type,
+                pw.SPA_PARAM_META_type,
                 "I",
-                @as(i32, c.SPA_META_Header),
-                c.SPA_PARAM_META_size,
+                @as(i32, pw.SPA_META_Header),
+                pw.SPA_PARAM_META_size,
                 "i",
-                @as(i32, @intCast(@sizeOf(c.spa_meta_header))),
+                @as(i32, @intCast(@sizeOf(pw.spa_meta_header))),
             },
         )))) catch unreachable;
 
         // damage
         params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
-            c.SPA_TYPE_OBJECT_ParamMeta,
-            c.SPA_PARAM_Meta,
+            pw.SPA_TYPE_OBJECT_ParamMeta,
+            pw.SPA_PARAM_Meta,
             .{
-                c.SPA_PARAM_META_type,
+                pw.SPA_PARAM_META_type,
                 "I",
-                c.SPA_META_VideoDamage,
-                c.SPA_PARAM_META_size,
+                pw.SPA_META_VideoDamage,
+                pw.SPA_PARAM_META_size,
                 "?ri",
                 @as(i32, 3),
-                @as(i32, @sizeOf(c.spa_meta_region) * 16),
-                @as(i32, @sizeOf(c.spa_meta_region) * 1),
-                @as(i32, @sizeOf(c.spa_meta_region) * 16),
+                @as(i32, @sizeOf(pw.spa_meta_region) * 16),
+                @as(i32, @sizeOf(pw.spa_meta_region) * 1),
+                @as(i32, @sizeOf(pw.spa_meta_region) * 16),
             },
         )))) catch unreachable;
 
         // cursor
         params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
-            c.SPA_TYPE_OBJECT_ParamMeta,
-            c.SPA_PARAM_Meta,
+            pw.SPA_TYPE_OBJECT_ParamMeta,
+            pw.SPA_PARAM_Meta,
             .{
-                c.SPA_PARAM_META_type,
+                pw.SPA_PARAM_META_type,
                 "I",
-                c.SPA_META_Cursor,
-                c.SPA_PARAM_META_size,
+                pw.SPA_META_Cursor,
+                pw.SPA_PARAM_META_size,
                 "?ri",
                 @as(i32, 3),
-                @as(i32, @sizeOf(c.spa_meta_cursor) + @sizeOf(c.spa_meta_bitmap) + 64 + 64 * 4),
-                @as(i32, @sizeOf(c.spa_meta_cursor) + @sizeOf(c.spa_meta_bitmap) + 1 + 1 * 4),
-                @as(i32, @sizeOf(c.spa_meta_cursor) + @sizeOf(c.spa_meta_bitmap) + 1024 + 1024 * 4),
+                @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 64 + 64 * 4),
+                @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1 + 1 * 4),
+                @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1024 + 1024 * 4),
             },
         )))) catch unreachable;
 
-        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, c.SPA_TYPE_OBJECT_ParamBuffers, c.SPA_PARAM_Buffers, .{
-            c.SPA_PARAM_BUFFERS_dataType,
+        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, pw.SPA_TYPE_OBJECT_ParamBuffers, pw.SPA_PARAM_Buffers, .{
+            pw.SPA_PARAM_BUFFERS_dataType,
             "i",
-            @as(i32, 1 << c.SPA_DATA_DmaBuf),
+            @as(i32, 1 << pw.SPA_DATA_DmaBuf),
         })))) catch unreachable;
 
-        _ = c.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
+        _ = pw.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
     }
 
-    fn streamAddBufferCallback(data: ?*anyopaque, pwb: [*c]c.struct_pw_buffer) callconv(.c) void {
+    fn streamAddBufferCallback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
         log.debug("[streamAddBufferCallback]", .{});
 
@@ -553,15 +554,15 @@ pub const Pipewire = struct {
         };
     }
 
-    fn streamRemoveBufferCallback(data: ?*anyopaque, pwb: [*c]c.struct_pw_buffer) callconv(.c) void {
+    fn streamRemoveBufferCallback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
         log.debug("[streamRemoveBufferCallback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         self.pipewire_frame_buffer_manager.?.removePipewireBuffer(pwb);
     }
 
-    const stream_events = c.pw_stream_events{
-        .version = c.PW_VERSION_STREAM_EVENTS,
+    const stream_events = pw.pw_stream_events{
+        .version = pw.PW_VERSION_STREAM_EVENTS,
         .process = streamProcessCallback,
         .state_changed = streamStateChangedCallback,
         .param_changed = streamParamChangedCallback,
@@ -569,8 +570,8 @@ pub const Pipewire = struct {
         .remove_buffer = streamRemoveBufferCallback,
     };
 
-    const core_events = c.pw_core_events{
-        .version = c.PW_VERSION_CORE_EVENTS,
+    const core_events = pw.pw_core_events{
+        .version = pw.PW_VERSION_CORE_EVENTS,
         .@"error" = coreErrorCallback,
     };
 

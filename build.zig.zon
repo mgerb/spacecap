@@ -109,6 +109,10 @@
             .url = "git+https://github.com/allyourcodebase/SDL3#467a4baad2acdda1bcf717065793fbbdf2569f8d",
             .hash = "sdl-0.0.0-i4QD0WN-qQB1RKdRC9-6iZyTco2jIIr3y2DFrAz-D9CH",
         },
+        .pipewire = .{
+            .url = "git+https://github.com/mgerb/pipewire#4f0f337aca61b127d0c7f800110b8513fbe85dd5",
+            .hash = "pipewire-1.5.81-tKslQ3HyEgAxlVc9B_fwqHtJBsNMrQxQ1zQYZ_vMlBUt",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.

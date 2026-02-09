@@ -3,13 +3,13 @@
 const Util = @import("../util.zig");
 
 pub const PlatformCaptureSetup = if (Util.isLinux()) struct {
-    const c = @import("../common/linux/pipewire_include.zig").c;
+    const pw = @import("pipewire").c;
 
     pub fn init() void {
-        c.pw_init(null, null);
+        pw.pw_init(null, null);
     }
     pub fn deinit() void {
-        c.pw_deinit();
+        pw.pw_deinit();
     }
 } else struct {
     pub fn init() void {}

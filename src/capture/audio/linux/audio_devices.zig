@@ -3,6 +3,7 @@
 const std = @import("std");
 const ArenaAllocator = std.heap.ArenaAllocator;
 const c = @import("../../../common/linux/pipewire_include.zig").c;
+const pw = @import("pipewire").c;
 const AudioDeviceList = @import("../audio_capture.zig").AudioDeviceList;
 const AudioDeviceType = @import("../audio_capture.zig").AudioDeviceType;
 
@@ -22,11 +23,11 @@ const ListData = struct {
     default_source: ?[]const u8 = null,
     configured_sink: ?[]const u8 = null,
     configured_source: ?[]const u8 = null,
-    registry: ?*c.pw_registry = null,
-    metadata: ?*c.pw_metadata = null,
-    metadata_listener: c.spa_hook = undefined,
+    registry: ?*pw.pw_registry = null,
+    metadata: ?*pw.pw_metadata = null,
+    metadata_listener: pw.spa_hook = undefined,
 
-    fn init(allocator: std.mem.Allocator, registry: *c.pw_registry) !ListData {
+    fn init(allocator: std.mem.Allocator, registry: *pw.pw_registry) !ListData {
         const arena = try allocator.create(ArenaAllocator);
         arena.* = .init(allocator);
         errdefer {
@@ -84,33 +85,33 @@ const ListData = struct {
 };
 
 pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
-    const list_loop = c.pw_main_loop_new(null) orelse return error.pw_main_loop_new;
-    defer c.pw_main_loop_destroy(list_loop);
+    const list_loop = pw.pw_main_loop_new(null) orelse return error.pw_main_loop_new;
+    defer pw.pw_main_loop_destroy(list_loop);
 
-    const context = c.pw_context_new(c.pw_main_loop_get_loop(list_loop), null, 0) orelse return error.pw_context_new;
-    defer c.pw_context_destroy(context);
+    const context = pw.pw_context_new(pw.pw_main_loop_get_loop(list_loop), null, 0) orelse return error.pw_context_new;
+    defer pw.pw_context_destroy(context);
 
-    const core = c.pw_context_connect(context, null, 0) orelse return error.pw_context_connect;
-    defer _ = c.pw_core_disconnect(core);
+    const core = pw.pw_context_connect(context, null, 0) orelse return error.pw_context_connect;
+    defer _ = pw.pw_core_disconnect(core);
 
-    const registry = c.pw_core_get_registry(core, c.PW_VERSION_REGISTRY, 0) orelse return error.pw_registry_new;
+    const registry = pw.pw_core_get_registry(core, pw.PW_VERSION_REGISTRY, 0) orelse return error.pw_registry_new;
     var list_data = try ListData.init(allocator, registry);
     defer list_data.deinit();
 
-    var registry_listener: c.spa_hook = undefined;
-    const registry_events = c.pw_registry_events{
-        .version = c.PW_VERSION_REGISTRY_EVENTS,
+    var registry_listener: pw.spa_hook = undefined;
+    const registry_events = pw.pw_registry_events{
+        .version = pw.PW_VERSION_REGISTRY_EVENTS,
         .global = onRegistryGlobal,
         .global_remove = null,
     };
 
-    _ = c.pw_registry_add_listener(registry, &registry_listener, &registry_events, &list_data);
+    _ = pw.pw_registry_add_listener(registry, &registry_listener, &registry_events, &list_data);
 
     const Quitter = struct {
-        fn run(loop: ?*c.pw_main_loop) void {
+        fn run(loop: ?*pw.pw_main_loop) void {
             std.Thread.sleep(500 * std.time.ns_per_ms);
             if (loop) |list_loop_ptr| {
-                _ = c.pw_main_loop_quit(list_loop_ptr);
+                _ = pw.pw_main_loop_quit(list_loop_ptr);
             }
         }
     };
@@ -118,7 +119,7 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
     const quit_thread = try std.Thread.spawn(.{}, Quitter.run, .{list_loop});
     defer quit_thread.join();
 
-    _ = c.pw_main_loop_run(list_loop);
+    _ = pw.pw_main_loop_run(list_loop);
 
     const selected_sink_name = list_data.default_sink orelse list_data.configured_sink;
     const selected_source_name = list_data.default_source orelse list_data.configured_source;
@@ -150,7 +151,7 @@ fn onRegistryGlobal(
     permissions: u32,
     type_: [*c]const u8,
     version: u32,
-    props: ?*const c.struct_spa_dict,
+    props: ?*const pw.struct_spa_dict,
 ) callconv(.c) void {
     _ = permissions;
     _ = version;
@@ -159,28 +160,28 @@ fn onRegistryGlobal(
 
     const type_z: [*:0]const u8 = @ptrCast(type_);
     const type_slice = std.mem.span(type_z);
-    if (std.mem.eql(u8, type_slice, c.PW_TYPE_INTERFACE_Metadata)) {
+    if (std.mem.eql(u8, type_slice, pw.PW_TYPE_INTERFACE_Metadata)) {
         if (list_data.metadata == null) {
             if (list_data.registry) |registry| {
                 var should_bind = true;
                 if (props) |props_ptr| {
-                    if (c.spa_dict_lookup(props_ptr, c.PW_KEY_METADATA_NAME)) |name_c| {
+                    if (pw.spa_dict_lookup(props_ptr, pw.PW_KEY_METADATA_NAME)) |name_c| {
                         const name = std.mem.span(name_c);
                         should_bind = std.mem.eql(u8, name, "default");
                     }
                 }
                 if (!should_bind) return;
-                const metadata_ptr = c.pw_registry_bind(
+                const metadata_ptr = pw.pw_registry_bind(
                     registry,
                     id,
-                    c.PW_TYPE_INTERFACE_Metadata,
-                    c.PW_VERSION_METADATA,
+                    pw.PW_TYPE_INTERFACE_Metadata,
+                    pw.PW_VERSION_METADATA,
                     0,
                 );
                 if (metadata_ptr != null) {
-                    const metadata: *c.pw_metadata = @ptrCast(metadata_ptr.?);
+                    const metadata: *pw.pw_metadata = @ptrCast(metadata_ptr.?);
                     list_data.metadata = metadata;
-                    _ = c.pw_metadata_add_listener(
+                    _ = pw.pw_metadata_add_listener(
                         metadata,
                         &list_data.metadata_listener,
                         &metadata_events,
@@ -191,16 +192,16 @@ fn onRegistryGlobal(
         }
         return;
     }
-    if (!std.mem.eql(u8, type_slice, c.PW_TYPE_INTERFACE_Node)) return;
+    if (!std.mem.eql(u8, type_slice, pw.PW_TYPE_INTERFACE_Node)) return;
 
     const props_ptr = props orelse return;
-    const media_class_c = c.spa_dict_lookup(props_ptr, c.PW_KEY_MEDIA_CLASS);
+    const media_class_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_MEDIA_CLASS);
     if (media_class_c == null) return;
     const media_class = std.mem.span(media_class_c);
     if (!isAudioSource(media_class) and !isAudioSink(media_class)) return;
 
-    const node_name_c = c.spa_dict_lookup(props_ptr, c.PW_KEY_NODE_NAME);
-    const node_desc_c = c.spa_dict_lookup(props_ptr, c.PW_KEY_NODE_DESCRIPTION);
+    const node_name_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_NODE_NAME);
+    const node_desc_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_NODE_DESCRIPTION);
     const node_name = if (node_name_c) |ptr| std.mem.span(ptr) else "unknown";
     const node_desc = if (node_desc_c) |ptr| std.mem.span(ptr) else "";
 
@@ -221,8 +222,8 @@ fn nameMatches(name: ?[]const u8, node_name: []const u8) bool {
     return name != null and std.mem.eql(u8, node_name, name.?);
 }
 
-const metadata_events = c.pw_metadata_events{
-    .version = c.PW_VERSION_METADATA_EVENTS,
+const metadata_events = pw.pw_metadata_events{
+    .version = pw.PW_VERSION_METADATA_EVENTS,
     .property = onMetadataProperty,
 };
 

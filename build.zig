@@ -82,32 +82,25 @@ fn addSharedDependencies(
     };
 }
 
-fn addLinuxDependencies(allocator: std.mem.Allocator, b: *std.Build, exe: *std.Build.Step.Compile) !void {
+fn addLinuxDependencies(
+    allocator: std.mem.Allocator,
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !void {
     // xkbcommon
     // NOTE: may not be used actually?
     // exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("LIBXKBCOMMON").? });
     // try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBXKBCOMMON").?, "xkbcommon", .linux);
 
-    // pipewire headers
-    const pipewire_dev = std.posix.getenv("PIPEWIRE_DEV").?;
-    const pipewire_pipewire = try std.fmt.allocPrint(allocator, "{s}/pipewire-0.3", .{pipewire_dev});
-    defer allocator.free(pipewire_pipewire);
-    exe.addIncludePath(.{ .cwd_relative = pipewire_pipewire });
+    const pipewire = b.dependency("pipewire", .{
+        .optimize = optimize,
+        .target = target,
+    });
 
-    // pipewire lib
-    const pipewire_lib = try std.fmt.allocPrint(allocator, "{s}/lib", .{std.posix.getenv("PIPEWIRE_LIB").?});
-    defer allocator.free(pipewire_lib);
-    exe.addLibraryPath(.{ .cwd_relative = pipewire_lib });
-    try installAndLinkSystemLibrary(allocator, b, exe, pipewire_lib, "pipewire-0.3", .linux, "libpipewire-0.3.so.0");
-
-    // spa
-    const pipewire_spa = try std.fmt.allocPrint(allocator, "{s}/spa-0.2", .{pipewire_dev});
-    defer allocator.free(pipewire_spa);
-    exe.addIncludePath(.{ .cwd_relative = pipewire_spa });
-    const pipewire_lib_spa = try std.fmt.allocPrint(allocator, "{s}/lib/spa-0.2", .{std.posix.getenv("PIPEWIRE_LIB").?});
-    defer allocator.free(pipewire_lib_spa);
-    exe.addLibraryPath(.{ .cwd_relative = pipewire_lib_spa });
-    try installAndLinkSystemLibrary(allocator, b, exe, pipewire_lib_spa, "spa", .linux, null);
+    // For Zig projects, add the `pipewire` module.
+    exe.root_module.addImport("pipewire", pipewire.module("pipewire"));
 
     const gobject = b.dependency("gobject", .{});
     exe.root_module.addImport("glib", gobject.module("glib2"));
@@ -261,7 +254,7 @@ fn buildLinux(
     exe.addRPath(b.path("./lib"));
 
     try addSharedDependencies(allocator, b, exe, target, optimize);
-    try addLinuxDependencies(allocator, b, exe);
+    try addLinuxDependencies(allocator, b, exe, target, optimize);
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "linux" } },
@@ -305,7 +298,7 @@ fn buildUnitTestsDefault(
         exe.linkLibC();
 
         try addSharedDependencies(allocator, b, exe, target, optimize);
-        try addLinuxDependencies(allocator, b, exe);
+        try addLinuxDependencies(allocator, b, exe, target, optimize);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
 
