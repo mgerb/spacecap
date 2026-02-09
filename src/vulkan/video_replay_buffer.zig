@@ -105,8 +105,6 @@ pub const VideoReplayBuffer = struct {
         self.size += data.len;
     }
 
-    /// TODO: Should be changed to: now - first frame time.
-    /// Get the total number of seconds currently occupying the buffer
     pub fn getSeconds(self: *const Self) u32 {
         if (self.frames.first) |first| {
             const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
@@ -172,29 +170,45 @@ pub const VideoReplayBuffer = struct {
 };
 
 test "addFrame - should add a frame with 3 bytes" {
-    var replay_buffer = VideoReplayBuffer.init(std.testing.allocator, 30, 60);
+    var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 30, &.{});
     defer replay_buffer.deinit();
-    try replay_buffer.addFrame(&[_]u8{ 1, 2, 3 });
-    try std.testing.expectEqual(replay_buffer.size, 3);
-    try std.testing.expectEqual(replay_buffer.len, 1);
+    try replay_buffer.addFrame(&[_]u8{ 1, 2, 3 }, 0, false);
+    try std.testing.expectEqual(@as(u64, 3), replay_buffer.size);
+    try std.testing.expectEqual(@as(u32, 1), replay_buffer.len);
 }
 
-test "addFrame - should cap at capacity" {
-    // max frames should be 1800 with 30 fps and 60 seconds
-    const fps = 32;
-    const replay_seconds = 60;
-    const max_frames = fps * replay_seconds;
-    var replay_buffer = VideoReplayBuffer.init(std.testing.allocator, fps, replay_seconds);
+test "addFrame - should trim frames outside replay window" {
+    const replay_seconds = 2;
+    // The implementation keeps replay_seconds + 1 seconds of data.
+    const max_seconds_retained = replay_seconds + 1;
+    const max_frames = max_seconds_retained + 1;
+    var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, replay_seconds, &.{});
     defer replay_buffer.deinit();
 
-    for (0..20000) |i| {
-        try replay_buffer.addFrame(&[_]u8{1});
-        try std.testing.expect(replay_buffer.size <= max_frames);
-        const frame = i + 1;
-        if (frame > max_frames) {
-            try std.testing.expectEqual(replay_buffer.len, max_frames);
-        } else {
-            try std.testing.expectEqual(replay_buffer.len, frame);
-        }
+    for (0..10) |i| {
+        const ts_ns = @as(i128, @intCast(i)) * std.time.ns_per_s;
+        try replay_buffer.addFrame(&[_]u8{1}, ts_ns, false);
+
+        const expected_len_u = if (i + 1 > max_frames) max_frames else i + 1;
+        const expected_len: u32 = @intCast(expected_len_u);
+        try std.testing.expectEqual(expected_len, replay_buffer.len);
+        try std.testing.expectEqual(@as(u64, expected_len), replay_buffer.size);
     }
+
+    try std.testing.expectEqual(max_seconds_retained, replay_buffer.getSeconds());
+}
+
+test "getReplayWindow - returns null when empty and first/last timestamps when populated" {
+    var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
+    defer replay_buffer.deinit();
+
+    try std.testing.expect(replay_buffer.getReplayWindow() == null);
+
+    try replay_buffer.addFrame(&[_]u8{ 0xAA }, 11, false);
+    try replay_buffer.addFrame(&[_]u8{ 0xBB }, 22, false);
+    try replay_buffer.addFrame(&[_]u8{ 0xCC }, 33, true);
+
+    const window = replay_buffer.getReplayWindow() orelse return error.ExpectedReplayWindow;
+    try std.testing.expectEqual(@as(i128, 11), window.start_ns);
+    try std.testing.expectEqual(@as(i128, 33), window.end_ns);
 }

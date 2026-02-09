@@ -27,16 +27,26 @@ pub fn generateToken(allocator: std.mem.Allocator) ![:0]const u8 {
     );
 }
 
-test "TokenManager" {
+test "getRequestPath - formats and sanitizes unique name" {
     const a = std.testing.allocator;
 
-    const rp1 = try getRequestPath(a, "sender_name");
-    defer rp1.deinit();
-    try std.testing.expectEqualStrings(rp1.token, "spacecap1");
-    try std.testing.expectEqualStrings(rp1.path, "/org/freedesktop/portal/desktop/request/sender_name/spacecap1");
+    const path = try getRequestPath(a, "1.192", "spacecap123");
+    defer a.free(path);
+    try std.testing.expectEqualStrings(
+        "/org/freedesktop/portal/desktop/request/1_192/spacecap123",
+        path,
+    );
+}
 
-    const rp2 = try getRequestPath(a, "sender_name");
-    defer rp2.deinit();
-    try std.testing.expectEqualStrings(rp2.token, "spacecap2");
-    try std.testing.expectEqualStrings(rp2.path, "/org/freedesktop/portal/desktop/request/sender_name/spacecap2");
+test "generateToken - prefix and hex suffix" {
+    const a = std.testing.allocator;
+
+    const token = try generateToken(a);
+    defer a.free(token);
+
+    try std.testing.expect(std.mem.startsWith(u8, token, "spacecap"));
+    try std.testing.expectEqual(@as(usize, "spacecap".len + 7), token.len);
+    for (token["spacecap".len..]) |ch| {
+        try std.testing.expect(std.ascii.isHex(ch));
+    }
 }
