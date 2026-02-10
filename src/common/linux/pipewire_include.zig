@@ -3,9 +3,9 @@ const pw = @import("pipewire").c;
 
 pub const c = @cImport({
     @cInclude("sys/mman.h");
+    @cInclude("sys/ioctl.h");
     @cInclude("fcntl.h");
     @cInclude("linux/dma-buf.h");
-    @cInclude("xf86drm.h");
 });
 
 /// NOTE: The following are definitions where Zig has trouble converting the C code.

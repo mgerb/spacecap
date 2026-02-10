@@ -17,10 +17,20 @@ pub fn dmabufExportSyncFile(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Semap
         .fd = -1,
     };
 
-    const result = c.drmIoctl(@intCast(dmabuf_fd), c.DMA_BUF_IOCTL_EXPORT_SYNC_FILE, @ptrCast(&data));
-    if (result != 0) {
-        std.log.err("drmIoctl: {}", .{result});
-        return error.drmIoctl;
+    while (true) {
+        const result = std.os.linux.ioctl(
+            @intCast(dmabuf_fd),
+            @intCast(c.DMA_BUF_IOCTL_EXPORT_SYNC_FILE),
+            @intFromPtr(&data),
+        );
+        switch (std.posix.errno(result)) {
+            .SUCCESS => break,
+            .INTR, .AGAIN => continue,
+            else => |err| {
+                std.log.err("ioctl DMA_BUF_IOCTL_EXPORT_SYNC_FILE failed: {}", .{err});
+                return error.ioctl;
+            },
+        }
     }
 
     errdefer _ = pw.close(data.fd);

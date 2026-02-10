@@ -48,7 +48,6 @@
             vulkan-loader
             vulkan-validation-layers
             vulkan-tools
-            libdrm
             wayland
             libportal
 
@@ -65,11 +64,9 @@
           ];
 
           # include paths
-          LIBDRM_DEV = "${pkgs.libdrm.dev}/include";
           LIBXKBCOMMON = "${pkgs.libxkbcommon}/lib";
 
           # library paths
-          LIBDRM = "${pkgs.libdrm}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
