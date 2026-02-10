@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const StateActor = @import("../state_actor.zig").StateActor;
+const ActionPayload = @import("../state_actor.zig").ActionPayload;
 const util = @import("../util.zig");
 
 const log = std.log.scoped(.user_settings_state);
@@ -8,11 +9,22 @@ const log = std.log.scoped(.user_settings_state);
 pub const UserSettingsActions = union(enum) {
     set_gui_foreground_fps: u32,
     set_gui_background_fps: u32,
-    set_audio_device_settings: struct {
+    set_audio_device_settings: *ActionPayload(struct {
         device_id: []u8,
         selected: bool,
         gain: f32,
-    },
+
+        pub fn init(
+            arena: *std.heap.ArenaAllocator,
+            args: struct { device_id: []u8, selected: bool, gain: f32 },
+        ) !@This() {
+            return .{
+                .device_id = try arena.allocator().dupe(u8, args.device_id),
+                .selected = args.selected,
+                .gain = args.gain,
+            };
+        }
+    }),
 };
 
 pub const UserSettingsState = struct {
@@ -59,8 +71,9 @@ pub const UserSettingsState = struct {
                 defer settings_snapshot.deinit(self.allocator);
                 try self.save(&settings_snapshot);
             },
-            .set_audio_device_settings => |payload| {
-                defer self.allocator.free(payload.device_id);
+            .set_audio_device_settings => |_action| {
+                defer _action.deinit();
+                const payload = _action.payload;
                 var settings_snapshot: UserSettings = undefined;
                 {
                     state_actor.ui_mutex.lock();
@@ -148,7 +161,7 @@ pub const UserSettingsState = struct {
 /// NOTE: This MUST remain serializable.
 const UserSettings = struct {
     const AudioDeviceSettings = struct {
-        id: []const u8 = "",
+        id: []const u8,
         selected: bool = false,
         gain: f32 = 1.0,
     };

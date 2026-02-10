@@ -120,13 +120,11 @@ fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, state_actor:
             _ = c.ImGui_TableNextColumn();
             c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
             if (c.ImGui_SliderFloatEx(gain_slider_id, &gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX, "%.2fx", 0)) {
-                const device_id_copy = try allocator.dupe(u8, device.id);
-                errdefer allocator.free(device_id_copy);
                 try state_actor.dispatch(.{ .audio = .{
-                    .set_audio_device_gain = .{
-                        .device_id = device_id_copy,
+                    .set_audio_device_gain = try .init(allocator, .{
+                        .device_id = device.id,
                         .gain = gain,
-                    },
+                    }),
                 } });
             }
         }
