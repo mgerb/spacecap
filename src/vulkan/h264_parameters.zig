@@ -10,12 +10,21 @@ fn alignSize(comptime T: type, size: T, alignment: T) T {
 
 pub fn getStdVideoH264SequenceParameterSetVui(fps: u32) vk.StdVideoH264SequenceParameterSetVui {
     const flags = vk.StdVideoH264SpsVuiFlags{
+        .video_signal_type_present_flag = true,
+        .color_description_present_flag = true,
+        .video_full_range_flag = false,
         .timing_info_present_flag = true,
         .fixed_frame_rate_flag = true,
     };
 
     var ret = std.mem.zeroes(vk.StdVideoH264SequenceParameterSetVui);
     ret.flags = flags;
+    // "Unspecified" video format (H.264 Table E-2).
+    ret.video_format = 5;
+    // BT.709 primaries, transfer, and matrix (H.264 Table E-3/E-4/E-5).
+    ret.colour_primaries = 1;
+    ret.transfer_characteristics = 1;
+    ret.matrix_coefficients = 1;
     ret.num_units_in_tick = 1;
     ret.time_scale = fps * 2;
 
