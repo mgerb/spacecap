@@ -110,15 +110,6 @@ fn addLinuxDependencies(
     // libportal
     try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBPORTAL").?, "portal", .linux, "libportal.so");
 
-    // drm
-    const libdrm_dev = std.posix.getenv("LIBDRM_DEV").?;
-    const libdrm_libdrm = try std.fmt.allocPrint(allocator, "{s}/libdrm", .{libdrm_dev});
-    defer allocator.free(libdrm_libdrm);
-    exe.addIncludePath(.{ .cwd_relative = libdrm_dev });
-    exe.addIncludePath(.{ .cwd_relative = libdrm_libdrm });
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("LIBDRM").? });
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBDRM").?, "drm", .linux, "libdrm.so.2");
-
     // vulkan
     exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
     try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("VULKAN_SDK_PATH").?, "vulkan", .linux, "libvulkan.so.1");
