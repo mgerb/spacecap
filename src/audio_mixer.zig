@@ -6,11 +6,6 @@ const AudioCaptureData = @import("./capture/audio/audio_capture_data.zig");
 
 const log = std.log.scoped(.audio_mixer);
 
-pub const AudioSourceGain = struct {
-    id: []const u8,
-    gain: f32,
-};
-
 /// Mix audio from an audio replay buffer.
 pub fn mixAudio(
     allocator: std.mem.Allocator,
@@ -18,7 +13,6 @@ pub fn mixAudio(
     window: ReplayWindow,
     sample_rate: u32,
     channels: u32,
-    source_gains: []const AudioSourceGain,
 ) !?std.ArrayList(f32) {
     const duration_ns = window.end_ns - window.start_ns;
     const total_frames = nsToFrames(duration_ns, sample_rate);
@@ -35,9 +29,7 @@ pub fn mixAudio(
 
     var iter = audio_replay_buffer.buffer_map.iterator();
     while (iter.next()) |entry| {
-        const stream_id = entry.key_ptr.*;
         const stream = entry.value_ptr;
-        const stream_gain = sourceGain(stream_id, source_gains);
 
         // Per-stream timeline state:
         // - expected_next_start_ns smooths tiny capture timestamp jitter.
@@ -123,22 +115,13 @@ pub fn mixAudio(
                 const out_base = (out_start_frame + frame_idx) * channels;
                 const in_base = (in_start_frame + frame_idx) * src_channels;
                 for (0..channels) |ch| {
-                    mixed_samples.items[out_base + ch] += chunk.pcm_data[in_base + ch] * stream_gain;
+                    mixed_samples.items[out_base + ch] += chunk.pcm_data[in_base + ch] * chunk.gain;
                 }
             }
         }
     }
 
     return mixed_samples;
-}
-
-fn sourceGain(id: []const u8, source_gains: []const AudioSourceGain) f32 {
-    for (source_gains) |source_gain| {
-        if (std.mem.eql(u8, source_gain.id, id)) {
-            return source_gain.gain;
-        }
-    }
-    return 1.0;
 }
 
 fn nsToFrames(ns: i128, sample_rate: u32) usize {
@@ -277,7 +260,6 @@ test "mixReplayAudioForWindow mixes a single aligned stream" {
         window,
         sample_rate,
         channels,
-        &.{},
     );
     try std.testing.expect(mixed_opt != null);
 
@@ -321,7 +303,6 @@ test "mixReplayAudioForWindow mixes a single aligned stereo stream" {
         window,
         sample_rate,
         channels,
-        &.{},
     );
     try std.testing.expect(mixed_opt != null);
 
@@ -334,7 +315,7 @@ test "mixReplayAudioForWindow mixes a single aligned stereo stream" {
     }
 }
 
-test "mixReplayAudioForWindow applies source gain" {
+test "mixReplayAudioForWindow applies capture gain" {
     const allocator = std.testing.allocator;
     var audio_replay_buffer = try AudioReplayBuffer.init(allocator, 10);
     defer audio_replay_buffer.deinit();
@@ -352,6 +333,7 @@ test "mixReplayAudioForWindow applies source gain" {
         sample_rate,
         channels,
     );
+    audio_capture_data.gain = 0.5;
     try audio_replay_buffer.addData(audio_capture_data);
 
     const window: ReplayWindow = .{
@@ -359,16 +341,12 @@ test "mixReplayAudioForWindow applies source gain" {
         .end_ns = start_ns + 3 * std.time.ns_per_ms,
     };
 
-    const source_gains = [_]AudioSourceGain{
-        .{ .id = "mic", .gain = 0.5 },
-    };
     const mixed_opt = try mixAudio(
         allocator,
         audio_replay_buffer,
         window,
         sample_rate,
         channels,
-        &source_gains,
     );
     try std.testing.expect(mixed_opt != null);
 
@@ -427,7 +405,6 @@ test "mixReplayAudioForWindow smooths small timestamp jitter between chunks" {
         window,
         sample_rate,
         channels,
-        &.{},
     );
     try std.testing.expect(mixed_opt != null);
 

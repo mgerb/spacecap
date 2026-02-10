@@ -259,28 +259,9 @@ pub const StateActor = struct {
                 assert(video_replay_buffer != null);
 
                 const size = self.video_capture.size().?;
-                var source_gains = try std.ArrayList(exporter.AudioSourceGain).initCapacity(self.allocator, 0);
-                defer {
-                    for (source_gains.items) |source_gain| {
-                        self.allocator.free(source_gain.id);
-                    }
-                    source_gains.deinit(self.allocator);
-                }
-
                 const fps = blk: {
                     self.ui_mutex.lock();
                     defer self.ui_mutex.unlock();
-
-                    for (self.state.audio.devices.items) |device| {
-                        if (!device.selected) continue;
-                        const id_copy = try self.allocator.dupe(u8, device.id);
-                        errdefer self.allocator.free(id_copy);
-                        try source_gains.append(self.allocator, .{
-                            .id = id_copy,
-                            .gain = device.gain,
-                        });
-                    }
-
                     break :blk self.state.fps;
                 };
 
@@ -293,7 +274,6 @@ pub const StateActor = struct {
                     audio_replay_buffer.?,
                     SAMPLE_RATE,
                     CHANNELS,
-                    source_gains.items,
                 );
             },
             .select_video_source => |source_type| {

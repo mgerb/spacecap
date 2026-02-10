@@ -8,6 +8,8 @@ pcm_data: []const f32,
 timestamp: i128,
 sample_rate: u32,
 channels: u32,
+/// A number between 0 and 2. The gain is adjusted in the user settings
+gain: f32 = 1.0,
 /// Required so this can be used in a linked list.
 node: std.DoublyLinkedList.Node = .{},
 
