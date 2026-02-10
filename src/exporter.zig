@@ -14,7 +14,6 @@ const checkErr = @import("./ffmpeg.zig").checkErr;
 const Muxer = @import("./muxer.zig").Muxer;
 
 const log = std.log.scoped(.exporter);
-pub const AudioSourceGain = audio_mixer.AudioSourceGain;
 
 /// Export audio/video to a file.
 /// NOTE: This takes ownership of audio_replay_buffer/video_replay_buffer.
@@ -27,7 +26,6 @@ pub fn exportReplayBuffers(
     audio_replay_buffer: *AudioReplayBuffer,
     audio_sample_rate: u32,
     audio_channels: u32,
-    source_gains: []const AudioSourceGain,
 ) !void {
     assert(audio_sample_rate > 0);
     assert(audio_channels > 0);
@@ -53,7 +51,6 @@ pub fn exportReplayBuffers(
         replay_window,
         audio_sample_rate,
         audio_channels,
-        source_gains,
     ) orelse {
         log.warn("[exportReplayBuffers] unable to mix audio", .{});
         return;

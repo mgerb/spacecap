@@ -42,6 +42,7 @@ pub const AudioState = struct {
     const Self = @This();
     allocator: Allocator,
     audio_capture: *AudioCapture,
+    // TODO: Convert devices to a ArrayHashMap.
     /// This is a list of all currently available audio devices.
     devices: std.ArrayList(AudioDeviceViewModel),
     replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
@@ -218,12 +219,30 @@ pub const AudioState = struct {
                 return err;
             };
 
-            const should_write_to_replay_buffer = blk: {
+            const gain = blk: {
                 state_actor.ui_mutex.lock();
                 defer state_actor.ui_mutex.unlock();
-                break :blk state_actor.state.recording;
+
+                if (!state_actor.state.recording) {
+                    break :blk null;
+                }
+
+                for (self.devices.items) |device| {
+                    if (std.mem.eql(u8, device.id, data.id)) {
+                        break :blk device.gain;
+                    }
+                }
+
+                log.err("[recordThreadHandler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
+                assert(false);
+
+                // Return a default value to keep the compiler happy. We should never reach this point anyway.
+                break :blk 1.0;
             };
-            if (!should_write_to_replay_buffer) {
+
+            if (gain) |device_gain| {
+                data.gain = device_gain;
+            } else {
                 data.deinit();
                 continue;
             }
