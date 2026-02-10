@@ -9,5 +9,6 @@ test {
     _ = @import("./capture/audio/audio_capture_data.zig");
     _ = @import("./ffmpeg.zig");
     _ = @import("./audio_mixer.zig");
+    _ = @import("./muxer.zig");
     _ = @import("./common/linux/token_manager.zig");
 }
