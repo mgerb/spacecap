@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const StateActor = @import("../state_actor.zig").StateActor;
+const ActionPayload = @import("../state_actor.zig").ActionPayload;
 const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
@@ -21,10 +22,20 @@ pub const AudioActions = union(enum) {
     get_available_audio_devices,
     /// Toggle recording on an audio device by device ID.
     toggle_audio_device: []u8,
-    set_audio_device_gain: struct {
+    set_audio_device_gain: *ActionPayload(struct {
         device_id: []u8,
         gain: f32,
-    },
+
+        pub fn init(arena: *ArenaAllocator, args: struct {
+            device_id: []u8,
+            gain: f32,
+        }) !@This() {
+            return .{
+                .device_id = try arena.allocator().dupe(u8, args.device_id),
+                .gain = args.gain,
+            };
+        }
+    }),
 };
 
 pub const AudioState = struct {
@@ -66,7 +77,7 @@ pub const AudioState = struct {
             .start_record_thread => {
                 // This should only ever get called once, so the record_thread must always be null.
                 assert(self.record_thread == null);
-                self.record_thread = try std.Thread.spawn(.{}, startRecordThreadHandler, .{ self, state_actor });
+                self.record_thread = try std.Thread.spawn(.{}, recordThreadHandler, .{ self, state_actor });
             },
             .get_available_audio_devices => {
                 var available_devices = try self.audio_capture.getAvailableDevices(self.allocator);
@@ -104,24 +115,23 @@ pub const AudioState = struct {
                         if (!std.mem.eql(u8, device.id, device_id)) continue;
                         device.selected = !device.selected;
                         try self.updateSelectedDevices();
-                        const device_id_duped = try self.allocator.dupe(u8, device.id);
-                        errdefer self.allocator.free(device_id_duped);
+
                         try state_actor.dispatch(.{
                             .user_settings = .{
-                                .set_audio_device_settings = .{
-                                    .device_id = device_id_duped,
+                                .set_audio_device_settings = try .init(self.allocator, .{
+                                    .device_id = device.id,
                                     .selected = device.selected,
                                     .gain = device.gain,
-                                },
+                                }),
                             },
                         });
                         break;
                     }
                 }
             },
-            .set_audio_device_gain => |payload| {
-                defer self.allocator.free(payload.device_id);
-
+            .set_audio_device_gain => |_action| {
+                const payload = _action.payload;
+                defer _action.deinit();
                 {
                     state_actor.ui_mutex.lock();
                     defer state_actor.ui_mutex.unlock();
@@ -129,15 +139,13 @@ pub const AudioState = struct {
                     for (self.devices.items) |*device| {
                         if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
                         device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
-                        const device_id_duped = try self.allocator.dupe(u8, device.id);
-                        errdefer self.allocator.free(device_id_duped);
                         try state_actor.dispatch(.{
                             .user_settings = .{
-                                .set_audio_device_settings = .{
-                                    .device_id = device_id_duped,
+                                .set_audio_device_settings = try .init(self.allocator, .{
+                                    .device_id = device.id,
                                     .selected = device.selected,
                                     .gain = device.gain,
-                                },
+                                }),
                             },
                         });
                         break;
@@ -191,7 +199,7 @@ pub const AudioState = struct {
         self.devices.clearRetainingCapacity();
     }
 
-    fn startRecordThreadHandler(self: *Self, state_actor: *StateActor) !void {
+    fn recordThreadHandler(self: *Self, state_actor: *StateActor) !void {
         {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
