@@ -27,6 +27,47 @@ alternative to OBS for capturing video replays.
 
 **NOTE:** I'm testing with an RTX 3080 GPU. I have no idea if AMD works. I don't have one to test on.
 
+## Linux requirements
+
+- pipewire
+- pipewire-pulse
+- pipewire-alsa
+- wireplumber
+
+### Installation
+
+**NOTE:** A reboot may be required.
+
+- Arch
+
+```sh
+sudo pacman -S --needed wireplumber pipewire pipewire-pulse pipewire-alsa
+systemctl --user --now enable pipewire pipewire-pulse wireplumber
+```
+
+- NixOS
+
+```nix
+{
+  security.rtkit.enable = true;
+
+  services.pipewire = {
+    enable = true;
+    alsa.enable = false;
+    pulse.enable = true;
+    wireplumber.enable = true;
+  };
+}
+```
+
+- Ubuntu
+
+```sh
+sudo apt update
+sudo apt install wireplumber pipewire pipewire-pulse pipewire-alsa
+systemctl --user --now enable pipewire pipewire-pulse wireplumber
+```
+
 ## How to compile and run
 
 Currently this only works on Linux with [Nix](https://nixos.org/download/#download-nix).
