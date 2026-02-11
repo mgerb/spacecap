@@ -48,7 +48,7 @@ jobs:
           echo "tag=v${version}-${short_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Build Release Binaries
-        run: nix develop -c zig build -Dnix -Doptimize=ReleaseFast
+        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseFast
 
       - name: Package Linux
         run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux
@@ -60,6 +60,7 @@ jobs:
         run: |
           sha256sum spacecap-linux-x86_64.tar.gz > SHA256SUMS.txt
           sha256sum spacecap-windows-x86_64.zip >> SHA256SUMS.txt
+          sha256sum zig-out/linux/spacecap-linux-x86_64.AppImage >> SHA256SUMS.txt
 
       - name: Generate Commit Notes
         id: commit_notes
@@ -91,6 +92,7 @@ jobs:
           path: |
             spacecap-linux-x86_64.tar.gz
             spacecap-windows-x86_64.zip
+            zig-out/linux/spacecap-linux-x86_64.AppImage
             SHA256SUMS.txt
 
       - name: Publish GitHub Release Assets
@@ -104,4 +106,5 @@ jobs:
           files: |
             spacecap-linux-x86_64.tar.gz
             spacecap-windows-x86_64.zip
+            zig-out/linux/spacecap-linux-x86_64.AppImage
             SHA256SUMS.txt

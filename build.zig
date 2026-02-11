@@ -108,7 +108,7 @@ fn addLinuxDependencies(
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
     // libportal
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBPORTAL").?, "portal", .linux, "libportal.so");
+    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBPORTAL").?, "portal", .linux, "libportal.so.1");
 
     // vulkan
     exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
@@ -227,7 +227,8 @@ fn buildLinux(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-) !void {
+    allow_shlib_undefined: bool,
+) !*std.Build.Step {
     const module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -242,6 +243,9 @@ fn buildLinux(
         // with pipewire using the Zig backend. Just stick to LLVM for now...
         .use_llvm = true,
     });
+    if (allow_shlib_undefined) {
+        exe.linker_allow_shlib_undefined = true;
+    }
     exe.addRPath(b.path("./lib"));
 
     try addSharedDependencies(allocator, b, exe, target, optimize);
@@ -261,6 +265,51 @@ fn buildLinux(
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    return &install_step.step;
+}
+
+fn buildLinuxAppImage(
+    b: *std.Build,
+    linux_install_step: *std.Build.Step,
+) *std.Build.Step {
+    const appimage_step = b.step("appimage", "Build Linux AppImage");
+
+    const cmd = b.addSystemCommand(&.{
+        "bash",
+        "-lc",
+        \\set -euo pipefail
+        \\
+        \\export NO_STRIP=1
+        \\
+        \\linuxdeploy="$(command -v linuxdeploy || true)"
+        \\if [ -z "$linuxdeploy" ] || [ ! -x "$linuxdeploy" ]; then
+        \\  echo "linuxdeploy must be available on PATH." >&2
+        \\  exit 1
+        \\fi
+        \\appimagetool="$(command -v appimagetool || true)"
+        \\if [ -z "$appimagetool" ] || [ ! -x "$appimagetool" ]; then
+        \\  echo "appimagetool must be available on PATH." >&2
+        \\  exit 1
+        \\fi
+        \\
+        \\rm -rf AppDir
+        \\rm -f zig-out/linux/spacecap-linux-x86_64.AppImage
+        \\
+        \\LD_LIBRARY_PATH="zig-out/linux/lib:${LD_LIBRARY_PATH:-}" "$linuxdeploy" \
+        \\  --appdir AppDir \
+        \\  --executable zig-out/linux/spacecap \
+        \\  --desktop-file packaging/linux/spacecap.desktop \
+        \\  --icon-file packaging/linux/spacecap.svg
+        \\
+        \\env -u SOURCE_DATE_EPOCH ARCH=x86_64 "$appimagetool" AppDir zig-out/linux/spacecap-linux-x86_64.AppImage
+        \\rm -rf AppDir
+    });
+
+    cmd.step.dependOn(linux_install_step);
+    appimage_step.dependOn(&cmd.step);
+
+    return appimage_step;
 }
 
 fn buildUnitTestsDefault(
@@ -309,19 +358,39 @@ pub fn build(b: *std.Build) !void {
     const allocator = gpa.allocator();
 
     const nix = b.option(bool, "nix", "If on NixOS, use this flag to run");
+    const appimage = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
+
+    if (appimage and nix == true) {
+        std.log.err("AppImage builds require generic linux target. Run without -Dnix.", .{});
+        return error.InvalidBuildConfig;
+    }
 
     const optimize = b.standardOptimizeOption(.{});
+    if (appimage and optimize == .Debug) {
+        std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseFast, -Doptimize=ReleaseSafe, or -Doptimize=ReleaseSmall.", .{});
+        return error.InvalidBuildConfig;
+    }
 
     try buildWindows(allocator, b, optimize);
 
-    // TODO: Linux build is currently broken due to llvm linker errors. Check back
-    // when switched back to zig linker when it's fixed.
     const target = if (nix == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
         .os_tag = .linux,
         .abi = .gnu,
         .cpu_arch = .x86_64,
     });
 
-    try buildLinux(allocator, b, target, optimize);
+    const linux_install_step = try buildLinux(
+        allocator,
+        b,
+        target,
+        optimize,
+        nix == null,
+    );
+    const appimage_step = buildLinuxAppImage(b, linux_install_step);
+
+    if (appimage) {
+        b.getInstallStep().dependOn(appimage_step);
+    }
+
     try buildUnitTestsDefault(allocator, b, target, optimize);
 }
