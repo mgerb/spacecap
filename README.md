@@ -27,10 +27,64 @@ alternative to OBS for capturing video replays.
 
 **NOTE:** I'm testing with an RTX 3080 GPU. I have no idea if AMD works. I don't have one to test on.
 
-## How to compile and run
+## Linux Requirements
 
-Currently this only works on Linux with [Nix](https://nixos.org/download/#download-nix).
-A GPU that supports Vulkan Video is required for recording.
+- vulkan (and related graphics drivers)
+- pipewire
+- pipewire-pulse
+
+### Installation
+
+**NOTE:** A reboot may be required.
+
+#### NixOS
+
+There is currently not a Nix package published, but for now you can use
+`appimage-run` to execute the appimage.
+
+TODO: Add vulkan instructions.
+
+```nix
+{...}: {
+  security.rtkit.enable = true;
+
+  services.pipewire = {
+    enable = true;
+    alsa.enable = false;
+    pulse.enable = true;
+    wireplumber.enable = true;
+  };
+
+  environment.systemPackages = with pkgs; [
+    appimage-run
+  ];
+}
+```
+
+#### Arch
+
+TODO: Add vulkan instructions.
+
+```sh
+sudo pacman -S --needed wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
+systemctl --user --now enable pipewire pipewire-pulse wireplumber
+```
+
+#### Ubuntu
+
+TODO: Add vulkan instructions.
+
+```sh
+sudo apt update
+sudo apt install wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
+systemctl --user --now enable pipewire pipewire-pulse wireplumber
+```
+
+## Development
+
+[Nix](https://nixos.org/download/#download-nix) is required for development,
+unless you want to install all dependencies manually. See `flake.nix` if you'd
+like to do so.
 
 ```sh
 # Build
