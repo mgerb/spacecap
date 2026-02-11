@@ -20,8 +20,7 @@ pub const Device = vk.DeviceProxy;
 pub const CommandBuffer = vk.CommandBufferProxy;
 pub const API_VERSION = vk.API_VERSION_1_4;
 
-// TODO: update before release
-const DEBUG = true;
+const DEBUG = @import("builtin").mode == .Debug;
 
 const INSTANCE_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_get_physical_device_properties_2.name,
