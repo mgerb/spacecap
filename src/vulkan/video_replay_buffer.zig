@@ -144,9 +144,10 @@ pub const VideoReplayBuffer = struct {
     /// Remove all frames from the start until an IDR frame is reached.
     pub fn ensureFirstFrameIsIdr(self: *Self) void {
         var node = self.frames.first;
-        while (node) |current| : (node = current.next) {
+        while (node) |current| {
             const frame_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", current));
             if (!frame_node.data.is_idr) {
+                node = current.next;
                 self.removeFirstFrame();
             } else {
                 break;
@@ -204,11 +205,31 @@ test "getReplayWindow - returns null when empty and first/last timestamps when p
 
     try std.testing.expect(replay_buffer.getReplayWindow() == null);
 
-    try replay_buffer.addFrame(&[_]u8{ 0xAA }, 11, false);
-    try replay_buffer.addFrame(&[_]u8{ 0xBB }, 22, false);
-    try replay_buffer.addFrame(&[_]u8{ 0xCC }, 33, true);
+    try replay_buffer.addFrame(&[_]u8{0xAA}, 11, false);
+    try replay_buffer.addFrame(&[_]u8{0xBB}, 22, false);
+    try replay_buffer.addFrame(&[_]u8{0xCC}, 33, true);
 
     const window = replay_buffer.getReplayWindow() orelse return error.ExpectedReplayWindow;
     try std.testing.expectEqual(@as(i128, 11), window.start_ns);
     try std.testing.expectEqual(@as(i128, 33), window.end_ns);
+}
+
+test "ensureFirstFrameIsIdr - removes leading non-idr frames" {
+    var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
+    defer replay_buffer.deinit();
+
+    try replay_buffer.addFrame(&[_]u8{0x01}, 10, false);
+    try replay_buffer.addFrame(&[_]u8{0x02}, 20, false);
+    try replay_buffer.addFrame(&[_]u8{ 0x03, 0x03 }, 30, true);
+    try replay_buffer.addFrame(&[_]u8{ 0x04, 0x05, 0x06 }, 40, false);
+
+    replay_buffer.ensureFirstFrameIsIdr();
+
+    try std.testing.expectEqual(@as(u32, 2), replay_buffer.len);
+    try std.testing.expectEqual(@as(u64, 5), replay_buffer.size);
+
+    const first = replay_buffer.frames.first orelse return error.ExpectedFirstFrame;
+    const first_frame: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
+    try std.testing.expect(first_frame.data.is_idr);
+    try std.testing.expectEqual(@as(i128, 30), first_frame.data.timestamp_ns);
 }
