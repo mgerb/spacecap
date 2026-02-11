@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev-14
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Enable Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build and Test
+        run: |
+          nix develop -c bash -lc '
+            set -euo pipefail
+            zig build -Dnix
+            zig build test -Dnix
+          '
+
+      - name: Compute Release Tag
+        id: release_tag
+        run: |
+          version="$(sed -n 's/^[[:space:]]*\.version = "\(.*\)",/\1/p' build.zig.zon | head -n1)"
+          if [ -z "$version" ]; then
+            echo "Failed to parse version from build.zig.zon" >&2
+            exit 1
+          fi
+          short_sha="$(git rev-parse --short=8 HEAD)"
+          echo "tag=v${version}-${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Release Binaries
+        run: nix develop -c zig build -Dnix -Doptimize=ReleaseFast
+
+      - name: Package Linux
+        run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux
+
+      - name: Package Windows
+        run: zip -r spacecap-windows-x86_64.zip zig-out/windows
+
+      - name: Generate Checksums
+        run: |
+          sha256sum spacecap-linux-x86_64.tar.gz > SHA256SUMS.txt
+          sha256sum spacecap-windows-x86_64.zip >> SHA256SUMS.txt
+
+      - name: Generate Commit Notes
+        id: commit_notes
+        run: |
+          previous_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -n "$previous_tag" ]; then
+            commit_range="${previous_tag}..HEAD"
+          else
+            commit_range="HEAD"
+          fi
+
+          {
+            echo "body<<EOF"
+            echo "## Commits"
+            if [ -n "$previous_tag" ]; then
+              echo
+              echo "Since ${previous_tag}:"
+            fi
+            echo
+            git log --no-merges --pretty=format:'- %h %s (%an)' ${commit_range}
+            echo
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spacecap-release-assets
+          path: |
+            spacecap-linux-x86_64.tar.gz
+            spacecap-windows-x86_64.zip
+            SHA256SUMS.txt
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          append_body: true
+          body: ${{ steps.commit_notes.outputs.body }}
+          files: |
+            spacecap-linux-x86_64.tar.gz
+            spacecap-windows-x86_64.zip
+            SHA256SUMS.txt
