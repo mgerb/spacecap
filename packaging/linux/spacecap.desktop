@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Spacecap
+Comment=Hardware accelerated replay capture tool
+Exec=spacecap
+Icon=spacecap
+Categories=AudioVideo;Video;
+Terminal=false
