@@ -24,7 +24,7 @@ pub fn init(allocator: Allocator, replay_seconds: u32) !*Self {
 }
 
 pub fn deinit(self: *Self) void {
-    self.removeData(.{ .timestamp_ns = 0, .remove_all = true }) catch |err| {
+    self.removeData(.remove_all) catch |err| {
         log.err("[deinit] remove Data error: {}", .{err});
     };
     self.buffer_map.deinit();
@@ -46,11 +46,14 @@ pub fn addData(self: *Self, data: *AudioCaptureData) error{OutOfMemory}!void {
     try self.removeData(.{ .timestamp_ns = data.start_ns() });
 }
 
-fn removeData(self: *Self, args: struct {
-    remove_all: bool = false,
+fn removeData(self: *Self, args: union(enum) {
+    remove_all,
     timestamp_ns: i128,
 }) !void {
-    const oldest_ns = args.timestamp_ns - (@as(i128, @intCast(self.replay_seconds + 1)) * std.time.ns_per_s);
+    const oldest_ns = switch (args) {
+        .timestamp_ns => |timestamp_ns| timestamp_ns - (@as(i128, @intCast(self.replay_seconds + 1)) * std.time.ns_per_s),
+        .remove_all => 0,
+    };
 
     var iter = self.buffer_map.iterator();
     var keys_to_remove = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
@@ -63,7 +66,10 @@ fn removeData(self: *Self, args: struct {
         while (node) |current| {
             const next = current.next;
             const audio_capture_data: *AudioCaptureData = @alignCast(@fieldParentPtr("node", current));
-            const should_remove = args.remove_all or audio_capture_data.timestamp < oldest_ns;
+            const should_remove = switch (args) {
+                .remove_all => true,
+                .timestamp_ns => audio_capture_data.timestamp < oldest_ns,
+            };
 
             if (should_remove) {
                 linked_list.remove(current);
@@ -84,7 +90,107 @@ fn removeData(self: *Self, args: struct {
         self.allocator.free(key);
     }
 
-    if (args.remove_all) {
+    if (args == .remove_all) {
         self.buffer_map.clearRetainingCapacity();
     }
+}
+
+fn listLen(list: *const std.DoublyLinkedList) u32 {
+    var len: u32 = 0;
+    var node = list.first;
+    while (node) |current| : (node = current.next) {
+        len += 1;
+    }
+    return len;
+}
+
+test "addData - stores data grouped by id in append order" {
+    const allocator = std.testing.allocator;
+    const device_a = "device_a";
+    const device_b = "device_b";
+
+    var replay_buffer = try Self.init(std.testing.allocator, 10);
+    defer replay_buffer.deinit();
+
+    const ns = std.time.ns_per_s;
+    const pcm_a0 = [_]f32{0.1};
+    const pcm_a1 = [_]f32{0.2};
+    const pcm_b0 = [_]f32{0.3};
+
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm_a0, 1 * ns, 48000, 1));
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm_a1, 2 * ns, 48000, 1));
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_b, &pcm_b0, 3 * ns, 48000, 1));
+
+    try std.testing.expectEqual(2, replay_buffer.buffer_map.count());
+
+    const list_a = replay_buffer.buffer_map.getPtr(device_a) orelse return error.ExpectedDeviceAList;
+    try std.testing.expectEqual(2, listLen(list_a));
+
+    const first_a = list_a.first orelse return error.ExpectedDeviceAFirst;
+    const first_a_data: *AudioCaptureData = @alignCast(@fieldParentPtr("node", first_a));
+    try std.testing.expectEqual(1 * ns, first_a_data.timestamp);
+
+    const last_a = list_a.last orelse return error.ExpectedDeviceALast;
+    const last_a_data: *AudioCaptureData = @alignCast(@fieldParentPtr("node", last_a));
+    try std.testing.expectEqual(2 * ns, last_a_data.timestamp);
+
+    const list_b = replay_buffer.buffer_map.getPtr(device_b) orelse return error.ExpectedDeviceBList;
+    try std.testing.expectEqual(1, listLen(list_b));
+}
+
+test "addData - trims entries outside replay window and removes empty ids" {
+    const allocator = std.testing.allocator;
+    const device_a = "device_a";
+    const device_b = "device_b";
+
+    var replay_buffer = try Self.init(allocator, 1);
+    defer replay_buffer.deinit();
+
+    const ns = std.time.ns_per_s;
+    const pcm_old_a = [_]f32{0.1};
+    const pcm_old_b = [_]f32{0.2};
+    const pcm_new_a = [_]f32{0.3};
+
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm_old_a, 0, 48000, 1));
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_b, &pcm_old_b, 0, 48000, 1));
+    try std.testing.expect(replay_buffer.buffer_map.getPtr(device_b) != null);
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm_new_a, 3 * ns, 48000, 1));
+
+    try std.testing.expectEqual(1, replay_buffer.buffer_map.count());
+    try std.testing.expect(replay_buffer.buffer_map.getPtr(device_b) == null);
+
+    const list_a = replay_buffer.buffer_map.getPtr(device_a) orelse return error.ExpectedDeviceAList;
+    try std.testing.expectEqual(1, listLen(list_a));
+
+    const first_a = list_a.first orelse return error.ExpectedDeviceAFirst;
+    const first_a_data: *AudioCaptureData = @alignCast(@fieldParentPtr("node", first_a));
+    try std.testing.expectEqual(3 * ns, first_a_data.timestamp);
+
+    // device_b should be gone from the replay buffer.
+    try std.testing.expectEqual(replay_buffer.buffer_map.getPtr(device_b), null);
+}
+
+test "removeData - remove_all clears all entries and keys" {
+    const allocator = std.testing.allocator;
+    const device_a = "device_a";
+    const device_b = "device_b";
+
+    var replay_buffer = try Self.init(allocator, 10);
+    defer replay_buffer.deinit();
+
+    const ns = std.time.ns_per_s;
+    const pcm = [_]f32{0.1};
+
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm, 1 * ns, 48000, 1));
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_a, &pcm, 2 * ns, 48000, 1));
+    try replay_buffer.addData(try AudioCaptureData.init(allocator, device_b, &pcm, 3 * ns, 48000, 1));
+    try std.testing.expectEqual(2, replay_buffer.buffer_map.count());
+    try std.testing.expect(replay_buffer.buffer_map.getPtr(device_a) != null);
+    try std.testing.expect(replay_buffer.buffer_map.getPtr(device_b) != null);
+
+    try replay_buffer.removeData(.remove_all);
+
+    try std.testing.expectEqual(0, replay_buffer.buffer_map.count());
+    try std.testing.expectEqual(replay_buffer.buffer_map.getPtr(device_a), null);
+    try std.testing.expectEqual(replay_buffer.buffer_map.getPtr(device_b), null);
 }
