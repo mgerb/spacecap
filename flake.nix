@@ -123,6 +123,11 @@
           GLIB = "${pkgs.glib.out}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
 
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            # Required for Github actions. The runners don't provide fuse.
+            pkgs.fuse
+          ];
+
           # TODO: Separate devShell for building appimage.
         };
       }
