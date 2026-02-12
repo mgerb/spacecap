@@ -102,7 +102,6 @@ fn addLinuxDependencies(
     exe.root_module.addImport("gio", gobject.module("gio2"));
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("GLIB").? });
     try installAndLinkSystemLibrary(.{
         .allocator = allocator,
         .b = b,
@@ -143,7 +142,6 @@ fn addLinuxDependencies(
     });
 
     // vulkan
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
     try installAndLinkSystemLibrary(.{
         .allocator = allocator,
         .b = b,
