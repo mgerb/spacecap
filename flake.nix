@@ -98,7 +98,6 @@
             self.packages.${system}.appimagetool
 
             shaderc
-            libxkbcommon
             vulkan-loader
             vulkan-validation-layers
             vulkan-tools
@@ -118,18 +117,13 @@
             pkgsCross.mingwW64.vulkan-loader
           ];
 
-          # include paths
-          LIBXKBCOMMON = "${pkgs.libxkbcommon}/lib";
-
-          # library paths
-          LIBPORTAL = "${pkgs.libportal}/lib";
-          LIBZ = "${pkgs.zlib}/lib";
-
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           VULKAN_SDK_PATH = "${pkgs.vulkan-loader}/lib";
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
+          GLIB = "${pkgs.glib.out}/lib";
+          LIBPORTAL = "${pkgs.libportal}/lib";
 
-          LD_LIBRARY_PATH = "${pkgs.fuse.out}/lib:${pkgs.glib.out}/lib:${pkgs.wayland}/lib:$LD_LIBRARY_PATH";
+          # TODO: Separate devShell for building appimage.
         };
       }
     );
