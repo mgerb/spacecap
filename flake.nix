@@ -105,6 +105,7 @@
             libportal
             zlib
             glib
+            libselinux
             fuse
             appimage-run
 
@@ -122,6 +123,7 @@
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
           GLIB = "${pkgs.glib.out}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
+          LIBSELINUX = "${pkgs.libselinux.out}/lib";
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             # Required for Github actions. The runners don't provide fuse.

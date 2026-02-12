@@ -102,7 +102,7 @@ fn addLinuxDependencies(
     exe.root_module.addImport("gio", gobject.module("gio2"));
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("GLIB").? });
+    // exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("GLIB").? });
     try installAndLinkSystemLibrary(.{
         .allocator = allocator,
         .b = b,
@@ -142,8 +142,18 @@ fn addLinuxDependencies(
         .file_name_override = "libportal.so.1",
     });
 
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = std.posix.getenv("LIBSELINUX").?,
+        .lib_name = "selinux",
+        .target = .linux,
+        .file_name_override = "libselinux.so.1",
+    });
+
     // vulkan
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
+    // exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
     try installAndLinkSystemLibrary(.{
         .allocator = allocator,
         .b = b,
