@@ -27,28 +27,25 @@ alternative to OBS for capturing video replays.
 
 **NOTE:** I'm testing with an RTX 3080 GPU. I have no idea if AMD works. I don't have one to test on.
 
-## Linux requirements
+## Linux Requirements
 
 - pipewire
 - pipewire-pulse
 - pipewire-alsa
 - wireplumber
+- fuse3 (non-NixOS)
 
 ### Installation
 
 **NOTE:** A reboot may be required.
 
-- Arch
+#### NixOS
 
-```sh
-sudo pacman -S --needed wireplumber pipewire pipewire-pulse pipewire-alsa
-systemctl --user --now enable pipewire pipewire-pulse wireplumber
-```
-
-- NixOS
+There is currently not a Nix package published, but for now you can use
+`appimage-run` to execute the appimage.
 
 ```nix
-{
+{...}: {
   security.rtkit.enable = true;
 
   services.pipewire = {
@@ -57,21 +54,33 @@ systemctl --user --now enable pipewire pipewire-pulse wireplumber
     pulse.enable = true;
     wireplumber.enable = true;
   };
+
+  environment.systemPackages = with pkgs; [
+    appimage-run
+  ];
 }
 ```
 
-- Ubuntu
+#### Arch
 
 ```sh
-sudo apt update
-sudo apt install wireplumber pipewire pipewire-pulse pipewire-alsa
+sudo pacman -S --needed wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
 systemctl --user --now enable pipewire pipewire-pulse wireplumber
 ```
 
-## How to compile and run
+#### Ubuntu
 
-Currently this only works on Linux with [Nix](https://nixos.org/download/#download-nix).
-A GPU that supports Vulkan Video is required for recording.
+```sh
+sudo apt update
+sudo apt install wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
+systemctl --user --now enable pipewire pipewire-pulse wireplumber
+```
+
+## Development
+
+[Nix](https://nixos.org/download/#download-nix) is required for development,
+unless you want to install all dependencies manually. See `flake.nix` if you'd
+like to do so.
 
 ```sh
 # Build
