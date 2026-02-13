@@ -89,6 +89,7 @@ fn addLinuxDependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
+    _ = allocator;
     const pipewire = b.dependency("pipewire", .{
         .optimize = optimize,
         .target = target,
@@ -102,119 +103,25 @@ fn addLinuxDependencies(
     exe.root_module.addImport("gio", gobject.module("gio2"));
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = std.posix.getenv("GLIB").?,
-        .lib_name = "glib-2.0",
-        .target = .linux,
-        .file_name_override = "libglib-2.0.so.0",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = std.posix.getenv("GLIB").?,
-        .lib_name = "gio-2.0",
-        .target = .linux,
-        .file_name_override = "libgio-2.0.so.0",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = std.posix.getenv("GLIB").?,
-        .lib_name = "gobject-2.0",
-        .target = .linux,
-        .file_name_override = "libgobject-2.0.so.0",
-    });
+    exe.root_module.linkSystemLibrary("glib-2.0", .{});
+    exe.root_module.linkSystemLibrary("gio-2.0", .{});
+    exe.root_module.linkSystemLibrary("gobject-2.0", .{});
+    exe.root_module.linkSystemLibrary("portal", .{});
 
-    // libportal
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = std.posix.getenv("LIBPORTAL").?,
-        .lib_name = "portal",
-        .target = .linux,
-        .file_name_override = "libportal.so.1",
-    });
-
-    // vulkan
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = std.posix.getenv("VULKAN_SDK_PATH").?,
-        .lib_name = "vulkan",
-        .target = .linux,
-        .file_name_override = "libvulkan.so.1",
-    });
+    // Vulkan is linked directly, because it is required that the
+    // system has the libs installed.
+    exe.root_module.linkSystemLibrary("vulkan", .{});
 
     //  TODO: Statically link ffmpeg with the zig version.
     const ffmpeg_linux = b.dependency("ffmpeg_linux", .{});
     exe.addLibraryPath(ffmpeg_linux.path("lib"));
-    const ffmpeg_path = ffmpeg_linux.path("lib").getPath(b);
 
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "avformat",
-        .target = .linux,
-        .file_name_override = "libavformat.so.61",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "avcodec",
-        .target = .linux,
-        .file_name_override = "libavcodec.so.61",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "avdevice",
-        .target = .linux,
-        .file_name_override = "libavdevice.so.61",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "avfilter",
-        .target = .linux,
-        .file_name_override = "libavfilter.so.10",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "avutil",
-        .target = .linux,
-        .file_name_override = "libavutil.so.59",
-    });
-    try installAndLinkSystemLibrary(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = ffmpeg_path,
-        .lib_name = "swresample",
-        .target = .linux,
-        .file_name_override = "libswresample.so.5",
-        .link_options = .{
-            .needed = true,
-            .use_pkg_config = .no,
-        },
-    });
+    exe.root_module.linkSystemLibrary("avformat", .{});
+    exe.root_module.linkSystemLibrary("avcodec", .{});
+    exe.root_module.linkSystemLibrary("avdevice", .{});
+    exe.root_module.linkSystemLibrary("avfilter", .{});
+    exe.root_module.linkSystemLibrary("avutil", .{});
+    exe.root_module.linkSystemLibrary("swresample", .{});
 }
 
 /// Install a dynamic library in the <target>/lib directory
@@ -441,7 +348,13 @@ fn buildLinuxAppImage(
         \\  --desktop-file packaging/linux/spacecap.desktop \
         \\  --icon-file packaging/linux/spacecap.svg
         \\
-        \\env -u SOURCE_DATE_EPOCH ARCH=x86_64 "$appimagetool" AppDir zig-out/linux/spacecap-linux-x86_64.AppImage
+        \\# Some bundled libs may depend on unversioned libvulkan.so.
+        \\# Provide compatibility symlink to libvulkan.so.1 in the AppImage.
+        \\if [ -f AppDir/usr/lib/libvulkan.so.1 ]; then
+        \\  ln -sf libvulkan.so.1 AppDir/usr/lib/libvulkan.so
+        \\fi
+        \\
+        \\env -u SOURCE_DATE_EPOCH APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$appimagetool" AppDir zig-out/linux/spacecap-linux-x86_64.AppImage
         \\rm -rf AppDir
     });
 

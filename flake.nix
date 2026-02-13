@@ -64,10 +64,10 @@
           };
           appimagetool = pkgs.stdenv.mkDerivation {
             pname = "appimagetool";
-            version = "continuous";
+            version = "1.9.1";
             src = pkgs.fetchurl {
-              url = "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage";
-              sha256 = "sha256-uQ9KixiWdUX9p4pEWydoChZC8e+UiM7Si2U5jyvnrdI=";
+              url = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage";
+              sha256 = "sha256-7UzoTw2cr/ZvULzKb/bzWq5UzoE1QIs/ozq/w8s4TrA=";
             };
             dontUnpack = true;
             dontFixup = true;
@@ -105,7 +105,6 @@
             libportal
             zlib
             glib
-            fuse
             appimage-run
 
             # For configuring ffmpeg headers
@@ -118,16 +117,17 @@
           ];
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-          VULKAN_SDK_PATH = "${pkgs.vulkan-loader}/lib";
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
           GLIB = "${pkgs.glib.out}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
 
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             # Required for Github actions. The runners don't provide fuse.
-            pkgs.fuse
+            pkgs.vulkan-loader
+            pkgs.glib
+            pkgs.libportal
+            pkgs.ffmpeg
           ];
-
           # TODO: Separate devShell for building appimage.
         };
       }
