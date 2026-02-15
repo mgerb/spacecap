@@ -9,7 +9,7 @@ rm -rf AppDir
 rm -f zig-out/linux/spacecap-linux-x86_64.AppImage
 
 # NOTE: Vulkan is excluded because system libraries should be used.
-LD_LIBRARY_PATH="zig-out/linux/lib:${LD_LIBRARY_PATH:-}" linuxdeploy \
+LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" linuxdeploy \
   --appdir AppDir \
   --executable zig-out/linux/spacecap \
   --desktop-file packaging/linux/spacecap.desktop \

@@ -68,7 +68,7 @@ pub const AudioEncoder = struct {
 
         if (chosen_fmt == ffmpeg.AV_SAMPLE_FMT_NONE) return error.UnsupportedAudioSampleFormat;
         audio_codec_ctx.*.sample_fmt = chosen_fmt;
-        audio_codec_ctx.*.profile = ffmpeg.FF_PROFILE_AAC_LOW;
+        audio_codec_ctx.*.profile = ffmpeg.AV_PROFILE_AAC_LOW;
 
         if (format_context.oformat.*.flags & ffmpeg.AVFMT_GLOBALHEADER != 0) {
             audio_codec_ctx.*.flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;

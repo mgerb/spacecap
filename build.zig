@@ -65,20 +65,55 @@ fn addSharedDependencies(
     const zigrc = b.dependency("zigrc", .{});
     exe.root_module.addImport("zigrc", zigrc.module("zigrc"));
 
-    // ffmpeg
-    // Add ffmpeg headers here. They can be shared cross platform. Libs
-    // are added separately because they are platform specific.
+    // ffmpeg headers are shared across platforms; libs are platform-specific.
     const ffmpeg = b.dependency("ffmpeg", .{});
-    const ffmpeg_path = ffmpeg.path("").getPath3(b, null).root_dir.path.?;
     exe.addIncludePath(ffmpeg.path(""));
+}
 
-    // TODO: Make sure this only runs once. Currently during fresh install
-    // it runs 3 times - one for each type of build.
-    (try std.fs.openDirAbsolute(ffmpeg_path, .{})).access("libavutil/avconfig.h", .{}) catch {
-        std.debug.print("configuring ffmpeg... this may take a minute\n", .{});
-        const ffmpeg_configure_step = b.addSystemCommand(&.{"./configure"});
-        ffmpeg_configure_step.setCwd(ffmpeg.path(""));
-        exe.step.dependOn(&ffmpeg_configure_step.step);
+const FfmpegBuild = struct {
+    step: *std.Build.Step,
+    lib_dir: std.Build.LazyPath,
+};
+
+fn build_ffmpeg(b: *std.Build) FfmpegBuild {
+    const ffmpeg = b.dependency("ffmpeg", .{});
+    const build_ffmpeg_step = b.addSystemCommand(&.{
+        "bash",
+        "-lc",
+        \\set -euo pipefail
+        \\./configure \
+        \\  --prefix="$1" \
+        \\  --disable-all \
+        \\  --disable-debug \
+        \\  --disable-autodetect \
+        \\  --disable-doc \
+        \\  --disable-network \
+        \\  --disable-programs \
+        \\  --disable-shared \
+        \\  --enable-avutil \
+        \\  --enable-avcodec \
+        \\  --enable-avformat \
+        \\  --enable-avdevice \
+        \\  --enable-avfilter \
+        \\  --enable-swresample \
+        \\  --enable-swscale \
+        \\  --enable-small \
+        \\  --disable-runtime-cpudetect \
+        \\  --enable-protocol=file \
+        \\  --enable-muxer=mov,mp4,wav \
+        \\  --enable-encoder=aac,pcm_f32le
+        \\make -j
+        \\make install
+        ,
+        "ffmpeg-build",
+    });
+    build_ffmpeg_step.setCwd(ffmpeg.path(""));
+    const ffmpeg_install_prefix = build_ffmpeg_step.addOutputDirectoryArg("ffmpeg-install");
+    build_ffmpeg_step.expectExitCode(0);
+
+    return .{
+        .step = &build_ffmpeg_step.step,
+        .lib_dir = ffmpeg_install_prefix.path(b, "lib"),
     };
 }
 
@@ -88,6 +123,7 @@ fn addLinuxDependencies(
     exe: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    ffmpeg_build: FfmpegBuild,
 ) !void {
     _ = allocator;
     const pipewire = b.dependency("pipewire", .{
@@ -112,16 +148,15 @@ fn addLinuxDependencies(
     // system has the libs installed.
     exe.root_module.linkSystemLibrary("vulkan", .{});
 
-    //  TODO: Statically link ffmpeg with the zig version.
-    const ffmpeg_linux = b.dependency("ffmpeg_linux", .{});
-    exe.addLibraryPath(ffmpeg_linux.path("lib"));
-
-    exe.root_module.linkSystemLibrary("avformat", .{});
-    exe.root_module.linkSystemLibrary("avcodec", .{});
-    exe.root_module.linkSystemLibrary("avdevice", .{});
-    exe.root_module.linkSystemLibrary("avfilter", .{});
-    exe.root_module.linkSystemLibrary("avutil", .{});
-    exe.root_module.linkSystemLibrary("swresample", .{});
+    exe.step.dependOn(ffmpeg_build.step);
+    exe.addLibraryPath(ffmpeg_build.lib_dir);
+    exe.root_module.linkSystemLibrary("avformat", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("avcodec", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("avutil", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("swresample", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("avdevice", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("avfilter", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("swscale", .{ .preferred_link_mode = .static, .needed = true });
 }
 
 /// Install a dynamic library in the <target>/lib directory
@@ -268,6 +303,7 @@ fn buildLinux(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     nix: bool,
+    ffmpeg_build: FfmpegBuild,
 ) !*std.Build.Step {
     const module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -293,7 +329,7 @@ fn buildLinux(
     }
 
     try addSharedDependencies(allocator, b, exe, target, optimize);
-    try addLinuxDependencies(allocator, b, exe, target, optimize);
+    try addLinuxDependencies(allocator, b, exe, target, optimize, ffmpeg_build);
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "linux" } },
@@ -343,6 +379,7 @@ fn buildUnitTestsDefault(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    ffmpeg_build: FfmpegBuild,
 ) !void {
     const unit_test_files = [_][]const u8{
         "./src/test.zig",
@@ -366,7 +403,7 @@ fn buildUnitTestsDefault(
         exe.linkLibC();
 
         try addSharedDependencies(allocator, b, exe, target, optimize);
-        try addLinuxDependencies(allocator, b, exe, target, optimize);
+        try addLinuxDependencies(allocator, b, exe, target, optimize, ffmpeg_build);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
 
@@ -397,6 +434,8 @@ pub fn build(b: *std.Build) !void {
         return error.InvalidBuildConfig;
     }
 
+    const ffmpeg_build = build_ffmpeg(b);
+
     try buildWindows(allocator, b, optimize);
 
     const target = if (nix == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
@@ -411,6 +450,7 @@ pub fn build(b: *std.Build) !void {
         target,
         optimize,
         nix,
+        ffmpeg_build,
     );
     const appimage_step = buildLinuxAppImage(b, allocator, linux_install_step);
 
@@ -418,5 +458,5 @@ pub fn build(b: *std.Build) !void {
         b.getInstallStep().dependOn(appimage_step);
     }
 
-    try buildUnitTestsDefault(allocator, b, target, optimize);
+    try buildUnitTestsDefault(allocator, b, target, optimize, ffmpeg_build);
 }
