@@ -110,7 +110,6 @@
             # For configuring ffmpeg headers
             nasm
             pkg-config
-            ffmpeg
 
             # Windows
             pkgsCross.mingwW64.vulkan-loader
@@ -121,13 +120,16 @@
           GLIB = "${pkgs.glib.out}/lib";
           LIBPORTAL = "${pkgs.libportal}/lib";
 
+          # Required for Github actions or non-NixOS machines.
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-            # Required for Github actions. The runners don't provide fuse.
             pkgs.vulkan-loader
             pkgs.glib
             pkgs.libportal
-            pkgs.ffmpeg
+            # SDL runtime backends (don't rely on ffmpeg closure for these).
+            pkgs.wayland
+            pkgs.libxkbcommon
           ];
+
           # TODO: Separate devShell for building appimage.
         };
       }
