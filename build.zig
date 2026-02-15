@@ -65,20 +65,55 @@ fn addSharedDependencies(
     const zigrc = b.dependency("zigrc", .{});
     exe.root_module.addImport("zigrc", zigrc.module("zigrc"));
 
-    // ffmpeg
-    // Add ffmpeg headers here. They can be shared cross platform. Libs
-    // are added separately because they are platform specific.
+    // ffmpeg headers are shared across platforms; libs are platform-specific.
     const ffmpeg = b.dependency("ffmpeg", .{});
-    const ffmpeg_path = ffmpeg.path("").getPath3(b, null).root_dir.path.?;
     exe.addIncludePath(ffmpeg.path(""));
+}
 
-    // TODO: Make sure this only runs once. Currently during fresh install
-    // it runs 3 times - one for each type of build.
-    (try std.fs.openDirAbsolute(ffmpeg_path, .{})).access("libavutil/avconfig.h", .{}) catch {
-        std.debug.print("configuring ffmpeg... this may take a minute\n", .{});
-        const ffmpeg_configure_step = b.addSystemCommand(&.{"./configure"});
-        ffmpeg_configure_step.setCwd(ffmpeg.path(""));
-        exe.step.dependOn(&ffmpeg_configure_step.step);
+const FfmpegBuild = struct {
+    step: *std.Build.Step,
+    lib_dir: std.Build.LazyPath,
+};
+
+fn build_ffmpeg(b: *std.Build) FfmpegBuild {
+    const ffmpeg = b.dependency("ffmpeg", .{});
+    const build_ffmpeg_step = b.addSystemCommand(&.{
+        "bash",
+        "-lc",
+        \\set -euo pipefail
+        \\./configure \
+        \\  --prefix="$1" \
+        \\  --disable-all \
+        \\  --disable-debug \
+        \\  --disable-autodetect \
+        \\  --disable-doc \
+        \\  --disable-network \
+        \\  --disable-programs \
+        \\  --disable-shared \
+        \\  --enable-avutil \
+        \\  --enable-avcodec \
+        \\  --enable-avformat \
+        \\  --enable-avdevice \
+        \\  --enable-avfilter \
+        \\  --enable-swresample \
+        \\  --enable-swscale \
+        \\  --enable-small \
+        \\  --disable-runtime-cpudetect \
+        \\  --enable-protocol=file \
+        \\  --enable-muxer=mov,mp4,wav \
+        \\  --enable-encoder=aac,pcm_f32le
+        \\make -j
+        \\make install
+        ,
+        "ffmpeg-build",
+    });
+    build_ffmpeg_step.setCwd(ffmpeg.path(""));
+    const ffmpeg_install_prefix = build_ffmpeg_step.addOutputDirectoryArg("ffmpeg-install");
+    build_ffmpeg_step.expectExitCode(0);
+
+    return .{
+        .step = &build_ffmpeg_step.step,
+        .lib_dir = ffmpeg_install_prefix.path(b, "lib"),
     };
 }
 
@@ -88,12 +123,9 @@ fn addLinuxDependencies(
     exe: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    ffmpeg_build: FfmpegBuild,
 ) !void {
-    // xkbcommon
-    // NOTE: may not be used actually?
-    // exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("LIBXKBCOMMON").? });
-    // try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBXKBCOMMON").?, "xkbcommon", .linux);
-
+    _ = allocator;
     const pipewire = b.dependency("pipewire", .{
         .optimize = optimize,
         .target = target,
@@ -107,24 +139,24 @@ fn addLinuxDependencies(
     exe.root_module.addImport("gio", gobject.module("gio2"));
     exe.root_module.addImport("gobject", gobject.module("gobject2"));
 
-    // libportal
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("LIBPORTAL").?, "portal", .linux, "libportal.so");
+    exe.root_module.linkSystemLibrary("glib-2.0", .{});
+    exe.root_module.linkSystemLibrary("gio-2.0", .{});
+    exe.root_module.linkSystemLibrary("gobject-2.0", .{});
+    exe.root_module.linkSystemLibrary("portal", .{});
 
-    // vulkan
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH").? });
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("VULKAN_SDK_PATH").?, "vulkan", .linux, "libvulkan.so.1");
+    // Vulkan is linked directly, because it is required that the
+    // system has the libs installed.
+    exe.root_module.linkSystemLibrary("vulkan", .{});
 
-    // ffmpeg
-    const ffmpeg_linux = b.dependency("ffmpeg_linux", .{});
-    exe.addLibraryPath(ffmpeg_linux.path("lib"));
-    const ffmpeg_path = ffmpeg_linux.path("lib").getPath(b);
-
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avformat", .linux, "libavformat.so.61");
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avcodec", .linux, "libavcodec.so.61");
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avdevice", .linux, "libavdevice.so.61");
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avfilter", .linux, "libavfilter.so.10");
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avutil", .linux, "libavutil.so.59");
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "swresample", .linux, "libswresample.so.5");
+    exe.step.dependOn(ffmpeg_build.step);
+    exe.addLibraryPath(ffmpeg_build.lib_dir);
+    exe.root_module.linkSystemLibrary("avformat", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("avcodec", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("avutil", .{ .preferred_link_mode = .static });
+    exe.root_module.linkSystemLibrary("swresample", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("avdevice", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("avfilter", .{ .preferred_link_mode = .static, .needed = true });
+    exe.root_module.linkSystemLibrary("swscale", .{ .preferred_link_mode = .static, .needed = true });
 }
 
 /// Install a dynamic library in the <target>/lib directory
@@ -132,40 +164,41 @@ fn addLinuxDependencies(
 ///
 /// Lib name should be the name of the lib without extensions
 /// e.g. avformat NOT libavformat.so
-fn installAndLinkSystemLibrary(
+fn installAndLinkSystemLibrary(args: struct {
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
     source_dir: []const u8,
     lib_name: []const u8,
     target: enum { linux, windows },
-    file_name_override: ?[]const u8,
-) !void {
-    const file_name = file_name_override orelse switch (target) {
-        .linux => try std.fmt.allocPrint(allocator, "lib{s}.so", .{lib_name}),
-        .windows => try std.fmt.allocPrint(allocator, "{s}.dll", .{lib_name}),
+    file_name_override: ?[]const u8 = null,
+    link_options: std.Build.Module.LinkSystemLibraryOptions = .{},
+}) !void {
+    const file_name = args.file_name_override orelse switch (args.target) {
+        .linux => try std.fmt.allocPrint(args.allocator, "lib{s}.so", .{args.lib_name}),
+        .windows => try std.fmt.allocPrint(args.allocator, "{s}.dll", .{args.lib_name}),
     };
     defer {
-        if (file_name_override == null) {
-            allocator.free(file_name);
+        if (args.file_name_override == null) {
+            args.allocator.free(file_name);
         }
     }
 
-    const full_file_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ source_dir, file_name });
-    defer allocator.free(full_file_path);
+    const full_file_path = try std.fmt.allocPrint(args.allocator, "{s}/{s}", .{ args.source_dir, file_name });
+    defer args.allocator.free(full_file_path);
 
-    const target_name = switch (target) {
+    const target_name = switch (args.target) {
         .linux => "linux/lib",
         .windows => "windows/lib",
     };
 
-    const dest_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ target_name, file_name });
-    defer allocator.free(dest_path);
+    const dest_path = try std.fmt.allocPrint(args.allocator, "{s}/{s}", .{ target_name, file_name });
+    defer args.allocator.free(dest_path);
 
-    const step = b.addInstallFile(.{ .cwd_relative = full_file_path }, dest_path);
-    exe.step.dependOn(&step.step);
+    const step = args.b.addInstallFile(.{ .cwd_relative = full_file_path }, dest_path);
+    args.exe.step.dependOn(&step.step);
 
-    exe.linkSystemLibrary(lib_name);
+    args.exe.root_module.linkSystemLibrary(args.lib_name, args.link_options);
 }
 
 fn buildWindows(
@@ -197,7 +230,14 @@ fn buildWindows(
 
     exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").? });
 
-    try installAndLinkSystemLibrary(allocator, b, exe, std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").?, "vulkan-1", .windows, null);
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").?,
+        .lib_name = "vulkan-1",
+        .target = .windows,
+    });
 
     // All windows machines should be able to link to this by default
     exe.linkSystemLibrary("gdi32");
@@ -210,11 +250,46 @@ fn buildWindows(
     exe.addLibraryPath(ffmpeg_windows.path("bin"));
 
     const ffmpeg_path = ffmpeg_windows.path("bin").getPath(b);
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avformat-61", .windows, null);
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avcodec-61", .windows, null);
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avdevice-61", .windows, null);
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avfilter-10", .windows, null);
-    try installAndLinkSystemLibrary(allocator, b, exe, ffmpeg_path, "avutil-59", .windows, null);
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = ffmpeg_path,
+        .lib_name = "avformat-61",
+        .target = .windows,
+    });
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = ffmpeg_path,
+        .lib_name = "avcodec-61",
+        .target = .windows,
+    });
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = ffmpeg_path,
+        .lib_name = "avdevice-61",
+        .target = .windows,
+    });
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = ffmpeg_path,
+        .lib_name = "avfilter-10",
+        .target = .windows,
+    });
+    try installAndLinkSystemLibrary(.{
+        .allocator = allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = ffmpeg_path,
+        .lib_name = "avutil-59",
+        .target = .windows,
+    });
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "windows" } },
@@ -227,7 +302,9 @@ fn buildLinux(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-) !void {
+    nix: bool,
+    ffmpeg_build: FfmpegBuild,
+) !*std.Build.Step {
     const module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -242,17 +319,26 @@ fn buildLinux(
         // with pipewire using the Zig backend. Just stick to LLVM for now...
         .use_llvm = true,
     });
-    exe.addRPath(b.path("./lib"));
+
+    if (!nix) {
+        // This prevents linker errors when building for generic Linux target on NixOS.
+        exe.linker_allow_shlib_undefined = true;
+        // NixOS can't run dynamically linked executables, so there
+        // is no need to change the rpath.
+        exe.root_module.addRPathSpecial("$ORIGIN/lib");
+    }
 
     try addSharedDependencies(allocator, b, exe, target, optimize);
-    try addLinuxDependencies(allocator, b, exe, target, optimize);
+    try addLinuxDependencies(allocator, b, exe, target, optimize, ffmpeg_build);
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "linux" } },
     });
     b.getInstallStep().dependOn(&install_step.step);
 
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addSystemCommand(&.{
+        b.getInstallPath(.prefix, "linux/" ++ EXE_NAME),
+    });
     run_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
@@ -261,6 +347,31 @@ fn buildLinux(
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    return &install_step.step;
+}
+
+fn buildLinuxAppImage(
+    b: *std.Build,
+    allocator: std.mem.Allocator,
+    linux_install_step: *std.Build.Step,
+) *std.Build.Step {
+    const appimage_step = b.step("appimage", "Build Linux AppImage");
+
+    const file = std.fs.cwd().openFile("./build_app_image.sh", .{ .mode = .read_only }) catch unreachable;
+    defer file.close();
+    const stat = file.stat() catch unreachable;
+
+    var reader = file.reader(&.{});
+    const buffer = reader.interface.readAlloc(allocator, stat.size) catch unreachable;
+    defer allocator.free(buffer);
+
+    const cmd = b.addSystemCommand(&.{ "bash", "-lc", buffer });
+
+    cmd.step.dependOn(linux_install_step);
+    appimage_step.dependOn(&cmd.step);
+
+    return appimage_step;
 }
 
 fn buildUnitTestsDefault(
@@ -268,6 +379,7 @@ fn buildUnitTestsDefault(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    ffmpeg_build: FfmpegBuild,
 ) !void {
     const unit_test_files = [_][]const u8{
         "./src/test.zig",
@@ -291,7 +403,7 @@ fn buildUnitTestsDefault(
         exe.linkLibC();
 
         try addSharedDependencies(allocator, b, exe, target, optimize);
-        try addLinuxDependencies(allocator, b, exe, target, optimize);
+        try addLinuxDependencies(allocator, b, exe, target, optimize, ffmpeg_build);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
 
@@ -308,20 +420,43 @@ pub fn build(b: *std.Build) !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const nix = b.option(bool, "nix", "If on NixOS, use this flag to run");
+    const nix = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
+    const appimage = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
+
+    if (appimage and nix == true) {
+        std.log.err("AppImage builds require generic linux target. Run without -Dnix.", .{});
+        return error.InvalidBuildConfig;
+    }
 
     const optimize = b.standardOptimizeOption(.{});
+    if (appimage and optimize == .Debug) {
+        std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseFast, -Doptimize=ReleaseSafe, or -Doptimize=ReleaseSmall.", .{});
+        return error.InvalidBuildConfig;
+    }
+
+    const ffmpeg_build = build_ffmpeg(b);
 
     try buildWindows(allocator, b, optimize);
 
-    // TODO: Linux build is currently broken due to llvm linker errors. Check back
-    // when switched back to zig linker when it's fixed.
     const target = if (nix == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
         .os_tag = .linux,
         .abi = .gnu,
         .cpu_arch = .x86_64,
     });
 
-    try buildLinux(allocator, b, target, optimize);
-    try buildUnitTestsDefault(allocator, b, target, optimize);
+    const linux_install_step = try buildLinux(
+        allocator,
+        b,
+        target,
+        optimize,
+        nix,
+        ffmpeg_build,
+    );
+    const appimage_step = buildLinuxAppImage(b, allocator, linux_install_step);
+
+    if (appimage) {
+        b.getInstallStep().dependOn(appimage_step);
+    }
+
+    try buildUnitTestsDefault(allocator, b, target, optimize, ffmpeg_build);
 }

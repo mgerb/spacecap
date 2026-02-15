@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - dev-14
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Enable Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Resolve and Validate Release Version
+        id: version
+        run: |
+          base_version="$(sed -n 's/^[[:space:]]*\.version = "\(.*\)",/\1/p' build.zig.zon | head -n1)"
+          if [ -z "$base_version" ]; then
+            echo "Failed to parse version from build.zig.zon" >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            expected_tag="v${base_version}"
+            actual_tag="${GITHUB_REF_NAME}"
+
+            if [ "$actual_tag" != "$expected_tag" ]; then
+              echo "Tag/version mismatch. build.zig.zon has ${base_version}, expected tag ${expected_tag}, got ${actual_tag}" >&2
+              exit 1
+            fi
+
+            release_tag="${actual_tag}"
+            release_version="${base_version}"
+            prerelease="false"
+          else
+            short_sha="$(git rev-parse --short=8 HEAD)"
+            release_version="${base_version}+g${short_sha}"
+            release_tag="nightly"
+            prerelease="true"
+          fi
+
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and Test
+        run: |
+          nix develop -c bash -lc '
+            set -euo pipefail
+            echo "Release version: ${{ steps.version.outputs.release_version }}"
+            zig build -Dnix
+            zig build test -Dnix
+          '
+
+      - name: Build Release Binaries
+        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseFast
+
+      # - name: Package Linux
+      #   run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux
+
+      # - name: Package Windows
+      #   run: zip -r spacecap-windows-x86_64.zip zig-out/windows
+
+      - name: Generate Checksums
+        run: |
+          # sha256sum spacecap-linux-x86_64.tar.gz > SHA256SUMS.txt
+          # sha256sum spacecap-windows-x86_64.zip >> SHA256SUMS.txt
+          sha256sum zig-out/linux/spacecap-linux-x86_64.AppImage >> SHA256SUMS.txt
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spacecap-release-assets
+          # spacecap-linux-x86_64.tar.gz is currently disabled.
+          # spacecap-windows-x86_64.zip is currently disabled.
+          path: |
+            zig-out/linux/spacecap-linux-x86_64.AppImage
+            SHA256SUMS.txt
+
+      - name: Move Nightly Tag
+        if: github.ref_type != 'tag'
+        run: |
+          git tag -f nightly "${GITHUB_SHA}"
+          git push --force origin refs/tags/nightly
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          generate_release_notes: true
+          # spacecap-linux-x86_64.tar.gz is currently disabled.
+          # spacecap-windows-x86_64.zip is currently disabled.
+          files: |
+            zig-out/linux/spacecap-linux-x86_64.AppImage
+            SHA256SUMS.txt
