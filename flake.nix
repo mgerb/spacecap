@@ -117,8 +117,6 @@
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
-          GLIB = "${pkgs.glib.out}/lib";
-          LIBPORTAL = "${pkgs.libportal}/lib";
 
           # Required for Github actions or non-NixOS machines.
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
