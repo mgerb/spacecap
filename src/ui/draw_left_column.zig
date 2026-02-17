@@ -201,7 +201,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.251, .y = 0.627, .z = 0.169, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.329, .y = 0.706, .z = 0.247, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.173, .y = 0.471, .z = 0.129, .w = 1.0 });
-                c.ImGui_BeginDisabled(!video_capture_supported or state_actor.state.recording or !state_actor.state.has_source);
+                c.ImGui_BeginDisabled(!video_capture_supported or state_actor.state.is_recording_video or !state_actor.state.is_capturing_video);
                 if (c.ImGui_ButtonEx("Start", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
                     try state_actor.dispatch(.start_record);
                 }
@@ -213,7 +213,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.6, .y = 0.0, .z = 0.0, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.75, .y = 0.1, .z = 0.1, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.5, .y = 0.0, .z = 0.0, .w = 1.0 });
-                c.ImGui_BeginDisabled(!video_capture_supported or !state_actor.state.recording);
+                c.ImGui_BeginDisabled(!video_capture_supported or !state_actor.state.is_recording_video);
                 if (c.ImGui_ButtonEx("Stop", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
                     try state_actor.dispatch(.stop_record);
                 }
@@ -223,7 +223,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             }
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
-            const save_replay_enabled = video_capture_supported and state_actor.state.recording;
+            const save_replay_enabled = video_capture_supported and state_actor.state.is_recording_video;
             if (save_replay_enabled) {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.447, .y = 0.529, .z = 0.992, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.525, .y = 0.608, .z = 1.000, .w = 1.0 });

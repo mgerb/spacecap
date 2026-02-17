@@ -63,3 +63,53 @@ pub fn Mutex(T: type) type {
         }
     };
 }
+
+test "Mutex lock unwrap and unlock" {
+    var mutex: Mutex(i32) = .init(41);
+
+    var locked = mutex.lock();
+    defer locked.unlock();
+
+    try std.testing.expectEqual(41, locked.unwrap());
+    locked.set(42);
+    try std.testing.expectEqual(42, locked.unwrap());
+}
+
+test "Mutex set updates value" {
+    var mutex: Mutex(i32) = .init(1);
+
+    mutex.set(5);
+
+    var locked = mutex.lock();
+    defer locked.unlock();
+    try std.testing.expectEqual(5, locked.unwrap());
+}
+
+test "Mutex serializes concurrent mutation" {
+    var mutex: Mutex(u32) = .init(0);
+
+    const thread_count = 4;
+    const iterations = 10_000;
+
+    const Worker = struct {
+        fn run(m: *Mutex(u32), n: usize) void {
+            for (0..n) |_| {
+                var locked = m.lock();
+                defer locked.unlock();
+                locked.unwrapPtr().* += 1;
+            }
+        }
+    };
+
+    var threads: [thread_count]std.Thread = undefined;
+    for (&threads) |*thread| {
+        thread.* = try std.Thread.spawn(.{}, Worker.run, .{ &mutex, iterations });
+    }
+    for (threads) |thread| {
+        thread.join();
+    }
+
+    var locked = mutex.lock();
+    defer locked.unlock();
+    try std.testing.expectEqual(thread_count * iterations, locked.unwrap());
+}

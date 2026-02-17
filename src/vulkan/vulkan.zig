@@ -104,18 +104,17 @@ pub const Vulkan = struct {
 
     video_encoder: ?*Encoder = null,
     /// Ring buffer that holds the preview images that are rendered on the UI.
-    capture_preview_ring_buffer: ?*VulkanImageRingBuffer = null,
+    capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
     /// We need to create textures to render the capture preview.
     /// They will be stored here so that we don't couple the UI
     /// to the vulkan image ring buffer.
-    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, CapturePreviewTexture),
+    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, rc.Arc(CapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
     /// in which the encoded can grab from.
     capture_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
 
     /// The window used to render the UI with imgui
     window: ?imguiz.ImGui_ImplVulkanH_Window = null,
-
     pub fn init(
         allocator: std.mem.Allocator,
         extra_instance_extensions: ?[][*:0]const u8,
@@ -241,9 +240,7 @@ pub const Vulkan = struct {
 
     pub fn deinit(self: *Self) void {
         self.destroyVideoEncoder();
-        self.destroyCapturePreviewRingBuffer() catch |err| {
-            log.err("[deinit] failed to destroy capture preview ring buffer: {}", .{err});
-        };
+        self.destroyCapturePreviewRingBuffer();
         self.destroyCaptureRingBuffer();
         self.capture_preview_textures.deinit();
 
@@ -287,26 +284,35 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn getCapturePreviewTexture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !*CapturePreviewTexture {
-        if (self.capture_preview_textures.getPtr(vulkan_image_buffer)) |capture_preview_texture| {
-            return capture_preview_texture;
+    pub fn getCapturePreviewTexture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(CapturePreviewTexture) {
+        if (self.capture_preview_textures.get(vulkan_image_buffer)) |capture_preview_texture| {
+            return capture_preview_texture.retain();
         } else {
-            const capture_preview_texture = try CapturePreviewTexture.init(self, vulkan_image_buffer.image_view);
+            const capture_preview_texture = try rc.Arc(CapturePreviewTexture).init(
+                self.allocator,
+                try CapturePreviewTexture.init(self, vulkan_image_buffer.image_view),
+            );
+            errdefer if (capture_preview_texture.releaseUnwrap()) |*val| {
+                @constCast(val).deinit();
+            };
+
             try self.capture_preview_textures.put(vulkan_image_buffer, capture_preview_texture);
-            return self.capture_preview_textures.getPtr(vulkan_image_buffer).?;
+            return self.capture_preview_textures.get(vulkan_image_buffer).?.retain();
         }
     }
 
     fn clearCapturePreviewTextures(self: *Self) void {
         var iter = self.capture_preview_textures.iterator();
         while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
+            if (entry.value_ptr.releaseUnwrap()) |*val| {
+                @constCast(val).deinit();
+            }
         }
         self.capture_preview_textures.clearRetainingCapacity();
     }
 
     pub fn initCapturePreviewRingBuffer(self: *Self, width: u32, height: u32) !void {
-        self.capture_preview_ring_buffer = try VulkanImageRingBuffer.init(
+        self.capture_preview_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
                 .allocator = self.allocator,
                 .vulkan = self,
@@ -324,15 +330,18 @@ pub const Vulkan = struct {
                 .usage = .{ .sampled_bit = true },
                 .src_queue_family_index = self.graphics_queue.family,
             },
-        );
+        ));
     }
 
     /// Destroy the ring buffer, but also clear the capture preview textures.
-    pub fn destroyCapturePreviewRingBuffer(self: *Self) !void {
-        try self.waitForUIFences();
-        if (self.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
+    pub fn destroyCapturePreviewRingBuffer(self: *Self) void {
+        self.waitForUIFences();
+        var capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
+        defer capture_preview_ring_buffer_locked.unlock();
+
+        if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
             capture_preview_ring_buffer.deinit();
-            self.capture_preview_ring_buffer = null;
+            capture_preview_ring_buffer_locked.set(null);
         }
         self.clearCapturePreviewTextures();
     }
@@ -360,6 +369,14 @@ pub const Vulkan = struct {
     }
 
     pub fn destroyCaptureRingBuffer(self: *Self) void {
+        const did_wait = self.waitForAllGraphicsFencesBegin();
+        defer {
+            if (did_wait) {
+                self.waitForAllGraphicsFencesEnd();
+            } else |err| {
+                log.err("[destroyCaptureRingBuffer] wait for fence error: {}", .{err});
+            }
+        }
         const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
         defer capture_ring_buffer_locked.unlock();
         if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
@@ -684,71 +701,75 @@ pub const Vulkan = struct {
     }
 
     /// Wait for all fences on the imgui Vulkan window.
-    pub fn waitForUIFences(self: *Self) !void {
+    pub fn waitForUIFences(self: *Self) void {
         if (self.window) |window| {
             for (0..@intCast(window.Frames.Size)) |i| {
                 const fd = window.Frames.Data[i];
-                _ = try self.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64));
+                _ = self.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64)) catch |err| {
+                    log.err("[waitForUIFences] err: {}", .{err});
+                };
             }
         }
     }
 
-    /// This will lock both queues (graphics, encode), and
-    /// then wait for all valid fences.
+    /// Lock the graphics queue and wait for all fences on the queue.
     ///
-    /// WARNING: Must be followed up by `waitForAllFencesEnd` to unlock mutexes.
-    pub fn waitForAllFencesBegin(self: *Self) !void {
-        self.graphics_queue.mutex.lock();
-        if (self.video_encode_queue) |*video_encode_queue| {
-            video_encode_queue.mutex.lock();
-        }
-
+    /// WARNING: Must be followed up by `waitForAllGraphicsFencesEnd` to
+    /// unlock mutexes EXCEPT when it returns an error.
+    pub fn waitForAllGraphicsFencesBegin(self: *Self) !void {
         var wait_fences = try std.ArrayList(vk.Fence).initCapacity(self.allocator, 0);
         defer wait_fences.deinit(self.allocator);
 
-        if (self.video_encoder) |encoder| {
-            try wait_fences.appendSlice(self.allocator, &.{
-                encoder.compute_finished_fence,
-                encoder.encode_finished_fence,
-            });
-        }
-
-        if (self.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
-            for (capture_preview_ring_buffer.buffers) |buffer| {
-                try wait_fences.append(self.allocator, buffer.value.*.fence);
+        // Collect fences before queue locks to avoid lock-order inversion.
+        {
+            const capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
+            defer capture_preview_ring_buffer_locked.unlock();
+            if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
+                for (capture_preview_ring_buffer.buffers) |buffer| {
+                    try wait_fences.append(self.allocator, buffer.value.*.fence);
+                }
             }
         }
 
-        // TODO: This causes a deadlock when the window is resized. We may not need
-        // this here actually...
-        // {
-        //     const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
-        //     defer capture_ring_buffer_locked.unlock();
-        //     if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
-        //         for (capture_ring_buffer.buffers) |buffer| {
-        //             try wait_fences.append(self.allocator, buffer.value.*.fence);
-        //         }
-        //     }
-        // }
+        // Capture-ring copy command buffers run on the graphics queue and may still be reading
+        // pipewire dmabuf images during format-change callbacks.
+        {
+            const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
+            defer capture_ring_buffer_locked.unlock();
+            if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
+                for (capture_ring_buffer.buffers) |buffer| {
+                    try wait_fences.append(self.allocator, buffer.value.*.fence);
+                }
+            }
+        }
 
         if (self.window) |window| {
             const fd = &window.Frames.Data[window.FrameIndex];
             try wait_fences.append(self.allocator, @enumFromInt(@intFromPtr(fd.Fence)));
         }
 
-        _ = try self.device.waitForFences(
-            @intCast(wait_fences.items.len),
-            wait_fences.items.ptr,
-            .true,
-            std.math.maxInt(u64),
-        );
+        // Encoder compute work is submitted on the graphics queue.
+        if (self.video_encoder) |encoder| {
+            try wait_fences.append(self.allocator, encoder.compute_finished_fence);
+        }
+
+        self.graphics_queue.mutex.lock();
+        errdefer self.graphics_queue.mutex.unlock();
+
+        if (wait_fences.items.len > 0) {
+            _ = try self.device.waitForFences(
+                @intCast(wait_fences.items.len),
+                wait_fences.items.ptr,
+                .true,
+                std.math.maxInt(u64),
+            );
+        } else {
+            log.debug("[waitForAllGraphicsFencesBegin] wait_fences length is 0", .{});
+        }
     }
 
-    pub fn waitForAllFencesEnd(self: *Self) void {
+    pub fn waitForAllGraphicsFencesEnd(self: *Self) void {
         self.graphics_queue.mutex.unlock();
-        if (self.video_encode_queue) |*video_encode_queue| {
-            video_encode_queue.mutex.unlock();
-        }
     }
 
     /// Copy a vulkan image on the GPU.

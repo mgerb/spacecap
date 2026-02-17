@@ -28,7 +28,6 @@ pub const VulkanImageBuffer = struct {
     width: u32,
     height: u32,
     in_use: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    mutex: std.Thread.Mutex = .{},
 
     pub const InitArgs = struct {
         allocator: std.mem.Allocator,
@@ -133,7 +132,6 @@ pub const VulkanImageBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self.mutex.tryLock();
         _ = self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64)) catch |err| {
             log.err("[deinit] error waiting for fences: {}", .{err});
         };
