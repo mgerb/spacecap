@@ -8,7 +8,7 @@ const ChanError = @import("../../../../channel.zig").ChanError;
 const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanImageBufferChan;
 const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
 const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
-const VideoCaptureSourceType = @import("../../video_capture.zig").VideoCaptureSourceType;
+const VideoCaptureSelection = @import("../../video_capture.zig").VideoCaptureSelection;
 const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const c_def = @import("../../../../common/linux/pipewire_include.zig").c_def;
 const Portal = @import("./portal.zig").Portal;
@@ -49,14 +49,24 @@ pub const Pipewire = struct {
         vulkan: *Vulkan,
     ) (VideoCaptureError || anyerror)!*Self {
         const self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
         self.* = Self{
             .allocator = allocator,
-            .rx_chan = try .init(allocator),
-            .tx_chan = try .init(allocator),
-            .portal = try .init(allocator),
+            .rx_chan = undefined,
+            .tx_chan = undefined,
+            .portal = undefined,
             .vulkan = vulkan,
-            .vulkan_image_buffer_chan = try VulkanImageBufferChan.init(allocator),
+            .vulkan_image_buffer_chan = undefined,
         };
+
+        self.rx_chan = try .init(allocator);
+        errdefer self.rx_chan.deinit();
+        self.tx_chan = try .init(allocator);
+        errdefer self.tx_chan.deinit();
+        self.portal = try .init(allocator);
+        errdefer self.portal.deinit();
+        self.vulkan_image_buffer_chan = try .init(allocator);
+        errdefer self.vulkan_image_buffer_chan.deinit();
 
         return self;
     }
@@ -111,13 +121,13 @@ pub const Pipewire = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn selectSource(
-        self: *Self,
-        source_type: VideoCaptureSourceType,
-    ) (VideoCaptureError || anyerror)!void {
-        const pipewire_node = try self.portal.selectSource(source_type);
+    pub fn selectSource(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!void {
+        const pipewire_node = try self.portal.selectSource(selection);
         const pipewire_fd = try self.portal.openPipewireRemote();
         errdefer _ = pw.close(pipewire_fd);
+
+        self.has_format = false;
+        self.info = null;
 
         self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-video",
@@ -166,17 +176,21 @@ pub const Pipewire = struct {
 
         try self.startStream(pipewire_node);
 
-        while (!self.has_format) {
+        while (!self.hasValidInfo()) {
             pw.pw_thread_loop_wait(self.thread_loop);
         }
 
         pw.pw_thread_loop_unlock(self.thread_loop);
 
-        if (self.info == null or self.info.?.format < 0) {
-            return error.bad_format;
-        }
-
         self.worker_thread = try std.Thread.spawn(.{}, workerMain, .{self});
+    }
+
+    fn hasValidInfo(self: *const Self) bool {
+        const info = self.info orelse return false;
+        return self.has_format and
+            info.format >= 0 and
+            info.size.width > 0 and
+            info.size.height > 0;
     }
 
     fn build_format(self: *const Self, b: ?*pw.spa_pod_builder, format: u32, modifiers: []const u64) ?*pw.spa_pod {

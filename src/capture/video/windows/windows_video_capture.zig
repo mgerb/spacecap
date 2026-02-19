@@ -5,7 +5,7 @@ const vk = @import("vulkan");
 const types = @import("../../../types.zig");
 const util = @import("../../../util.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const VideoCaptureSourceType = @import("../video_capture.zig").VideoCaptureSourceType;
+const VideoCaptureSelection = @import("../video_capture.zig").VideoCaptureSelection;
 const VideoCapture = @import("../video_capture.zig").VideoCapture;
 const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const ChanError = @import("../../../channel.zig").ChanError;
@@ -29,10 +29,16 @@ pub const WindowsVideoCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, source_type: VideoCaptureSourceType) !void {
+    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
-        _ = source_type;
+        _ = selection;
+    }
+
+    pub fn shouldRestoreCaptureSession(context: *anyopaque) !bool {
+        const self: *Self = @ptrCast(@alignCast(context));
+        _ = self;
+        return false;
     }
 
     pub fn waitForReady(context: *anyopaque) !void {
@@ -83,6 +89,7 @@ pub const WindowsVideoCapture = struct {
             .ptr = self,
             .vtable = &.{
                 .selectSource = selectSource,
+                .shouldRestoreCaptureSession = shouldRestoreCaptureSession,
                 .nextFrame = nextFrame,
                 .closeAllChannels = closeAllChannels,
                 .waitForFrame = waitForFrame,

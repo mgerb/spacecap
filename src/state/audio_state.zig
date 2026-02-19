@@ -17,7 +17,7 @@ pub const AUDIO_GAIN_MIN: f32 = 0.0;
 pub const AUDIO_GAIN_MAX: f32 = 2.0;
 
 pub const AudioActions = union(enum) {
-    start_record_thread,
+    start_capture_thread,
     /// Use the capture interface to get all available audio devices on the system.
     get_available_audio_devices,
     /// Toggle recording on an audio device by device ID.
@@ -46,7 +46,7 @@ pub const AudioState = struct {
     /// This is a list of all currently available audio devices.
     devices: std.ArrayList(AudioDeviceViewModel),
     replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
-    record_thread: ?std.Thread = null,
+    capture_thread: ?std.Thread = null,
 
     pub fn init(allocator: Allocator, audio_capture: *AudioCapture) !Self {
         return .{
@@ -57,8 +57,8 @@ pub const AudioState = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.stopRecordThread();
-        assert(self.record_thread == null);
+        self.stopCaptureThread();
+        assert(self.capture_thread == null);
 
         {
             var replay_buffer_locked = self.replay_buffer.lock();
@@ -75,10 +75,10 @@ pub const AudioState = struct {
 
     pub fn handleActions(self: *Self, state_actor: *StateActor, action: AudioActions) !void {
         switch (action) {
-            .start_record_thread => {
-                // This should only ever get called once, so the record_thread must always be null.
-                assert(self.record_thread == null);
-                self.record_thread = try std.Thread.spawn(.{}, recordThreadHandler, .{ self, state_actor });
+            .start_capture_thread => {
+                // This should only ever get called once, so the capture_thread must always be null.
+                assert(self.capture_thread == null);
+                self.capture_thread = try std.Thread.spawn(.{}, captureThreadHandler, .{ self, state_actor });
             },
             .get_available_audio_devices => {
                 var available_devices = try self.audio_capture.getAvailableDevices(self.allocator);
@@ -156,13 +156,13 @@ pub const AudioState = struct {
         }
     }
 
-    fn stopRecordThread(self: *Self) void {
-        if (self.record_thread) |record_thread| {
+    fn stopCaptureThread(self: *Self) void {
+        if (self.capture_thread) |capture_thread| {
             self.audio_capture.stop() catch |err| {
-                log.err("[stopRecordThread] audio_capture.stop error: {}", .{err});
+                log.err("[stopCaptureThread] audio_capture.stop error: {}", .{err});
             };
-            record_thread.join();
-            self.record_thread = null;
+            capture_thread.join();
+            self.capture_thread = null;
         }
     }
 
@@ -200,7 +200,7 @@ pub const AudioState = struct {
         self.devices.clearRetainingCapacity();
     }
 
-    fn recordThreadHandler(self: *Self, state_actor: *StateActor) !void {
+    fn captureThreadHandler(self: *Self, state_actor: *StateActor) !void {
         {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
@@ -212,10 +212,10 @@ pub const AudioState = struct {
         while (true) {
             const data = self.audio_capture.receiveData() catch |err| {
                 if (err == ChanError.Closed) {
-                    log.debug("[startRecordThreadHandler] chan closed", .{});
+                    log.debug("[captureThreadHandler] chan closed", .{});
                     break;
                 }
-                log.err("[startRecordThreadHandler] data_chan error: {}", .{err});
+                log.err("[captureThreadHandler] data_chan error: {}", .{err});
                 return err;
             };
 
@@ -233,7 +233,7 @@ pub const AudioState = struct {
                     }
                 }
 
-                log.err("[recordThreadHandler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
+                log.err("[captureThreadHandler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
                 assert(false);
 
                 // Return a default value to keep the compiler happy. We should never reach this point anyway.
