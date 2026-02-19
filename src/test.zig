@@ -11,4 +11,5 @@ test {
     _ = @import("./audio_mixer.zig");
     _ = @import("./muxer.zig");
     _ = @import("./common/linux/token_manager.zig");
+    _ = @import("./mutex.zig");
 }

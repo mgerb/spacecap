@@ -50,16 +50,17 @@ pub const PipewireFrameBufferManager = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        if (self.vk_foreign_semaphore) |vk_foreign_semaphore| {
-            self.vulkan.device.destroySemaphore(vk_foreign_semaphore, null);
-            self.vk_foreign_semaphore = null;
-        }
-
         var iter = self.frame_buffers.iterator();
         while (iter.next()) |entry| {
             if (entry.value_ptr.frame_buffer_image) |*frame_buffer_image| {
                 self.destroyBufferImage(frame_buffer_image);
             }
+        }
+
+        // NOTE: Destroy after the images, because we know it's for sure safe to do so then.
+        if (self.vk_foreign_semaphore) |vk_foreign_semaphore| {
+            self.vulkan.device.destroySemaphore(vk_foreign_semaphore, null);
+            self.vk_foreign_semaphore = null;
         }
         self.frame_buffers.deinit();
         self.allocator.destroy(self);
@@ -140,6 +141,14 @@ pub const PipewireFrameBufferManager = struct {
     }
 
     fn destroyBufferImage(self: *Self, buffer_image: *PipewireFrameBufferImage) void {
+        const did_wait = self.vulkan.waitForAllGraphicsFencesBegin();
+        defer {
+            if (did_wait) {
+                self.vulkan.waitForAllGraphicsFencesEnd();
+            } else |err| {
+                log.err("[destroyBufferImage] waitForAllGraphicsFencesBegin error: {}", .{err});
+            }
+        }
         self.vulkan.device.destroyImageView(buffer_image.image_view, null);
         self.vulkan.device.destroyImage(buffer_image.image, null);
         self.vulkan.device.freeMemory(buffer_image.device_memory, null);

@@ -320,7 +320,7 @@ pub const Pipewire = struct {
 
         const vulkan_image = self.pipewire_frame_buffer_manager.?.getVulkanImage(pwb, self.info.?) catch |err| {
             log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
-            unreachable;
+            return;
         };
 
         const header = pw.spa_buffer_find_meta_data(pwb.buffer, pw.SPA_META_Header, @sizeOf(pw.spa_meta_header));
@@ -344,7 +344,11 @@ pub const Pipewire = struct {
         const copy_data = blk: {
             const capture_ring_buffer = self.vulkan.capture_ring_buffer.lock();
             defer capture_ring_buffer.unlock();
-            break :blk capture_ring_buffer.unwrap().?.copyImageToRingBuffer(.{
+            const ring_buffer = capture_ring_buffer.unwrap() orelse {
+                // Ring buffer can be temporarily unavailable during format reconfiguration.
+                return;
+            };
+            break :blk ring_buffer.copyImageToRingBuffer(.{
                 .src_image = vulkan_image.frame_buffer.frame_buffer_image.?.image,
                 .src_width = self.info.?.size.width,
                 .src_height = self.info.?.size.height,
@@ -353,7 +357,7 @@ pub const Pipewire = struct {
                 .timestamp_ns = timestamp_ns,
             }) catch |err| {
                 log.err("[streamProcessCallback] copyImageToRingBuffer error: {}", .{err});
-                unreachable;
+                return;
             };
         };
 
@@ -459,11 +463,12 @@ pub const Pipewire = struct {
             return;
         }
 
-        {
-            self.vulkan.destroyCaptureRingBuffer();
-            // TODO: Figure out how to bubble this error up and display it on the UI.
-            self.vulkan.initCaptureRingBuffer(self.info.?.size.width, self.info.?.size.height) catch unreachable;
-        }
+        self.vulkan.destroyCaptureRingBuffer();
+        // TODO: Figure out how to bubble this error up and display it on the UI.
+        self.vulkan.initCaptureRingBuffer(self.info.?.size.width, self.info.?.size.height) catch |err| {
+            log.err("[streamParamChangedCallback] initCaptureRingBuffer error: {}", .{err});
+            return;
+        };
 
         self.sendStreamParams();
 

@@ -223,7 +223,7 @@ pub const AudioState = struct {
                 state_actor.ui_mutex.lock();
                 defer state_actor.ui_mutex.unlock();
 
-                if (!state_actor.state.recording) {
+                if (!state_actor.state.is_recording_video) {
                     break :blk null;
                 }
 

@@ -139,8 +139,9 @@ pub const StateActor = struct {
     /// WARNING: This locks the UI thread. This should only be locked
     /// when making updates to the UI state.
     ui_mutex: std.Thread.Mutex = .{},
+    video_record_mutex: std.Thread.Mutex = .{},
     state: State,
-    video_record_thread: ?std.Thread = null,
+    video_capture_thread: ?std.Thread = null,
 
     /// Caller owns the memory. Be sure to deinit.
     pub fn init(
@@ -235,35 +236,50 @@ pub const StateActor = struct {
                 try self.stopRecord();
             },
             .save_replay => {
-                // NOTE: Both audio/video replay buffers must not be null here.
+                var fps: u32 = 0;
+                var replay_seconds: u32 = 0;
+                {
+                    self.ui_mutex.lock();
+                    defer self.ui_mutex.unlock();
+                    if (!self.state.is_recording_video) {
+                        log.debug("[handleAction] save_replay - not recording, skipping capture", .{});
+                        return;
+                    }
+                    fps = self.state.fps;
+                    replay_seconds = self.state.replay_seconds;
+                }
 
-                const audio_replay_buffer = try self.state.audio.swapReplayBuffer(
+                // We should always have a size if the state is recording.
+                assert(self.video_capture.size() != null);
+                const size = self.video_capture.size().?;
+
+                const audio_replay_buffer = (try self.state.audio.swapReplayBuffer(
                     self.allocator,
-                    self.state.replay_seconds,
-                );
-
-                assert(audio_replay_buffer != null);
+                    replay_seconds,
+                )).?;
+                errdefer audio_replay_buffer.deinit();
 
                 var video_replay_buffer: ?*VideoReplayBuffer = null;
                 {
-                    var video_locked = self.video_replay_buffer.lock();
-                    defer video_locked.unlock();
-                    video_replay_buffer = video_locked.unwrap();
-                    video_locked.set(try .init(
+                    self.video_record_mutex.lock();
+                    defer self.video_record_mutex.unlock();
+
+                    const video_encoder = self.vulkan.video_encoder orelse return error.video_encoder_is_null;
+
+                    var video_replay_buffer_locked = self.video_replay_buffer.lock();
+                    defer video_replay_buffer_locked.unlock();
+                    video_replay_buffer = video_replay_buffer_locked.unwrap();
+
+                    // video_replay_buffer should never be null here. If the state is recording,
+                    // it will always be valid.
+                    assert(video_replay_buffer != null);
+
+                    video_replay_buffer_locked.set(try .init(
                         self.allocator,
-                        self.state.replay_seconds,
-                        self.vulkan.video_encoder.?.bit_stream_header.items,
+                        replay_seconds,
+                        video_encoder.bit_stream_header.items,
                     ));
                 }
-
-                assert(video_replay_buffer != null);
-
-                const size = self.video_capture.size().?;
-                const fps = blk: {
-                    self.ui_mutex.lock();
-                    defer self.ui_mutex.unlock();
-                    break :blk self.state.fps;
-                };
 
                 try exporter.exportReplayBuffers(
                     self.allocator,
@@ -271,15 +287,13 @@ pub const StateActor = struct {
                     size.height,
                     fps,
                     video_replay_buffer.?,
-                    audio_replay_buffer.?,
+                    audio_replay_buffer,
                     SAMPLE_RATE,
                     CHANNELS,
                 );
             },
             .select_video_source => |source_type| {
-                if (self.state.recording) {
-                    try self.stopRecord();
-                }
+                try self.stopCapture();
 
                 self.video_capture.selectSource(source_type) catch |err| {
                     if (err != VideoCaptureError.source_picker_cancelled) {
@@ -291,9 +305,7 @@ pub const StateActor = struct {
                     return;
                 };
 
-                self.ui_mutex.lock();
-                defer self.ui_mutex.unlock();
-                self.state.has_source = true;
+                try self.startCapture();
             },
             .show_demo => {
                 self.ui_mutex.lock();
@@ -301,7 +313,7 @@ pub const StateActor = struct {
                 self.state.show_demo = !self.state.show_demo;
             },
             .exit => {
-                try self.stopRecord();
+                try self.stopCapture();
             },
             .open_global_shortcuts => {
                 try self.global_shortcuts.open();
@@ -326,37 +338,10 @@ pub const StateActor = struct {
 
     /// TODO: move most of this to capture?
     /// This is the main capture loop.
-    fn startVideoRecordThreadHandler(self: *Self) !void {
+    fn videoCaptureThreadHandler(self: *Self) !void {
         self.ui_mutex.lock();
         const fps = self.state.fps;
-        const bit_rate = self.state.bit_rate;
-        const width = self.video_capture.size().?.width;
-        const height = self.video_capture.size().?.height;
         self.ui_mutex.unlock();
-        // Initialize the video encoder here. It will be destroyed
-        // when the record thread terminates.
-        try self.vulkan.initVideoEncoder(
-            width,
-            height,
-            fps,
-            bit_rate,
-        );
-        defer self.vulkan.destroyVideoEncoder();
-
-        // Initialize the replay buffer. This replay buffer
-        // will be destroyed/recreated each time a replay is saved.
-        {
-            const video_locked = self.video_replay_buffer.lock();
-            defer video_locked.unlock();
-            const video_replay_buffer = video_locked.unwrapPtr();
-            video_replay_buffer.* = try VideoReplayBuffer.init(
-                self.allocator,
-                self.state.replay_seconds,
-                self.vulkan.video_encoder.?.bit_stream_header.items,
-            );
-        }
-
-        try self.vulkan.initCapturePreviewRingBuffer(width, height);
 
         var previous_frame_start_time: i128 = 0;
 
@@ -401,18 +386,49 @@ pub const StateActor = struct {
             var image_slc = [_]vk.Image{vulkan_image_buffer.value.*.image};
             var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.value.*.image_view};
 
-            const copy_data = try self.vulkan.capture_preview_ring_buffer.?.copyImageToRingBuffer(
-                .{
-                    .src_image = image_slc[0],
-                    .src_width = vulkan_image_buffer.value.*.width,
-                    .src_height = vulkan_image_buffer.value.*.height,
-                    .wait_semaphore = null,
-                    .use_signal_semaphore = true,
-                    .timestamp_ns = vulkan_image_buffer.value.*.timestamp_ns,
-                },
-            );
+            const is_recording = blk: {
+                self.ui_mutex.lock();
+                defer self.ui_mutex.unlock();
+                break :blk self.state.is_recording_video;
+            };
 
-            try self.vulkan.video_encoder.?.prepareEncode(.{
+            const copy_data = blk: {
+                const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
+                defer capture_preview_ring_buffer_locked.unlock();
+                const _copy_data = try capture_preview_ring_buffer_locked.unwrap().?.copyImageToRingBuffer(
+                    .{
+                        .src_image = image_slc[0],
+                        .src_width = vulkan_image_buffer.value.*.width,
+                        .src_height = vulkan_image_buffer.value.*.height,
+                        .wait_semaphore = null,
+                        // Only signal this semaphore when encode will wait on it.
+                        .use_signal_semaphore = is_recording,
+                        .timestamp_ns = vulkan_image_buffer.value.*.timestamp_ns,
+                    },
+                );
+                break :blk _copy_data;
+            };
+
+            if (!is_recording) {
+                // In capture-only mode no downstream work waits on the preview copy.
+                // Wait here so the capture-ring source image is not recycled while still in flight.
+                if (copy_data.fence) |fence| {
+                    _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), .true, std.math.maxInt(u64)) catch |err| {
+                        log.err("[videoCaptureThreadHandler] preview copy wait error: {}", .{err});
+                    };
+                }
+                continue;
+            }
+
+            self.video_record_mutex.lock();
+            defer self.video_record_mutex.unlock();
+
+            const video_encoder = self.vulkan.video_encoder orelse continue;
+            const video_locked = self.video_replay_buffer.lock();
+            defer video_locked.unlock();
+            const video_replay_buffer = video_locked.unwrap() orelse continue;
+
+            try video_encoder.prepareEncode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
                 .input_size = .{
@@ -422,42 +438,120 @@ pub const StateActor = struct {
                 .external_wait_semaphore = copy_data.semaphore,
             });
 
-            const encode_result = try self.vulkan.video_encoder.?.encode(0);
-            const video_locked = self.video_replay_buffer.lock();
-            defer video_locked.unlock();
-            const video_replay_buffer = video_locked.unwrap();
-            try self.vulkan.video_encoder.?.finishEncode(
+            const encode_result = try video_encoder.encode(0);
+            try video_encoder.finishEncode(
                 encode_result,
-                video_replay_buffer.?,
+                video_replay_buffer,
                 vulkan_image_buffer.value.*.timestamp_ns,
             );
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            self.state.replay_buffer.size = video_replay_buffer.?.size;
-            self.state.replay_buffer.seconds = video_replay_buffer.?.getSeconds();
+            self.state.replay_buffer.size = video_replay_buffer.size;
+            self.state.replay_buffer.seconds = video_replay_buffer.getSeconds();
         }
     }
 
-    fn stopRecord(self: *Self) !void {
+    fn startCapture(self: *Self) !void {
+        const size = self.video_capture.size() orelse {
+            return error.video_capture_size_not_found;
+        };
+
+        try self.vulkan.initCapturePreviewRingBuffer(size.width, size.height);
+        errdefer self.vulkan.destroyCapturePreviewRingBuffer();
+
+        self.video_capture_thread = try std.Thread.spawn(.{}, videoCaptureThreadHandler, .{self});
+
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
+        assert(self.state.is_capturing_video == false);
+        assert(self.state.is_recording_video == false);
+        self.state.is_capturing_video = true;
+    }
+
+    fn stopCapture(self: *Self) !void {
+        try self.stopRecord();
+
         {
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            self.state.recording = false;
-            self.state.has_source = false;
+            self.state.is_capturing_video = false;
         }
 
         // Force the record loop to exit by closing all capture channels.
         self.video_capture.closeAllChannels();
 
         // Wait for the video record thread loop to complete.
-        if (self.video_record_thread) |video_record_thread| {
-            video_record_thread.join();
-            self.video_record_thread = null;
+        if (self.video_capture_thread) |video_capture_thread| {
+            video_capture_thread.join();
+            self.video_capture_thread = null;
         }
 
-        try self.vulkan.destroyCapturePreviewRingBuffer();
+        self.vulkan.destroyCapturePreviewRingBuffer();
 
         try self.video_capture.stop();
+    }
+
+    fn startRecord(self: *Self) !void {
+        self.video_record_mutex.lock();
+        defer self.video_record_mutex.unlock();
+
+        var fps: u32 = 0;
+        var bit_rate: u64 = 0;
+        var replay_seconds: u32 = 0;
+        {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            if (!self.state.is_capturing_video or self.state.is_recording_video) return;
+            fps = self.state.fps;
+            bit_rate = self.state.bit_rate;
+            replay_seconds = self.state.replay_seconds;
+        }
+
+        const size = self.video_capture.size() orelse {
+            return error.video_capture_size_not_found;
+        };
+
+        try self.vulkan.initVideoEncoder(
+            size.width,
+            size.height,
+            fps,
+            bit_rate,
+        );
+        errdefer self.vulkan.destroyVideoEncoder();
+
+        {
+            var video_locked = self.video_replay_buffer.lock();
+            defer video_locked.unlock();
+            if (video_locked.unwrap()) |video_replay_buffer| {
+                video_replay_buffer.deinit();
+            }
+
+            video_locked.set(try VideoReplayBuffer.init(
+                self.allocator,
+                replay_seconds,
+                self.vulkan.video_encoder.?.bit_stream_header.items,
+            ));
+        }
+
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
+        if (!self.state.is_recording_video) {
+            self.state.is_recording_video = true;
+        }
+    }
+
+    fn stopRecord(self: *Self) !void {
+        self.video_record_mutex.lock();
+        defer self.video_record_mutex.unlock();
+
+        {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            self.state.is_recording_video = false;
+            self.state.replay_buffer = .{};
+        }
+
+        self.vulkan.destroyVideoEncoder();
 
         var video_locked = self.video_replay_buffer.lock();
         defer video_locked.unlock();
@@ -465,16 +559,6 @@ pub const StateActor = struct {
         if (video_replay_buffer) |vrb| {
             vrb.deinit();
             video_locked.set(null);
-        }
-    }
-
-    fn startRecord(self: *Self) !void {
-        self.ui_mutex.lock();
-        defer self.ui_mutex.unlock();
-
-        if (self.state.has_source and !self.state.recording) {
-            self.state.recording = true;
-            self.video_record_thread = try std.Thread.spawn(.{}, startVideoRecordThreadHandler, .{self});
         }
     }
 

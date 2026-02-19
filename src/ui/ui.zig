@@ -2,13 +2,14 @@ const std = @import("std");
 
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
+const rc = @import("zigrc");
 
+const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
 const StateActor = @import("../state_actor.zig").StateActor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
 const drawVideoPreview = @import("./draw_video_preview.zig").drawVideoPreview;
-const drawVideoPreviewUnavailable = @import("./draw_video_preview.zig").drawVideoPreviewUnavailable;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 // TODO: save and restore window size
@@ -21,6 +22,7 @@ var g_PipelineCache: c.VkPipelineCache = std.mem.zeroes(c.VkPipelineCache);
 const SDL_INIT_FLAGS = c.SDL_INIT_VIDEO | c.SDL_INIT_GAMEPAD;
 
 pub const UI = struct {
+    const log = std.log.scoped(.ui);
     const Self = @This();
 
     state_actor: *StateActor,
@@ -60,8 +62,14 @@ pub const UI = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.vulkan.waitForAllFencesBegin() catch unreachable;
-        defer self.vulkan.waitForAllFencesEnd();
+        const did_wait = self.vulkan.waitForAllGraphicsFencesBegin();
+        defer {
+            if (did_wait) {
+                self.vulkan.waitForAllGraphicsFencesEnd();
+            } else |err| {
+                log.err("[deinit] wait for fence error: {}", .{err});
+            }
+        }
 
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
@@ -298,8 +306,8 @@ pub const UI = struct {
                     self.vulkan.window.?.Height != fb_height))
             {
                 // This causes big problems if we don't wait for the GPU to be ready.
-                try self.vulkan.waitForAllFencesBegin();
-                defer self.vulkan.waitForAllFencesEnd();
+                try self.vulkan.waitForAllGraphicsFencesBegin();
+                defer self.vulkan.waitForAllGraphicsFencesEnd();
 
                 c.cImGui_ImplVulkan_SetMinImageCount(MIN_IMAGE_COUNT);
                 c.cImGui_ImplVulkanH_CreateOrResizeWindow(
@@ -322,70 +330,80 @@ pub const UI = struct {
             c.cImGui_ImplSDL3_NewFrame();
             c.ImGui_NewFrame();
 
-            var capture_preview_buffer: ?*VulkanImageBuffer = null;
-            defer {
-                // First, check if the ring buffer has been destroyed. The buffer
-                // gets locked when we call `getMostRecentBuffer`, so we must
-                // unlock it before the next iteration.
-                if (self.vulkan.capture_preview_ring_buffer != null) {
-                    if (capture_preview_buffer) |buffer| {
-                        buffer.mutex.unlock();
-                    }
-                }
-            }
-
             {
-                self.state_actor.ui_mutex.lock();
-                defer self.state_actor.ui_mutex.unlock();
-
-                // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-                if (self.state_actor.state.show_demo) {
-                    var show_demo_window: bool = true;
-                    c.ImGui_ShowDemoWindow(&show_demo_window);
-
-                    if (!show_demo_window) {
-                        try self.state_actor.dispatch(.show_demo);
+                var capture_preview_buffer: ?rc.Arc(*VulkanImageBuffer) = null;
+                var capture_preview_texture: ?rc.Arc(CapturePreviewTexture) = null;
+                // Hold onto the buffer until draw/render/present is done.
+                defer {
+                    if (capture_preview_buffer) |buffer| {
+                        if (buffer.releaseUnwrap()) |val| {
+                            val.deinit();
+                        } else {
+                            buffer.value.*.in_use.store(false, .release);
+                        }
                     }
-                }
-
-                try drawLeftColumn(self.allocator, self.state_actor);
-
-                if (!self.state_actor.state.is_video_capture_supprted) {
-                    try drawVideoPreview(.vulkan_video_not_supported);
-                } else if (self.state_actor.state.recording) {
-                    if (self.vulkan.capture_preview_ring_buffer) |capture_preview_ring_buffer| {
-                        if (capture_preview_ring_buffer.getMostRecentBuffer()) |buffer| {
-                            capture_preview_buffer = buffer;
-                            const capture_preview_texture = try self.vulkan.getCapturePreviewTexture(buffer);
-                            try drawVideoPreview(.{ .capture_preview = .{
-                                .capture_preview_buffer = capture_preview_texture,
-                                .width = buffer.width,
-                                .height = buffer.height,
-                            } });
+                    if (capture_preview_texture) |_capture_preview_texture| {
+                        if (_capture_preview_texture.releaseUnwrap()) |*val| {
+                            @constCast(val).deinit();
                         }
                     }
                 }
-            }
 
-            // Rendering
-            c.ImGui_Render();
-            const draw_data = c.ImGui_GetDrawData();
-            const is_minimized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
-            self.vulkan.window.?.ClearValue.color.float32[0] = clear_color.x * clear_color.w;
-            self.vulkan.window.?.ClearValue.color.float32[1] = clear_color.y * clear_color.w;
-            self.vulkan.window.?.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
-            self.vulkan.window.?.ClearValue.color.float32[3] = clear_color.w;
-            if (!is_minimized) {
-                try self.frameRender(draw_data);
-            }
+                {
+                    self.state_actor.ui_mutex.lock();
+                    defer self.state_actor.ui_mutex.unlock();
 
-            if (io.*.ConfigFlags & c.ImGuiConfigFlags_ViewportsEnable > 0) {
-                c.ImGui_UpdatePlatformWindows();
-                c.ImGui_RenderPlatformWindowsDefault();
-            }
+                    // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
+                    if (self.state_actor.state.show_demo) {
+                        var show_demo_window: bool = true;
+                        c.ImGui_ShowDemoWindow(&show_demo_window);
 
-            if (!is_minimized) {
-                try self.framePresent();
+                        if (!show_demo_window) {
+                            try self.state_actor.dispatch(.show_demo);
+                        }
+                    }
+
+                    try drawLeftColumn(self.allocator, self.state_actor);
+
+                    if (!self.state_actor.state.is_video_capture_supprted) {
+                        try drawVideoPreview(.vulkan_video_not_supported);
+                    } else if (self.state_actor.state.is_capturing_video) {
+                        const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
+                        defer capture_preview_ring_buffer_locked.unlock();
+                        if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
+                            if (capture_preview_ring_buffer.getMostRecentBuffer()) |buffer| {
+                                capture_preview_buffer = buffer;
+                                capture_preview_texture = try self.vulkan.getCapturePreviewTexture(buffer.value.*);
+                                try drawVideoPreview(.{ .capture_preview = .{
+                                    .capture_preview_buffer = capture_preview_texture.?.value,
+                                    .width = buffer.value.*.width,
+                                    .height = buffer.value.*.height,
+                                } });
+                            }
+                        }
+                    }
+                }
+
+                // Rendering while preview locks are held.
+                c.ImGui_Render();
+                const draw_data = c.ImGui_GetDrawData();
+                const is_minimized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
+                self.vulkan.window.?.ClearValue.color.float32[0] = clear_color.x * clear_color.w;
+                self.vulkan.window.?.ClearValue.color.float32[1] = clear_color.y * clear_color.w;
+                self.vulkan.window.?.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
+                self.vulkan.window.?.ClearValue.color.float32[3] = clear_color.w;
+                if (!is_minimized) {
+                    try self.frameRender(draw_data);
+                }
+
+                if (io.*.ConfigFlags & c.ImGuiConfigFlags_ViewportsEnable > 0) {
+                    c.ImGui_UpdatePlatformWindows();
+                    c.ImGui_RenderPlatformWindowsDefault();
+                }
+
+                if (!is_minimized) {
+                    try self.framePresent();
+                }
             }
 
             // Delay until the next frame to maintain desired FPS.

@@ -11,7 +11,7 @@ pub const VulkanImageRingBuffer = struct {
     const Self = @This();
     // TODO: Make ring buffer size variable at comptime.
     // TODO: Wrap in mutex.
-    buffers: [3]rc.Arc(*VulkanImageBuffer),
+    buffers: [3]rc.Arc(*VulkanImageBuffer) = undefined,
     vulkan: *Vulkan,
     most_recent_index: ?u32 = null,
     mutex: std.Thread.Mutex = .{},
@@ -20,18 +20,21 @@ pub const VulkanImageRingBuffer = struct {
     pub fn init(
         args: VulkanImageBuffer.InitArgs,
     ) !*Self {
-        // TODO: add errdefer to clean up allocations.
         const self = try args.allocator.create(Self);
+        errdefer args.allocator.destroy(self);
 
         self.* = .{
             .allocator = args.allocator,
-            .buffers = .{
-                try VulkanImageBuffer.init(args),
-                try VulkanImageBuffer.init(args),
-                try VulkanImageBuffer.init(args),
-            },
             .vulkan = args.vulkan,
         };
+
+        self.buffers[0] = try VulkanImageBuffer.init(args);
+        errdefer if (self.buffers[0].releaseUnwrap()) |val| val.deinit();
+        self.buffers[1] = try VulkanImageBuffer.init(args);
+        errdefer if (self.buffers[1].releaseUnwrap()) |val| val.deinit();
+        self.buffers[2] = try VulkanImageBuffer.init(args);
+        errdefer if (self.buffers[2].releaseUnwrap()) |val| val.deinit();
+
         return self;
     }
 
@@ -70,37 +73,33 @@ pub const VulkanImageRingBuffer = struct {
             if (buffer.in_use.load(.acquire)) {
                 continue;
             }
-            const did_lock = buffer.mutex.tryLock();
-
-            if (did_lock) {
-                defer buffer.mutex.unlock();
-                self.most_recent_index = @intCast(i);
-                try buffer.copyImage(.{
-                    .src_image = args.src_image,
-                    .src_width = args.src_width,
-                    .src_height = args.src_height,
-                    .wait_semaphore = args.wait_semaphore,
-                    .use_signal_semaphore = args.use_signal_semaphore,
-                    .timestamp_ns = args.timestamp_ns,
-                });
-                return .{
-                    .vulkan_image_buffer = vulkan_image_buffer,
-                    .semaphore = buffer.signal_semaphore,
-                    .fence = buffer.fence,
-                };
-            }
+            self.most_recent_index = @intCast(i);
+            try buffer.copyImage(.{
+                .src_image = args.src_image,
+                .src_width = args.src_width,
+                .src_height = args.src_height,
+                .wait_semaphore = args.wait_semaphore,
+                .use_signal_semaphore = args.use_signal_semaphore,
+                .timestamp_ns = args.timestamp_ns,
+            });
+            return .{
+                .vulkan_image_buffer = vulkan_image_buffer,
+                .semaphore = buffer.signal_semaphore,
+                .fence = buffer.fence,
+            };
         }
         return .{ .semaphore = args.wait_semaphore };
     }
 
-    // Get the most recent buffer and lock the mutex. The caller
-    // MUST unlock the mutex.
-    pub fn getMostRecentBuffer(self: *Self) ?*VulkanImageBuffer {
+    /// - Get the most recent buffer
+    /// - Increment ref count
+    /// - set in_use to true
+    pub fn getMostRecentBuffer(self: *Self) ?rc.Arc(*VulkanImageBuffer) {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.most_recent_index) |most_recent_index| {
-            const buffer = self.buffers[most_recent_index].value.*;
-            buffer.mutex.lock();
+            const buffer = self.buffers[most_recent_index].retain();
+            buffer.value.*.in_use.store(true, .release);
             return buffer;
         }
 
