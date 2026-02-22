@@ -71,3 +71,22 @@ pub fn saveToken(
 
     try file.writeAll(token_value);
 }
+
+/// Delete token file from user app directory. Ignore if file not found.
+pub fn deleteToken(
+    allocator: std.mem.Allocator,
+    token_file_name: []const u8,
+) !void {
+    const dir = try util.getAppDataDir(allocator);
+    defer allocator.free(dir);
+    const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}.txt", .{
+        dir,
+        token_file_name,
+    });
+    defer allocator.free(file_path);
+
+    std.fs.deleteFileAbsolute(file_path) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+}

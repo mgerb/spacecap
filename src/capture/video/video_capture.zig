@@ -8,6 +8,11 @@ const rc = @import("zigrc");
 
 pub const VideoCaptureSourceType = enum { window, desktop };
 
+pub const VideoCaptureSelection = union(enum) {
+    source_type: VideoCaptureSourceType,
+    restore_session,
+};
+
 pub const VideoCaptureError = error{
     portal_service_not_found,
     source_picker_cancelled,
@@ -20,7 +25,8 @@ pub const VideoCapture = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        selectSource: *const fn (*anyopaque, VideoCaptureSourceType) anyerror!void,
+        selectSource: *const fn (*anyopaque, VideoCaptureSelection) anyerror!void,
+        shouldRestoreCaptureSession: *const fn (*anyopaque) anyerror!bool,
         nextFrame: *const fn (*anyopaque) ChanError!void,
         closeAllChannels: *const fn (*anyopaque) void,
         waitForFrame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
@@ -29,8 +35,12 @@ pub const VideoCapture = struct {
         deinit: *const fn (*anyopaque) void,
     };
 
-    pub fn selectSource(self: *Self, source_type: VideoCaptureSourceType) (VideoCaptureError || anyerror)!void {
-        return self.vtable.selectSource(self.ptr, source_type);
+    pub fn selectSource(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!void {
+        return self.vtable.selectSource(self.ptr, selection);
+    }
+
+    pub fn shouldRestoreCaptureSession(self: *Self) !bool {
+        return self.vtable.shouldRestoreCaptureSession(self.ptr);
     }
 
     pub fn nextFrame(self: *Self) ChanError!void {

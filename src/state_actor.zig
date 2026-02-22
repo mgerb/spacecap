@@ -6,6 +6,7 @@ const vk = @import("vulkan");
 const Util = @import("./util.zig");
 const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
 const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
+const VideoCaptureSelection = @import("./capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
 const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
 const SAMPLE_RATE = @import("./capture/audio/audio_capture.zig").SAMPLE_RATE;
@@ -27,6 +28,8 @@ pub const Actions = union(enum) {
     start_record,
     stop_record,
     select_video_source: VideoCaptureSourceType,
+    /// Restore the capture session on startup.
+    restore_capture_session,
     save_replay,
     show_demo,
     exit,
@@ -173,7 +176,8 @@ pub const StateActor = struct {
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
         try self.dispatch(.{ .audio = .get_available_audio_devices });
-        try self.dispatch(.{ .audio = .start_record_thread });
+        try self.dispatch(.{ .audio = .start_capture_thread });
+        try self.dispatch(.restore_capture_session);
 
         return self;
     }
@@ -293,19 +297,15 @@ pub const StateActor = struct {
                 );
             },
             .select_video_source => |source_type| {
-                try self.stopCapture();
-
-                self.video_capture.selectSource(source_type) catch |err| {
-                    if (err != VideoCaptureError.source_picker_cancelled) {
-                        log.err("selectSource error: {}\n", .{err});
-                        return err;
-                    } else {
-                        log.info("source_picker_cancelled\n", .{});
-                    }
+                try self.selectVideoSource(.{ .source_type = source_type });
+            },
+            .restore_capture_session => {
+                if (!try self.video_capture.shouldRestoreCaptureSession()) {
                     return;
-                };
+                }
 
-                try self.startCapture();
+                log.debug("Restoring capture session.", .{});
+                try self.selectVideoSource(.restore_session);
             },
             .show_demo => {
                 self.ui_mutex.lock();
@@ -325,6 +325,22 @@ pub const StateActor = struct {
                 try self.state.audio.handleActions(self, action.audio);
             },
         }
+    }
+
+    fn selectVideoSource(self: *Self, selection: VideoCaptureSelection) !void {
+        try self.stopCapture();
+
+        self.video_capture.selectSource(selection) catch |err| {
+            if (err != VideoCaptureError.source_picker_cancelled) {
+                log.err("selectSource error: {}\n", .{err});
+                return err;
+            } else {
+                log.info("source_picker_cancelled\n", .{});
+            }
+            return;
+        };
+
+        try self.startCapture();
     }
 
     pub fn globalShortcutsHandler(context: *anyopaque, shortcut: GlobalShortcuts.Shortcut) void {
