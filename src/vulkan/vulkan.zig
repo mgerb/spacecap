@@ -744,8 +744,12 @@ pub const Vulkan = struct {
         }
 
         if (self.window) |window| {
-            const fd = &window.Frames.Data[window.FrameIndex];
-            try wait_fences.append(self.allocator, @enumFromInt(@intFromPtr(fd.Fence)));
+            if (window.Frames.Size > 0 and window.Frames.Data != null and window.FrameIndex < window.Frames.Size) {
+                const fd = &window.Frames.Data[window.FrameIndex];
+                if (fd.Fence != null) {
+                    try wait_fences.append(self.allocator, @enumFromInt(@intFromPtr(fd.Fence)));
+                }
+            }
         }
 
         // Encoder compute work is submitted on the graphics queue.
