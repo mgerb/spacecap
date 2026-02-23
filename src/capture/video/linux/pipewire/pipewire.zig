@@ -11,6 +11,7 @@ const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
 const VideoCaptureSelection = @import("../../video_capture.zig").VideoCaptureSelection;
 const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const c_def = @import("../../../../common/linux/pipewire_include.zig").c_def;
+const PipewireTimestampSource = @import("../../../../common/linux/pipewire_timestamp_source.zig").PipewireTimestampSource;
 const Portal = @import("./portal.zig").Portal;
 const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
 const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
@@ -43,6 +44,10 @@ pub const Pipewire = struct {
     /// main pipewire loop, because it blocks and waits for the consumer.
     vulkan_image_buffer_chan: VulkanImageBufferChan,
     previous_frame_timestamp_ns: ?i128 = null,
+    // Keep track of the log count so we don't spam the log.
+    // We only want to log the source a few times when the
+    // stream starts.
+    timestamp_source_log_count: u32 = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -343,16 +348,17 @@ pub const Pipewire = struct {
             return;
         }
         const metadata = @as(*pw.spa_meta_header, @ptrCast(@alignCast(header.?)));
-        var timestamp_ns: i128 = @intCast(metadata.pts);
+        var timestamp_ns = self.selectBestTimestamp(metadata, pwb);
 
-        // Pipewire can occasionally queue a buffer with the same timestamp as the previous
-        // frame. In this case, increment it by one. We can't have multiple frames with
-        // the same pts.
+        // Pipewire can occasionally queue a buffer with the same timestamp
+        // as the previous frame. In this case, increment it by one. We can't
+        // have multiple frames with the same pts.
         if (self.previous_frame_timestamp_ns) |previous| {
             if (timestamp_ns <= previous) {
                 timestamp_ns = timestamp_ns + 1;
             }
         }
+
         self.previous_frame_timestamp_ns = timestamp_ns;
 
         const copy_data = blk: {
@@ -387,6 +393,53 @@ pub const Pipewire = struct {
                 log.err("[streamProcessCallback] vulkan image buffer chan send err: {}", .{err});
             };
         }
+    }
+
+    /// Some DE/compositors vary on where they store the presentation timestamp.
+    fn selectBestTimestamp(
+        self: *Self,
+        metadata: *const pw.spa_meta_header,
+        pwb: *pw.struct_pw_buffer,
+    ) i128 {
+        const raw_metadata_pts_ns: i128 = @intCast(metadata.pts);
+        const raw_pwb_time_ns: i128 = @intCast(pwb.time);
+        const raw_stream_nsec_ns: i128 = if (self.stream) |stream| @intCast(pw.pw_stream_get_nsec(stream)) else 0;
+
+        var stream_time_now_ns: i128 = 0;
+        if (self.stream) |stream| {
+            var pw_time = std.mem.zeroes(pw.struct_pw_time);
+            if (pw.pw_stream_get_time_n(stream, &pw_time, @sizeOf(pw.struct_pw_time)) == 0) {
+                stream_time_now_ns = @intCast(pw_time.now);
+            }
+        }
+
+        var timestamp_ns: i128 = std.time.nanoTimestamp();
+        var source: PipewireTimestampSource = .host;
+
+        if (raw_metadata_pts_ns > 0) {
+            timestamp_ns = raw_metadata_pts_ns;
+            source = .meta_pts;
+        }
+        if (raw_pwb_time_ns > 0) {
+            timestamp_ns = raw_pwb_time_ns;
+            source = .pwb_time;
+        }
+        if (raw_stream_nsec_ns > 0) {
+            timestamp_ns = raw_stream_nsec_ns;
+            source = .stream_nsec;
+        }
+        if (stream_time_now_ns > 0) {
+            timestamp_ns = stream_time_now_ns;
+            source = .stream_time_now;
+        }
+
+        // Limit the logging otherwise it will get spammed.
+        if (self.timestamp_source_log_count >= 10) {
+            log.info("[selectBestTimestamp] video timestamp source: {}", .{source});
+            self.timestamp_source_log_count += 1;
+        }
+
+        return timestamp_ns;
     }
 
     fn workerMain(self: *Self) !void {
