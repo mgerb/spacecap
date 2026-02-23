@@ -3,6 +3,7 @@ const UI = @import("./ui/ui.zig").UI;
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
 const StateActor = @import("./state_actor.zig").StateActor;
 const Util = @import("./util.zig");
+const sdl = @import("./ui/sdl.zig");
 const PlatformCaptureSetup = @import("./capture/platform_capture_setup.zig").PlatformCaptureSetup;
 
 const PlatformVideoCapture = if (Util.isLinux())
@@ -31,10 +32,10 @@ pub fn main() !void {
     PlatformCaptureSetup.init();
     defer PlatformCaptureSetup.deinit();
 
-    var sdl_vulkan_extensions = try UI.getSDLVulkanExtensions(allocator);
-    defer sdl_vulkan_extensions.deinit(allocator);
+    var sdl_vulkan_extensions = try sdl.get_sdl_vulkan_extensions(allocator);
+    defer sdl_vulkan_extensions.deinit();
 
-    const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.items);
+    const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.list.items);
     defer vulkan.deinit();
 
     // TODO: create dropdown selector in UI to select capture method when more are implemented.

@@ -3,6 +3,8 @@ const std = @import("std");
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const rc = @import("zigrc");
+const util = @import("../util.zig");
+const sdl = @import("./sdl.zig");
 
 const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
 const StateActor = @import("../state_actor.zig").StateActor;
@@ -18,8 +20,6 @@ const HEIGHT = 1000;
 
 const MIN_IMAGE_COUNT = 2;
 var g_PipelineCache: c.VkPipelineCache = std.mem.zeroes(c.VkPipelineCache);
-
-const SDL_INIT_FLAGS = c.SDL_INIT_VIDEO | c.SDL_INIT_GAMEPAD;
 
 pub const UI = struct {
     const log = std.log.scoped(.ui);
@@ -49,9 +49,7 @@ pub const UI = struct {
             .vulkan = vulkan,
         };
 
-        if (!c.SDL_Init(SDL_INIT_FLAGS)) {
-            return error.SDL_initFailure;
-        }
+        try sdl.init();
 
         const version = c.SDL_GetVersion();
         std.log.info("SDL version: {}\n", .{version});
@@ -99,22 +97,6 @@ pub const UI = struct {
         c.SDL_Quit();
 
         self.allocator.destroy(self);
-    }
-
-    /// Caller owns memory
-    /// TODO: check why not returning "wayland"
-    pub fn getSDLVulkanExtensions(allocator: std.mem.Allocator) !std.ArrayList([*:0]const u8) {
-        if (!c.SDL_Init(SDL_INIT_FLAGS)) {
-            return error.SDL_initFailure;
-        }
-        defer c.SDL_Quit();
-
-        var extensions = try std.ArrayList([*:0]const u8).initCapacity(allocator, 0);
-        var extensions_count: u32 = 0;
-        const sdl_extensions = c.SDL_Vulkan_GetInstanceExtensions(&extensions_count);
-        for (0..extensions_count) |i| try extensions.append(allocator, std.mem.span(sdl_extensions[i]));
-
-        return extensions;
     }
 
     fn initVulkan(self: *Self) !void {
