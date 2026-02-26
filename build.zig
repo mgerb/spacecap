@@ -259,7 +259,7 @@ fn buildWindows(
         .b = b,
         .exe = exe,
         .source_dir = ffmpeg_path,
-        .lib_name = "avformat-61",
+        .lib_name = "avformat-62",
         .target = .windows,
     });
     try installAndLinkSystemLibrary(.{
@@ -267,7 +267,7 @@ fn buildWindows(
         .b = b,
         .exe = exe,
         .source_dir = ffmpeg_path,
-        .lib_name = "avcodec-61",
+        .lib_name = "avcodec-62",
         .target = .windows,
     });
     try installAndLinkSystemLibrary(.{
@@ -275,7 +275,7 @@ fn buildWindows(
         .b = b,
         .exe = exe,
         .source_dir = ffmpeg_path,
-        .lib_name = "avdevice-61",
+        .lib_name = "avdevice-62",
         .target = .windows,
     });
     try installAndLinkSystemLibrary(.{
@@ -283,7 +283,7 @@ fn buildWindows(
         .b = b,
         .exe = exe,
         .source_dir = ffmpeg_path,
-        .lib_name = "avfilter-10",
+        .lib_name = "avfilter-11",
         .target = .windows,
     });
     try installAndLinkSystemLibrary(.{
@@ -291,7 +291,7 @@ fn buildWindows(
         .b = b,
         .exe = exe,
         .source_dir = ffmpeg_path,
-        .lib_name = "avutil-59",
+        .lib_name = "avutil-60",
         .target = .windows,
     });
 
