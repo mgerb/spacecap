@@ -10,6 +10,12 @@ pub const COLUMN_WIDTH = 280;
 const CONTROL_HEIGHT: f32 = 30;
 const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
+const CAPTURE_FPS_MIN: c_int = 1;
+const CAPTURE_FPS_MAX: c_int = 240;
+
+/// This is bound to a drag input. We keep a locally bound value
+/// because we only want to update the global state when not dragging.
+var capture_fps_local: ?i32 = null;
 
 fn deviceTypeLabel(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
@@ -251,6 +257,9 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
 
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {
             defer c.ImGui_EndTabItem();
+
+            try drawCaptureSettings(state_actor);
+
             c.ImGui_SeparatorText("GUI Settings");
 
             var fg_fps = @as(f32, @floatFromInt(state_actor.state.user_settings.settings.gui_foreground_fps));
@@ -260,7 +269,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 } });
             }
             c.ImGui_SameLine();
-            imgui_util.help_marker("Forground FPS. This is the max frame rate Spacecap will render while focused. Double click to change.");
+            imgui_util.help_marker("Forground FPS. This is the max frame rate Spacecap will render while focused. Drag or double click to change.");
 
             var bg_fps = @as(f32, @floatFromInt(state_actor.state.user_settings.settings.gui_background_fps));
             if (c.ImGui_DragFloatEx("BG FPS", &bg_fps, 1, 1.0, 240.0, "%.0f", 0)) {
@@ -269,7 +278,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 } });
             }
             c.ImGui_SameLine();
-            imgui_util.help_marker("Background FPS. This is the max frame rate Spacecap will render while NOT focused. Double click to change.");
+            imgui_util.help_marker("Background FPS. This is the max frame rate Spacecap will render while NOT focused. Drag or double click to change.");
 
             // NOTE: Hiding this for now. Linux shortcuts can be configured at the
             // desktop environment level. See comments regarding `Method.configure_shortcuts`
@@ -295,4 +304,24 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             c.ImGui_Text("%.1f fps", io.*.Framerate);
         }
     }
+}
+
+fn drawCaptureSettings(state_actor: *StateActor) !void {
+    c.ImGui_SeparatorText("Capture Settings");
+    const current_capture_fps: i32 = @intCast(state_actor.state.user_settings.settings.capture_fps);
+    var fps = capture_fps_local orelse current_capture_fps;
+    if (c.ImGui_DragIntEx("FPS", &fps, 1.0, CAPTURE_FPS_MIN, CAPTURE_FPS_MAX, "%d", c.ImGuiSliderFlags_AlwaysClamp)) {
+        capture_fps_local = fps;
+    }
+    if (c.ImGui_IsItemDeactivatedAfterEdit() and fps > 0 and fps != current_capture_fps) {
+        try state_actor.dispatch(.{ .user_settings = .{
+            .set_capture_fps = @intCast(fps),
+        } });
+        capture_fps_local = null;
+    } else if (!c.ImGui_IsItemActive()) {
+        // Keep the UI synced with state when not actively editing.
+        capture_fps_local = null;
+    }
+    c.ImGui_SameLine();
+    imgui_util.help_marker("Capture FPS. Drag or double click to change.");
 }

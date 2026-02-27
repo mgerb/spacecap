@@ -21,7 +21,6 @@ const ReplayBufferViewModel = struct {
 // User settings
 user_settings: UserSettingsState,
 replay_seconds: u32 = 60,
-fps: u32 = 60,
 bit_rate: u64 = 20_000_000,
 
 is_recording_video: bool = false,
@@ -38,7 +37,7 @@ pub fn init(
     audio_capture: *AudioCapture,
 ) !Self {
     return .{
-        .user_settings = try .init(allocator),
+        .user_settings = try UserSettingsState.init(allocator),
         .is_video_capture_supprted = is_video_capture_supprted,
         .audio = try .init(allocator, audio_capture),
     };
