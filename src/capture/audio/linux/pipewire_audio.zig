@@ -11,6 +11,7 @@ const pipewire_include = @import("../../../common/linux/pipewire_include.zig");
 const pw = @import("pipewire").c;
 const c = pipewire_include.c;
 const c_def = pipewire_include.c_def;
+const PipewireTimestampSource = @import("../../../common/linux/pipewire_timestamp_source.zig").PipewireTimestampSource;
 
 const AudioStream = struct {
     id: []u8,
@@ -18,6 +19,10 @@ const AudioStream = struct {
     device_type: AudioDeviceType,
     raw: pw.struct_spa_audio_info_raw = .{},
     pipewire_audio: *PipewireAudio,
+    // Keep track of the log count so we don't spam the log.
+    // We only want to log the source a few times when the
+    // stream starts.
+    timestamp_source_log_count: u32 = 0,
 };
 
 pub const PipewireAudio = struct {
@@ -181,6 +186,16 @@ pub const PipewireAudio = struct {
             return;
         }
 
+        var raw_metadata_pts_ns: i128 = 0;
+        const header = pw.spa_buffer_find_meta_data(buffer, pw.SPA_META_Header, @sizeOf(pw.spa_meta_header));
+        if (header) |hdr| {
+            const metadata = @as(*pw.spa_meta_header, @ptrCast(@alignCast(hdr)));
+            raw_metadata_pts_ns = @intCast(metadata.pts);
+        }
+
+        const raw_pwb_time_ns: i128 = @intCast(pwb.*.time);
+        const raw_stream_nsec_ns: i128 = @intCast(pw.pw_stream_get_nsec(stream));
+
         const data_ptr = buffer.*.datas[0].data orelse {
             log.warn("[streamProcessCallback] no data in buffer", .{});
             return;
@@ -208,11 +223,20 @@ pub const PipewireAudio = struct {
         assert(rate > 0);
         assert(channels > 0);
 
+        // Keep timestamp source selection in one place so audio/video follow
+        // the same fallback strategy and are easier to reason about.
+        const timestamp_ns = selectBestTimestamp(
+            stream_data,
+            raw_metadata_pts_ns,
+            raw_pwb_time_ns,
+            raw_stream_nsec_ns,
+        );
+
         var audio_capture_data = AudioCaptureData.init(
             self.allocator,
             stream_data.id,
             pcm_data[0..n_samples],
-            @intCast(pwb.*.time),
+            timestamp_ns,
             rate,
             channels,
         ) catch |err| {
@@ -233,6 +257,42 @@ pub const PipewireAudio = struct {
         if (!did_send) {
             audio_capture_data.deinit();
         }
+    }
+
+    fn selectBestTimestamp(
+        stream_data: *AudioStream,
+        raw_metadata_pts_ns: i128,
+        raw_pwb_time_ns: i128,
+        raw_stream_nsec_ns: i128,
+    ) i128 {
+        var timestamp_ns: i128 = std.time.nanoTimestamp();
+        var source: PipewireTimestampSource = .host;
+        if (raw_metadata_pts_ns > 0) {
+            timestamp_ns = raw_metadata_pts_ns;
+            source = .meta_pts;
+        }
+        if (raw_pwb_time_ns > 0) {
+            timestamp_ns = raw_pwb_time_ns;
+            source = .pwb_time;
+        }
+        if (raw_stream_nsec_ns > 0) {
+            timestamp_ns = raw_stream_nsec_ns;
+            source = .stream_nsec;
+        }
+
+        // Limit the logging otherwise it will get spammed.
+        if (stream_data.timestamp_source_log_count <= 10) {
+            log.info(
+                "[selectBestTimestamp] audio timestamp source: id={s}, source={}",
+                .{
+                    stream_data.id,
+                    source,
+                },
+            );
+            stream_data.timestamp_source_log_count += 1;
+        }
+
+        return timestamp_ns;
     }
 
     fn streamParamChangedCallback(userdata: ?*anyopaque, id: u32, param: [*c]const pw.struct_spa_pod) callconv(.c) void {
