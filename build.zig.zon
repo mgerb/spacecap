@@ -86,10 +86,6 @@
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",
             .hash = "N-V-__8AAH4RHQXHEafp_hkUel3EMeK1wjHBfaIYYxYsKdiM",
         },
-        .ffmpeg_windows = .{
-            .url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.0-latest-win64-gpl-shared-8.0.zip",
-            .hash = "N-V-__8AALVsYQ-fnCQXlE_7IJy8hmcgOsDDswPqy89TDLCw",
-        },
         .libportal = .{
             .url = "https://github.com/flatpak/libportal/archive/refs/tags/0.9.1.tar.gz",
             .hash = "N-V-__8AAAl8DACVYUEhPMGsrf5o-rONBBbWCBz9g-nnL-H_",
@@ -121,6 +117,7 @@
     // the build root itself.
     // A directory listed here means that all files within, recursively, are included.
     .paths = .{
+        "build",
         "build.zig",
         "build.zig.zon",
         "src",

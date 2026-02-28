@@ -113,6 +113,7 @@
 
             # Windows
             pkgsCross.mingwW64.vulkan-loader
+            pkgsCross.mingwW64.stdenv.cc
           ];
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
