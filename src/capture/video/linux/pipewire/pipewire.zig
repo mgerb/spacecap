@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const rc = @import("zigrc");
 const pw = @import("pipewire").c;
 
@@ -22,7 +23,7 @@ pub const Pipewire = struct {
 
     portal: *Portal,
     vulkan: *Vulkan,
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     thread_loop: ?*pw.pw_thread_loop = null,
     context: ?*pw.pw_context = null,
     core: ?*pw.pw_core = null,
@@ -50,7 +51,7 @@ pub const Pipewire = struct {
     timestamp_source_log_count: u32 = 0,
 
     pub fn init(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         vulkan: *Vulkan,
     ) (VideoCaptureError || anyerror)!*Self {
         const self = try allocator.create(Self);
@@ -126,7 +127,7 @@ pub const Pipewire = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn selectSource(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!void {
+    pub fn selectSource(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
         const pipewire_node = try self.portal.selectSource(selection);
         const pipewire_fd = try self.portal.openPipewireRemote();
         errdefer _ = pw.close(pipewire_fd);
@@ -179,7 +180,7 @@ pub const Pipewire = struct {
 
         pw.pw_stream_add_listener(self.stream, &self.stream_listener, &stream_events, self);
 
-        try self.startStream(pipewire_node);
+        try self.startStream(pipewire_node, fps);
 
         while (!self.hasValidInfo()) {
             pw.pw_thread_loop_wait(self.thread_loop);
@@ -198,7 +199,13 @@ pub const Pipewire = struct {
             info.size.height > 0;
     }
 
-    fn build_format(self: *const Self, b: ?*pw.spa_pod_builder, format: u32, modifiers: []const u64) ?*pw.spa_pod {
+    fn build_format(
+        self: *const Self,
+        b: ?*pw.spa_pod_builder,
+        format: u32,
+        modifiers: []const u64,
+        fps: u32,
+    ) ?*pw.spa_pod {
         _ = self;
         var format_frame = std.mem.zeroes(pw.spa_pod_frame);
 
@@ -221,7 +228,9 @@ pub const Pipewire = struct {
             _ = c_def.spa_pod_builder_pop(b, &modifier_frame);
         }
 
-        // TODO: Update fps.
+        const default_fps = pw.SPA_FRACTION(fps, 1);
+        const min_fps = pw.SPA_FRACTION(0, 1);
+        const max_fps = pw.SPA_FRACTION(500, 1);
         _ = pw.spa_pod_builder_add(
             b,
             @as(u32, pw.SPA_FORMAT_VIDEO_size),
@@ -233,9 +242,9 @@ pub const Pipewire = struct {
             @as(u32, pw.SPA_FORMAT_VIDEO_framerate),
             "?rF",
             @as(u32, 3),
-            &pw.SPA_FRACTION(60, 1), // FPS
-            &pw.SPA_FRACTION(0, 1),
-            &pw.SPA_FRACTION(500, 1),
+            &default_fps,
+            &min_fps,
+            &max_fps,
             @as(i32, 0),
         );
 
@@ -248,11 +257,53 @@ pub const Pipewire = struct {
         return null;
     }
 
-    fn startStream(self: *const Self, node: u32) !void {
+    fn startStream(self: *const Self, node: u32, fps: u32) !void {
         log.debug("[startStream] starting stream for node: {}", .{node});
 
-        var buffer = std.mem.zeroes([4096]u8);
+        var params = try self.buildStreamFormatParams(self.allocator, fps);
+        defer params.deinit(self.allocator);
 
+        const status = pw.pw_stream_connect(
+            self.stream,
+            pw.PW_DIRECTION_INPUT,
+            node,
+            pw.PW_STREAM_FLAG_AUTOCONNECT | pw.PW_STREAM_FLAG_MAP_BUFFERS,
+            @ptrCast(params.items.ptr),
+            @intCast(params.items.len),
+        );
+
+        if (status < 0) {
+            return error.pw_stream_connect;
+        }
+    }
+
+    pub fn updateFps(self: *Self, fps: u32) !void {
+        const stream = self.stream orelse return;
+        const thread_loop = self.thread_loop orelse return;
+
+        var params = try self.buildStreamFormatParams(self.allocator, fps);
+        defer params.deinit(self.allocator);
+
+        if (params.items.len == 0) {
+            return error.pw_stream_update_params_no_formats;
+        }
+
+        pw.pw_thread_loop_lock(thread_loop);
+        defer pw.pw_thread_loop_unlock(thread_loop);
+
+        const status = pw.pw_stream_update_params(stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
+        if (status < 0) {
+            return error.pw_stream_update_params;
+        }
+    }
+
+    /// Caller owns memory and must deinit.
+    fn buildStreamFormatParams(
+        self: *const Self,
+        allocator: Allocator,
+        fps: u32,
+    ) !std.ArrayList(*pw.spa_pod) {
+        var buffer = std.mem.zeroes([4096]u8);
         var builder = pw.spa_pod_builder{
             .data = buffer[0..].ptr,
             .size = buffer.len,
@@ -273,32 +324,20 @@ pub const Pipewire = struct {
             pw.SPA_VIDEO_FORMAT_ABGR_210LE,
         };
 
-        var params = try std.ArrayList(*pw.spa_pod).initCapacity(self.allocator, 0);
-        defer params.deinit(self.allocator);
-
+        var params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0);
+        errdefer params.deinit(allocator);
         for (formats) |format| {
             var modifiers = try self.vulkan.queryFormatModifiers(pipewire_util.spaToVkFormat(format));
             defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;
             }
-            if (self.build_format(&builder, format, modifiers.items)) |spa_pod| {
+            if (self.build_format(&builder, format, modifiers.items, fps)) |spa_pod| {
                 try params.append(self.allocator, spa_pod);
             }
         }
 
-        const status = pw.pw_stream_connect(
-            self.stream,
-            pw.PW_DIRECTION_INPUT,
-            node,
-            pw.PW_STREAM_FLAG_AUTOCONNECT | pw.PW_STREAM_FLAG_MAP_BUFFERS,
-            @ptrCast(params.items.ptr),
-            @intCast(params.items.len),
-        );
-
-        if (status < 0) {
-            return error.pw_stream_connect;
-        }
+        return params;
     }
 
     fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {

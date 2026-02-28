@@ -33,7 +33,7 @@ pub const LinuxPipewireDmaCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!void {
+    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
@@ -52,7 +52,14 @@ pub const LinuxPipewireDmaCapture = struct {
                 self.pipewire = null;
             }
         }
-        try self.pipewire.?.selectSource(selection);
+        try self.pipewire.?.selectSource(selection, fps);
+    }
+
+    pub fn updateFps(context: *anyopaque, fps: u32) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
+        if (self.pipewire) |pipewire| {
+            try pipewire.updateFps(fps);
+        }
     }
 
     pub fn shouldRestoreCaptureSession(context: *anyopaque) !bool {
@@ -124,6 +131,7 @@ pub const LinuxPipewireDmaCapture = struct {
             .ptr = self,
             .vtable = &.{
                 .selectSource = selectSource,
+                .updateFps = updateFps,
                 .shouldRestoreCaptureSession = shouldRestoreCaptureSession,
                 .nextFrame = nextFrame,
                 .closeAllChannels = closeAllChannels,

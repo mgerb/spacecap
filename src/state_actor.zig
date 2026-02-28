@@ -249,7 +249,7 @@ pub const StateActor = struct {
                         log.debug("[handleAction] save_replay - not recording, skipping capture", .{});
                         return;
                     }
-                    fps = self.state.fps;
+                    fps = self.state.user_settings.settings.capture_fps;
                     replay_seconds = self.state.replay_seconds;
                 }
 
@@ -330,7 +330,13 @@ pub const StateActor = struct {
     fn selectVideoSource(self: *Self, selection: VideoCaptureSelection) !void {
         try self.stopCapture();
 
-        self.video_capture.selectSource(selection) catch |err| {
+        const fps = blk: {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            break :blk self.state.user_settings.settings.capture_fps;
+        };
+
+        self.video_capture.selectSource(selection, fps) catch |err| {
             if (err != VideoCaptureError.source_picker_cancelled) {
                 log.err("selectSource error: {}\n", .{err});
                 return err;
@@ -355,13 +361,15 @@ pub const StateActor = struct {
     /// TODO: move most of this to capture?
     /// This is the main capture loop.
     fn videoCaptureThreadHandler(self: *Self) !void {
-        self.ui_mutex.lock();
-        const fps = self.state.fps;
-        self.ui_mutex.unlock();
-
         var previous_frame_start_time: i128 = 0;
 
         while (true) {
+            const fps = blk: {
+                self.ui_mutex.lock();
+                defer self.ui_mutex.unlock();
+                break :blk self.state.user_settings.settings.capture_fps;
+            };
+
             // Here we wait until the next projected frame time. This will happen if we are
             // capturing/encoding frames to quickly.
             const ns_per_frame = (1.0 / @as(f64, @floatFromInt(fps))) * std.time.ns_per_s;
@@ -518,7 +526,7 @@ pub const StateActor = struct {
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
             if (!self.state.is_capturing_video or self.state.is_recording_video) return;
-            fps = self.state.fps;
+            fps = self.state.user_settings.settings.capture_fps;
             bit_rate = self.state.bit_rate;
             replay_seconds = self.state.replay_seconds;
         }

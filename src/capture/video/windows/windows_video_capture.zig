@@ -29,10 +29,17 @@ pub const WindowsVideoCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection) !void {
+    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = selection;
+        _ = fps;
+    }
+
+    pub fn updateFps(context: *anyopaque, fps: u32) !void {
+        const self: *Self = @ptrCast(@alignCast(context));
+        _ = self;
+        _ = fps;
     }
 
     pub fn shouldRestoreCaptureSession(context: *anyopaque) !bool {
@@ -89,6 +96,7 @@ pub const WindowsVideoCapture = struct {
             .ptr = self,
             .vtable = &.{
                 .selectSource = selectSource,
+                .updateFps = updateFps,
                 .shouldRestoreCaptureSession = shouldRestoreCaptureSession,
                 .nextFrame = nextFrame,
                 .closeAllChannels = closeAllChannels,

@@ -25,7 +25,8 @@ pub const VideoCapture = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        selectSource: *const fn (*anyopaque, VideoCaptureSelection) anyerror!void,
+        selectSource: *const fn (*anyopaque, VideoCaptureSelection, u32) anyerror!void,
+        updateFps: *const fn (*anyopaque, u32) anyerror!void,
         shouldRestoreCaptureSession: *const fn (*anyopaque) anyerror!bool,
         nextFrame: *const fn (*anyopaque) ChanError!void,
         closeAllChannels: *const fn (*anyopaque) void,
@@ -35,8 +36,12 @@ pub const VideoCapture = struct {
         deinit: *const fn (*anyopaque) void,
     };
 
-    pub fn selectSource(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!void {
-        return self.vtable.selectSource(self.ptr, selection);
+    pub fn selectSource(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
+        return self.vtable.selectSource(self.ptr, selection, fps);
+    }
+
+    pub fn updateFps(self: *Self, fps: u32) !void {
+        return self.vtable.updateFps(self.ptr, fps);
     }
 
     pub fn shouldRestoreCaptureSession(self: *Self) !bool {
