@@ -66,6 +66,13 @@ fn addSharedDependencies(
     const zigrc = b.dependency("zigrc", .{});
     exe.root_module.addImport("zigrc", zigrc.module("zigrc"));
 
+    // zig-clap
+    const clap = b.dependency("clap", .{
+        .target = target,
+        .optimize = optimize,
+    }).module("clap");
+    exe.root_module.addImport("clap", clap);
+
     const ffmpeg_build = switch (target.result.os.tag) {
         .windows => ffmpeg_build_util.build_windows(b),
         else => ffmpeg_build_util.build_linux(b),
