@@ -3,82 +3,55 @@
 A hardware accelerated replay capture tool focused on performance. Currently
 only supports Linux.
 
-This is currently in the very early stages of development.
+![screenshot2](./screenshots/screenshot_3.png)
+
+<p align="center">(very early screenshot - UI still in development)</p>
 
 - Written in [Zig](https://ziglang.org/).
 - Hardware accelerated encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
 - UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
 
+## Features
+
+- Desktop/window capture
+- Save last n seconds of video
+- Global keybinds
+
 ## Why you might want to use this?
 
-You play games on Linux and are looking for a light weight and performant
+You play games on Linux and are looking for a lightweight and performant
 alternative to OBS for capturing video replays.
 
-## What currently is working?
+## Requirements
 
-- Linux
-  - Select desktop/window.
-  - Video capture preview on UI.
-  - Replay buffer with last n seconds of video/audio.
-  - Output to .mp4 file.
-  - Global keybinds via desktop portal.
-- Windows
-  - Binaries are built for Windows, but capture has not been implemented yet.
+- GPU that supports Vulkan Video
 
-**NOTE:** I'm testing with an RTX 3080 GPU. I have no idea if AMD works. I don't have one to test on.
+### Linux
 
-## Linux Requirements
-
-- vulkan (and related graphics drivers)
+- vulkan
 - pipewire
 - pipewire-pulse
 
-### Installation
+#### Global Keybinds
 
-**NOTE:** A reboot may be required.
+If your version of Linux supports [xdg-desktop-portal global shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) then you can configure it that way.
+Otherwise, the Spacecap CLI can be used to send commands to the IPC server.
 
-#### NixOS
+For example, here is what a config in [niri](https://github.com/YaLTeR/niri) would look like:
 
-There is currently not a Nix package published, but for now you can use
-`appimage-run` to execute the appimage.
-
-TODO: Add vulkan instructions.
-
-```nix
-{...}: {
-  security.rtkit.enable = true;
-
-  services.pipewire = {
-    enable = true;
-    alsa.enable = false;
-    pulse.enable = true;
-    wireplumber.enable = true;
-  };
-
-  environment.systemPackages = with pkgs; [
-    appimage-run
-  ];
+```kdl
+binds {
+    Mod+Shift+R hotkey-overlay-title="Spacecap: save replay" { spawn-sh "spacecap -s save-replay && notify-send 'Spacecap' 'Replay saved'"; }
 }
 ```
 
-#### Arch
+Use `spacecap -h` to see available commands.
 
-TODO: Add vulkan instructions.
+### Windows
 
-```sh
-sudo pacman -S --needed wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
-systemctl --user --now enable pipewire pipewire-pulse wireplumber
-```
-
-#### Ubuntu
-
-TODO: Add vulkan instructions.
-
-```sh
-sudo apt update
-sudo apt install wireplumber pipewire pipewire-pulse pipewire-alsa fuse3
-systemctl --user --now enable pipewire pipewire-pulse wireplumber
-```
+Windows is not yet supported. This application was architected in such a way
+that it can be cross platform. For Windows support, the audio/video capture
+interfaces need to be implemented.
 
 ## Development
 
@@ -97,13 +70,9 @@ nix develop -c zig build run -Dnix
 nix develop -c zig build test -Dnix
 ```
 
-## Early Screenshot
-
-![screenshot2](./screenshots/screenshot_3.png)
-
 ## Roadmap
 
-- Set up pipeline to build and distribute binaries (appimage).
+- ~~Set up pipeline to build and distribute binaries (appimage).~~
 - ~~Audio recording.~~
 - ~~Global keybinds~~
 - Screenshots.

@@ -106,6 +106,10 @@
             .url = "git+https://github.com/mgerb/pipewire#4f0f337aca61b127d0c7f800110b8513fbe85dd5",
             .hash = "pipewire-1.5.81-tKslQ3HyEgAxlVc9B_fwqHtJBsNMrQxQ1zQYZ_vMlBUt",
         },
+        .clap = .{
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
+            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.
