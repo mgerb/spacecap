@@ -7,22 +7,9 @@ const sdl = @import("./ui/sdl.zig");
 const PlatformCaptureSetup = @import("./capture/platform_capture_setup.zig").PlatformCaptureSetup;
 const args = @import("./args.zig");
 const PlatformIpc = @import("./ipc/platform_ipc.zig").PlatformIpc;
-
-// TODO: refactor these into platform files
-const PlatformVideoCapture = if (Util.isLinux())
-    @import("./capture/video/linux/linux_pipewire_dma_capture.zig").LinuxPipewireDmaCapture
-else
-    @import("./capture/video/windows/windows_video_capture.zig").WindowsVideoCapture;
-
-const PlatformAudioCapture = if (Util.isLinux())
-    @import("./capture/audio/linux/linux_audio_capture.zig").LinuxAudioCapture
-else
-    @import("./capture/audio/windows/windows_audio_capture.zig").WindowsAudioCapture;
-
-const PlatformGlobalShortcuts = if (Util.isLinux())
-    @import("./global_shortcuts/xdg_desktop_portal_global_shortcuts.zig").XdgDesktopPortalGlobalShortcuts
-else
-    @import("./global_shortcuts/windows_global_shortcuts.zig").WindowsGlobalShortcuts;
+const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig").PlatformAudioCapture;
+const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
+const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shortcuts.zig").PlatformGlobalShortcuts;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{

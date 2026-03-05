@@ -1,5 +1,5 @@
 const std = @import("std");
-const GlobalShortcuts = @import("./global_shortcuts.zig").GlobalShortcuts;
+const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 
 pub const WindowsGlobalShortcuts = struct {
     const Self = @This();

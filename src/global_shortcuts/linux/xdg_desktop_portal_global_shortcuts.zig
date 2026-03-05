@@ -1,9 +1,9 @@
 //// Credits to Ghostty for the implementation reference: https://github.com/ghostty-org/ghostty/pull/7083
 
 const std = @import("std");
-const TokenManager = @import("../common/linux/token_manager.zig");
-const TokenStorage = @import("../common/linux/token_storage.zig");
-const GlobalShortcuts = @import("./global_shortcuts.zig").GlobalShortcuts;
+const TokenManager = @import("../../common/linux/token_manager.zig");
+const TokenStorage = @import("../../common/linux/token_storage.zig");
+const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
 
 const glib = @import("glib");
