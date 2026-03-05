@@ -1,7 +1,7 @@
 const std = @import("std");
 const UI = @import("./ui/ui.zig").UI;
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
-const StateActor = @import("./state_actor.zig").StateActor;
+const Actor = @import("./actor.zig").Actor;
 const Util = @import("./util.zig");
 const sdl = @import("./ui/sdl.zig");
 const PlatformCaptureSetup = @import("./capture/platform_capture_setup.zig").PlatformCaptureSetup;
@@ -103,30 +103,30 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     try global_shortcuts.run();
     defer global_shortcuts.deinit();
 
-    const state_actor = try StateActor.init(
+    const actor = try Actor.init(
         allocator,
         vulkan,
         &video_capture_interface,
         &audio_capture_interface,
         &global_shortcuts,
     );
-    defer state_actor.deinit();
+    defer actor.deinit();
 
-    global_shortcuts.registerShortcutHandler(.{ .ptr = state_actor, .handler = StateActor.globalShortcutsHandler });
+    global_shortcuts.registerShortcutHandler(.{ .ptr = actor, .handler = Actor.globalShortcutsHandler });
 
     const StateThread = struct {
-        pub fn run(_state: *StateActor) void {
+        pub fn run(_state: *Actor) void {
             _state.run();
         }
     };
-    const state_thread = try std.Thread.spawn(.{}, StateThread.run, .{state_actor});
+    const state_thread = try std.Thread.spawn(.{}, StateThread.run, .{actor});
 
-    const _ipc = try PlatformIpc.init(allocator, state_actor);
+    const _ipc = try PlatformIpc.init(allocator, actor);
     var ipc = _ipc.ipc();
     try ipc.start();
     defer ipc.deinit();
 
-    const ui = try UI.init(allocator, state_actor, vulkan);
+    const ui = try UI.init(allocator, actor, vulkan);
     defer ui.deinit();
 
     state_thread.join();

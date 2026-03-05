@@ -2,8 +2,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const StateActor = @import("../state_actor.zig").StateActor;
-const ActionPayload = @import("../state_actor.zig").ActionPayload;
+const Actor = @import("../actor.zig").Actor;
+const ActionPayload = @import("../actor.zig").ActionPayload;
 const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
@@ -73,24 +73,24 @@ pub const AudioState = struct {
         self.devices.deinit(self.allocator);
     }
 
-    pub fn handleActions(self: *Self, state_actor: *StateActor, action: AudioActions) !void {
+    pub fn handleActions(self: *Self, actor: *Actor, action: AudioActions) !void {
         switch (action) {
             .start_capture_thread => {
                 // This should only ever get called once, so the capture_thread must always be null.
                 assert(self.capture_thread == null);
-                self.capture_thread = try std.Thread.spawn(.{}, captureThreadHandler, .{ self, state_actor });
+                self.capture_thread = try std.Thread.spawn(.{}, captureThreadHandler, .{ self, actor });
             },
             .get_available_audio_devices => {
                 var available_devices = try self.audio_capture.getAvailableDevices(self.allocator);
                 defer available_devices.deinit();
 
-                state_actor.ui_mutex.lock();
-                defer state_actor.ui_mutex.unlock();
+                actor.ui_mutex.lock();
+                defer actor.ui_mutex.unlock();
                 self.clearDevices();
                 errdefer self.clearDevices();
 
                 for (available_devices.devices.items) |device| {
-                    const persisted_settings = state_actor.state.user_settings.settings.audio_devices.map.get(device.id);
+                    const persisted_settings = actor.state.user_settings.settings.audio_devices.map.get(device.id);
                     const device_copy = try AudioDeviceViewModel.init(self.allocator, .{
                         .id = device.id,
                         .name = device.name,
@@ -109,15 +109,15 @@ pub const AudioState = struct {
                 defer self.allocator.free(device_id);
 
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
 
                     for (self.devices.items) |*device| {
                         if (!std.mem.eql(u8, device.id, device_id)) continue;
                         device.selected = !device.selected;
                         try self.updateSelectedDevices();
 
-                        try state_actor.dispatch(.{
+                        try actor.dispatch(.{
                             .user_settings = .{
                                 .set_audio_device_settings = try .init(self.allocator, .{
                                     .device_id = device.id,
@@ -134,13 +134,13 @@ pub const AudioState = struct {
                 const payload = _action.payload;
                 defer _action.deinit();
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
 
                     for (self.devices.items) |*device| {
                         if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
                         device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
-                        try state_actor.dispatch(.{
+                        try actor.dispatch(.{
                             .user_settings = .{
                                 .set_audio_device_settings = try .init(self.allocator, .{
                                     .device_id = device.id,
@@ -200,13 +200,13 @@ pub const AudioState = struct {
         self.devices.clearRetainingCapacity();
     }
 
-    fn captureThreadHandler(self: *Self, state_actor: *StateActor) !void {
+    fn captureThreadHandler(self: *Self, actor: *Actor) !void {
         {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             const ptr = replay_buffer_locked.unwrapPtr();
             std.debug.assert(ptr.* == null);
-            ptr.* = try AudioReplayBuffer.init(self.allocator, state_actor.state.replay_seconds);
+            ptr.* = try AudioReplayBuffer.init(self.allocator, actor.state.replay_seconds);
         }
 
         while (true) {
@@ -220,10 +220,10 @@ pub const AudioState = struct {
             };
 
             const gain = blk: {
-                state_actor.ui_mutex.lock();
-                defer state_actor.ui_mutex.unlock();
+                actor.ui_mutex.lock();
+                defer actor.ui_mutex.unlock();
 
-                if (!state_actor.state.is_recording_video) {
+                if (!actor.state.is_recording_video) {
                     break :blk null;
                 }
 

@@ -22,7 +22,7 @@ const exporter = @import("./exporter.zig");
 const AudioActions = @import("./state/audio_state.zig").AudioActions;
 const UserSettingsActions = @import("./state/user_settings_state.zig").UserSettingsActions;
 
-const log = std.log.scoped(.state_actor);
+const log = std.log.scoped(.actor);
 
 pub const Actions = union(enum) {
     start_record,
@@ -128,7 +128,7 @@ pub fn ActionPayload(T: anytype) type {
 }
 
 /// The main application state based on the actor model.
-pub const StateActor = struct {
+pub const Actor = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,

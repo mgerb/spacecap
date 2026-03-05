@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const StateActor = @import("../state_actor.zig").StateActor;
-const ActionPayload = @import("../state_actor.zig").ActionPayload;
+const Actor = @import("../actor.zig").Actor;
+const ActionPayload = @import("../actor.zig").ActionPayload;
 const util = @import("../util.zig");
 
 const log = std.log.scoped(.user_settings_state);
@@ -48,25 +48,25 @@ pub const UserSettingsState = struct {
         self.settings.deinit(self.allocator);
     }
 
-    pub fn handleActions(self: *Self, state_actor: *StateActor, action: UserSettingsActions) !void {
+    pub fn handleActions(self: *Self, actor: *Actor, action: UserSettingsActions) !void {
         switch (action) {
             .set_capture_fps => |fps| {
                 var settings_snapshot: UserSettings = undefined;
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
                     self.settings.capture_fps = fps;
                     settings_snapshot = try self.settings.clone(self.allocator);
                 }
                 defer settings_snapshot.deinit(self.allocator);
                 try self.save(&settings_snapshot);
-                try state_actor.video_capture.updateFps(fps);
+                try actor.video_capture.updateFps(fps);
             },
             .set_gui_foreground_fps => |fps| {
                 var settings_snapshot: UserSettings = undefined;
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
                     self.settings.gui_foreground_fps = fps;
                     settings_snapshot = try self.settings.clone(self.allocator);
                 }
@@ -76,8 +76,8 @@ pub const UserSettingsState = struct {
             .set_gui_background_fps => |fps| {
                 var settings_snapshot: UserSettings = undefined;
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
                     self.settings.gui_background_fps = fps;
                     settings_snapshot = try self.settings.clone(self.allocator);
                 }
@@ -89,8 +89,8 @@ pub const UserSettingsState = struct {
                 const payload = _action.payload;
                 var settings_snapshot: UserSettings = undefined;
                 {
-                    state_actor.ui_mutex.lock();
-                    defer state_actor.ui_mutex.unlock();
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
                     try self.settings.updateAudioDeviceSettings(
                         self.allocator,
                         payload.device_id,

@@ -1,5 +1,5 @@
 const std = @import("std");
-const StateActor = @import("../../state_actor.zig").StateActor;
+const Actor = @import("../../actor.zig").Actor;
 const Ipc = @import("../ipc.zig").Ipc;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 
@@ -8,8 +8,8 @@ pub const WindowsIpc = struct {
 
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, state_actor: ?*StateActor) !*Self {
-        _ = state_actor;
+    pub fn init(allocator: std.mem.Allocator, actor: ?*Actor) !*Self {
+        _ = actor;
         const self = try allocator.create(Self);
         self.* = .{
             .allocator = allocator,

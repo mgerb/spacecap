@@ -6,7 +6,7 @@ A state file should expose:
 
 1. `pub const <Domain>Actions = union(enum) { ... }`
 2. `pub const <Domain>State = struct { ... }`
-3. `pub fn handleActions(self: *Self, state_actor: *StateActor, action: <Domain>Actions) !void`
+3. `pub fn handleActions(self: *Self, actor: *Actor, action: <Domain>Actions) !void`
 
 Example:
 
@@ -24,7 +24,7 @@ pub const ExampleState = struct {
     pub fn init(allocator: std.mem.Allocator) !Self { ... }
     pub fn deinit(self: *Self) void { ... }
 
-    pub fn handleActions(self: *Self, state_actor: *StateActor, action: ExampleActions) !void {
+    pub fn handleActions(self: *Self, actor: *Actor, action: ExampleActions) !void {
         switch (action) {
             .do_thing => { ... },
             .set_value => |value| { ... },
