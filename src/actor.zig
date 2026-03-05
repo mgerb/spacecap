@@ -520,14 +520,14 @@ pub const Actor = struct {
         defer self.video_record_mutex.unlock();
 
         var fps: u32 = 0;
-        var bit_rate: u64 = 0;
+        var capture_bit_rate: u64 = 0;
         var replay_seconds: u32 = 0;
         {
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
             if (!self.state.is_capturing_video or self.state.is_recording_video) return;
             fps = self.state.user_settings.settings.capture_fps;
-            bit_rate = self.state.bit_rate;
+            capture_bit_rate = self.state.user_settings.settings.capture_bit_rate;
             replay_seconds = self.state.replay_seconds;
         }
 
@@ -539,7 +539,7 @@ pub const Actor = struct {
             size.width,
             size.height,
             fps,
-            bit_rate,
+            capture_bit_rate,
         );
         errdefer self.vulkan.destroyVideoEncoder();
 

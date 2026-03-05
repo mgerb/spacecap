@@ -8,6 +8,7 @@ const log = std.log.scoped(.user_settings_state);
 
 pub const UserSettingsActions = union(enum) {
     set_capture_fps: u32,
+    set_capture_bit_rate: u64,
     set_gui_foreground_fps: u32,
     set_gui_background_fps: u32,
     set_audio_device_settings: *ActionPayload(struct {
@@ -61,6 +62,17 @@ pub const UserSettingsState = struct {
                 defer settings_snapshot.deinit(self.allocator);
                 try self.save(&settings_snapshot);
                 try actor.video_capture.updateFps(fps);
+            },
+            .set_capture_bit_rate => |bit_rate| {
+                var settings_snapshot: UserSettings = undefined;
+                {
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
+                    self.settings.capture_bit_rate = bit_rate;
+                    settings_snapshot = try self.settings.clone(self.allocator);
+                }
+                defer settings_snapshot.deinit(self.allocator);
+                try self.save(&settings_snapshot);
             },
             .set_gui_foreground_fps => |fps| {
                 var settings_snapshot: UserSettings = undefined;
@@ -133,6 +145,7 @@ pub const UserSettingsState = struct {
 
         var loaded: UserSettings = .{
             .capture_fps = parsed.value.capture_fps,
+            .capture_bit_rate = parsed.value.capture_bit_rate,
             .gui_foreground_fps = parsed.value.gui_foreground_fps,
             .gui_background_fps = parsed.value.gui_background_fps,
         };
@@ -183,6 +196,8 @@ const UserSettings = struct {
     gui_foreground_fps: u32 = 120,
     gui_background_fps: u32 = 30,
     capture_fps: u32 = 60,
+    /// In bits per second (bps).
+    capture_bit_rate: u64 = 10_000_000,
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     fn deinit(self: *@This(), allocator: Allocator) void {
@@ -227,6 +242,7 @@ const UserSettings = struct {
     fn clone(self: @This(), allocator: Allocator) !@This() {
         var settings_copy: @This() = .{
             .capture_fps = self.capture_fps,
+            .capture_bit_rate = self.capture_bit_rate,
             .gui_foreground_fps = self.gui_foreground_fps,
             .gui_background_fps = self.gui_background_fps,
         };
