@@ -1,7 +1,7 @@
 const c = @import("imguiz").imguiz;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
-const COLUMN_WIDTH = @import("./draw_left_column.zig").COLUMN_WIDTH;
+const left_column = @import("./draw_left_column.zig");
 
 pub fn drawVideoPreview(args: union(enum) {
     vulkan_video_not_supported,
@@ -11,10 +11,12 @@ pub fn drawVideoPreview(args: union(enum) {
         height: u32,
     },
 }) !void {
+    const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
-    const container_width = viewport_size.x - COLUMN_WIDTH;
+    const column_width = left_column.getColumnWidth();
+    const container_width = @max(viewport_size.x - column_width, 0.0);
     const container_height = viewport_size.y * 0.7;
-    c.ImGui_SetNextWindowPos(.{ .x = COLUMN_WIDTH, .y = 0 }, 0);
+    c.ImGui_SetNextWindowPos(.{ .x = viewport_pos.x + column_width, .y = viewport_pos.y }, 0);
     c.ImGui_SetNextWindowSize(c.ImVec2{
         .x = container_width,
         .y = container_height,

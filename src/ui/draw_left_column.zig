@@ -6,7 +6,10 @@ const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 
-pub const COLUMN_WIDTH = 380;
+pub const DEFAULT_COLUMN_WIDTH: f32 = 400;
+const MIN_COLUMN_WIDTH: f32 = 320;
+const MIN_PREVIEW_WIDTH: f32 = 320;
+const COLUMN_RESIZE_GRIP_WIDTH: f32 = 8;
 const CONTROL_HEIGHT: f32 = 30;
 const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
@@ -20,6 +23,41 @@ const CAPTURE_BIT_RATE_KBPS_MAX: c_int = 200_000;
 /// because we only want to update the global state when not dragging.
 var capture_fps_local: ?i32 = null;
 var capture_bit_rate_kbps_local: ?i32 = null;
+var column_width: f32 = DEFAULT_COLUMN_WIDTH;
+
+pub fn getColumnWidth() f32 {
+    return column_width;
+}
+
+fn drawColumnResizeHandle(viewport_size: c.ImVec2) void {
+    const max_column_width = @max(MIN_COLUMN_WIDTH, viewport_size.x - MIN_PREVIEW_WIDTH);
+    const cursor_pos = c.ImGui_GetCursorPos();
+    defer c.ImGui_SetCursorPos(cursor_pos);
+
+    const window_pos = c.ImGui_GetWindowPos();
+    const window_size = c.ImGui_GetWindowSize();
+    const style = c.ImGui_GetStyle().*;
+    const grip_height = @max(0.0, window_size.y - (style.WindowPadding.y * 2.0));
+
+    c.ImGui_SetCursorScreenPos(.{
+        .x = window_pos.x + window_size.x - COLUMN_RESIZE_GRIP_WIDTH,
+        .y = window_pos.y + style.WindowPadding.y,
+    });
+    _ = c.ImGui_InvisibleButton(
+        "##left-column-resize-grip",
+        .{ .x = COLUMN_RESIZE_GRIP_WIDTH, .y = grip_height },
+        0,
+    );
+
+    if (c.ImGui_IsItemActive()) {
+        const delta_x = c.ImGui_GetIO().*.MouseDelta.x;
+        column_width = std.math.clamp(column_width + delta_x, MIN_COLUMN_WIDTH, max_column_width);
+    }
+
+    if (c.ImGui_IsItemHovered(0) or c.ImGui_IsItemActive()) {
+        c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeEW);
+    }
+}
 
 fn deviceTypeLabel(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
@@ -157,11 +195,13 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
+    const max_column_width = @max(MIN_COLUMN_WIDTH, viewport_size.x - MIN_PREVIEW_WIDTH);
+    column_width = std.math.clamp(column_width, MIN_COLUMN_WIDTH, max_column_width);
 
     // Set position and size for the left panel window
     c.ImGui_SetNextWindowPos(viewport_pos, 0);
     c.ImGui_SetNextWindowSize(c.ImVec2{
-        .x = COLUMN_WIDTH,
+        .x = column_width,
         .y = viewport_size.y,
     }, 0);
 
@@ -170,6 +210,8 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGuiWindowFlags_NoMove |
         c.ImGuiWindowFlags_NoCollapse);
     defer c.ImGui_End();
+
+    drawColumnResizeHandle(viewport_size);
 
     // c.ImGui_SeparatorText("Spacecap");
 
@@ -346,7 +388,7 @@ fn drawCaptureSettings(actor: *Actor) !void {
 
     if (actor.state.is_recording_video) {
         c.ImGui_PushTextWrapPos(0);
-        c.ImGui_TextUnformatted("Recording in progress. bit_rate changes take effect after restarting recording.");
+        c.ImGui_TextUnformatted("Recording in progress. Bitrate changes take effect after restarting recording.");
         c.ImGui_PopTextWrapPos();
     }
 }
