@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const StateActor = @import("../../state_actor.zig").StateActor;
+const Actor = @import("../../actor.zig").Actor;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 
 const SOCKET_FILE_NAME = "spacecap.sock";
@@ -29,16 +29,16 @@ pub const IpcServer = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    state_actor: *StateActor,
+    actor: *Actor,
     socket_path: ?[]u8 = null,
     listen_socket: ?std.posix.socket_t = null,
     thread: ?std.Thread = null,
     stop_requested: std.atomic.Value(bool) = .init(false),
 
-    pub fn init(allocator: std.mem.Allocator, state_actor: *StateActor) !Self {
+    pub fn init(allocator: std.mem.Allocator, actor: *Actor) !Self {
         return .{
             .allocator = allocator,
-            .state_actor = state_actor,
+            .actor = actor,
             .socket_path = try getSocketPath(allocator),
         };
     }
@@ -162,7 +162,7 @@ pub const IpcServer = struct {
             // Used to close the socket.
             .wake => return,
             .save_replay => {
-                self.state_actor.dispatch(.save_replay) catch |err| {
+                self.actor.dispatch(.save_replay) catch |err| {
                     log.err("[handleClient] failed to dispatch save_replay from IPC command: {}", .{err});
                     stream.writeAll(&[_]u8{ResponsePayload.request_failed.value()}) catch {};
                     return;

@@ -7,7 +7,7 @@ const util = @import("../util.zig");
 const sdl = @import("./sdl.zig");
 
 const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
-const StateActor = @import("../state_actor.zig").StateActor;
+const Actor = @import("../actor.zig").Actor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
@@ -25,7 +25,7 @@ pub const UI = struct {
     const log = std.log.scoped(.ui);
     const Self = @This();
 
-    state_actor: *StateActor,
+    actor: *Actor,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
 
@@ -37,7 +37,7 @@ pub const UI = struct {
     /// Init SDL and return new UI instance
     pub fn init(
         allocator: std.mem.Allocator,
-        state_actor: *StateActor,
+        actor: *Actor,
         vulkan: *Vulkan,
     ) !*Self {
         const self = try allocator.create(Self);
@@ -45,7 +45,7 @@ pub const UI = struct {
 
         self.* = Self{
             .allocator = allocator,
-            .state_actor = state_actor,
+            .actor = actor,
             .vulkan = vulkan,
         };
 
@@ -332,24 +332,24 @@ pub const UI = struct {
                 }
 
                 {
-                    self.state_actor.ui_mutex.lock();
-                    defer self.state_actor.ui_mutex.unlock();
+                    self.actor.ui_mutex.lock();
+                    defer self.actor.ui_mutex.unlock();
 
                     // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-                    if (self.state_actor.state.show_demo) {
+                    if (self.actor.state.show_demo) {
                         var show_demo_window: bool = true;
                         c.ImGui_ShowDemoWindow(&show_demo_window);
 
                         if (!show_demo_window) {
-                            try self.state_actor.dispatch(.show_demo);
+                            try self.actor.dispatch(.show_demo);
                         }
                     }
 
-                    try drawLeftColumn(self.allocator, self.state_actor);
+                    try drawLeftColumn(self.allocator, self.actor);
 
-                    if (!self.state_actor.state.is_video_capture_supprted) {
+                    if (!self.actor.state.is_video_capture_supprted) {
                         try drawVideoPreview(.vulkan_video_not_supported);
-                    } else if (self.state_actor.state.is_capturing_video) {
+                    } else if (self.actor.state.is_capturing_video) {
                         const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
                         defer capture_preview_ring_buffer_locked.unlock();
                         if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
@@ -391,10 +391,10 @@ pub const UI = struct {
             // Delay until the next frame to maintain desired FPS.
             // We use mailbox present mode so unlimited FPS can get
             // pretty high e.g. 2k+
-            self.state_actor.ui_mutex.lock();
-            const fg_fps = self.state_actor.state.user_settings.settings.gui_foreground_fps;
-            const bg_fps = self.state_actor.state.user_settings.settings.gui_background_fps;
-            self.state_actor.ui_mutex.unlock();
+            self.actor.ui_mutex.lock();
+            const fg_fps = self.actor.state.user_settings.settings.gui_foreground_fps;
+            const bg_fps = self.actor.state.user_settings.settings.gui_background_fps;
+            self.actor.ui_mutex.unlock();
 
             const frame_duration_ns = if (window_has_focus) (1_000_000_000 / fg_fps) else (1_000_000_000 / bg_fps);
             const elapsed_ns = timer.read();
@@ -404,7 +404,7 @@ pub const UI = struct {
             }
         }
 
-        try self.state_actor.dispatch(.exit);
+        try self.actor.dispatch(.exit);
     }
 
     fn frameRender(self: *Self, draw_data: *c.ImDrawData) !void {

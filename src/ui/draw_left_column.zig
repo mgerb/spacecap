@@ -1,6 +1,6 @@
 const std = @import("std");
 const c = @import("imguiz").imguiz;
-const StateActor = @import("../state_actor.zig").StateActor;
+const Actor = @import("../actor.zig").Actor;
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
@@ -24,10 +24,10 @@ fn deviceTypeLabel(device_type: AudioDeviceType) []const u8 {
     };
 }
 
-fn drawAudioDeviceSelector(allocator: std.mem.Allocator, state_actor: *StateActor) !void {
+fn drawAudioDeviceSelector(allocator: std.mem.Allocator, actor: *Actor) !void {
     var selected_count: usize = 0;
     var first_selected_name: ?[]const u8 = null;
-    for (state_actor.state.audio.devices.items) |device| {
+    for (actor.state.audio.devices.items) |device| {
         if (!device.selected) continue;
         selected_count += 1;
         if (first_selected_name == null) {
@@ -54,12 +54,12 @@ fn drawAudioDeviceSelector(allocator: std.mem.Allocator, state_actor: *StateActo
     if (c.ImGui_BeginCombo("##Audio Sources", preview_text.ptr, 0)) {
         defer c.ImGui_EndCombo();
 
-        if (state_actor.state.audio.devices.items.len == 0) {
+        if (actor.state.audio.devices.items.len == 0) {
             c.ImGui_Text("No audio devices found");
             return;
         }
 
-        for (state_actor.state.audio.devices.items) |device| {
+        for (actor.state.audio.devices.items) |device| {
             const item_label = try std.fmt.allocPrintSentinel(allocator, "[{s}] {s}{s}##audio-device-{s}", .{
                 deviceTypeLabel(device.device_type),
                 device.name,
@@ -76,20 +76,20 @@ fn drawAudioDeviceSelector(allocator: std.mem.Allocator, state_actor: *StateActo
             )) {
                 const device_id_copy = try allocator.dupe(u8, device.id);
                 errdefer allocator.free(device_id_copy);
-                try state_actor.dispatch(.{ .audio = .{ .toggle_audio_device = device_id_copy } });
+                try actor.dispatch(.{ .audio = .{ .toggle_audio_device = device_id_copy } });
             }
         }
     }
 }
 
-fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, state_actor: *StateActor) !void {
+fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, actor: *Actor) !void {
     var selected_total: usize = 0;
-    for (state_actor.state.audio.devices.items) |device| {
+    for (actor.state.audio.devices.items) |device| {
         if (device.selected) selected_total += 1;
     }
 
     var rendered_count: usize = 0;
-    for (state_actor.state.audio.devices.items) |device| {
+    for (actor.state.audio.devices.items) |device| {
         if (!device.selected) continue;
         rendered_count += 1;
 
@@ -126,7 +126,7 @@ fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, state_actor:
             _ = c.ImGui_TableNextColumn();
             c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
             if (c.ImGui_SliderFloatEx(gain_slider_id, &gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX, "%.2fx", 0)) {
-                try state_actor.dispatch(.{ .audio = .{
+                try actor.dispatch(.{ .audio = .{
                     .set_audio_device_gain = try .init(allocator, .{
                         .device_id = device.id,
                         .gain = gain,
@@ -149,7 +149,7 @@ fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, state_actor:
     }
 }
 
-pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !void {
+pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
@@ -175,18 +175,18 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
         if (c.ImGui_BeginTabItem("Capture", null, 0)) {
             defer c.ImGui_EndTabItem();
 
-            const video_capture_supported = state_actor.state.is_video_capture_supprted;
+            const video_capture_supported = actor.state.is_video_capture_supprted;
             c.ImGui_SeparatorText("Video");
             if (c.ImGui_BeginTable("source_table", 2, c.ImGuiTableFlags_None)) {
                 c.ImGui_BeginDisabled(!video_capture_supported);
                 _ = c.ImGui_TableNextColumn();
                 if (c.ImGui_ButtonEx("Desktop", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = CONTROL_HEIGHT })) {
-                    try state_actor.dispatch(.{ .select_video_source = .desktop });
+                    try actor.dispatch(.{ .select_video_source = .desktop });
                 }
 
                 _ = c.ImGui_TableNextColumn();
                 if (c.ImGui_ButtonEx("Window", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = CONTROL_HEIGHT })) {
-                    try state_actor.dispatch(.{ .select_video_source = .window });
+                    try actor.dispatch(.{ .select_video_source = .window });
                 }
                 c.ImGui_EndDisabled();
                 c.ImGui_EndTable();
@@ -194,9 +194,9 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
             c.ImGui_SeparatorText("Audio");
-            try drawAudioDeviceSelector(allocator, state_actor);
+            try drawAudioDeviceSelector(allocator, actor);
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
-            try drawSelectedAudioSourceGainSliders(allocator, state_actor);
+            try drawSelectedAudioSourceGainSliders(allocator, actor);
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
             c.ImGui_Separator();
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
@@ -207,9 +207,9 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.251, .y = 0.627, .z = 0.169, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.329, .y = 0.706, .z = 0.247, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.173, .y = 0.471, .z = 0.129, .w = 1.0 });
-                c.ImGui_BeginDisabled(!video_capture_supported or state_actor.state.is_recording_video or !state_actor.state.is_capturing_video);
+                c.ImGui_BeginDisabled(!video_capture_supported or actor.state.is_recording_video or !actor.state.is_capturing_video);
                 if (c.ImGui_ButtonEx("Start", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
-                    try state_actor.dispatch(.start_record);
+                    try actor.dispatch(.start_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
                 c.ImGui_EndDisabled();
@@ -219,9 +219,9 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.6, .y = 0.0, .z = 0.0, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.75, .y = 0.1, .z = 0.1, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.5, .y = 0.0, .z = 0.0, .w = 1.0 });
-                c.ImGui_BeginDisabled(!video_capture_supported or !state_actor.state.is_recording_video);
+                c.ImGui_BeginDisabled(!video_capture_supported or !actor.state.is_recording_video);
                 if (c.ImGui_ButtonEx("Stop", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
-                    try state_actor.dispatch(.stop_record);
+                    try actor.dispatch(.stop_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
                 c.ImGui_EndDisabled();
@@ -229,7 +229,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             }
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
-            const save_replay_enabled = video_capture_supported and state_actor.state.is_recording_video;
+            const save_replay_enabled = video_capture_supported and actor.state.is_recording_video;
             if (save_replay_enabled) {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, c.ImVec4{ .x = 0.447, .y = 0.529, .z = 0.992, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.525, .y = 0.608, .z = 1.000, .w = 1.0 });
@@ -241,15 +241,15 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             }
             c.ImGui_BeginDisabled(!save_replay_enabled);
             if (c.ImGui_ButtonEx("Save Replay", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = CONTROL_HEIGHT })) {
-                try state_actor.dispatch(.save_replay);
+                try actor.dispatch(.save_replay);
             }
             c.ImGui_PopStyleColorEx(3);
             c.ImGui_EndDisabled();
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
-            const replay_text = try std.fmt.allocPrintSentinel(allocator, "Time: {}s", .{state_actor.state.replay_buffer.seconds}, 0);
+            const replay_text = try std.fmt.allocPrintSentinel(allocator, "Time: {}s", .{actor.state.replay_buffer.seconds}, 0);
             defer allocator.free(replay_text);
-            const size_text = try std.fmt.allocPrintSentinel(allocator, "Size: {d:.2}MB", .{state_actor.state.replay_buffer.sizeInMB()}, 0);
+            const size_text = try std.fmt.allocPrintSentinel(allocator, "Size: {d:.2}MB", .{actor.state.replay_buffer.sizeInMB()}, 0);
             defer allocator.free(size_text);
             c.ImGui_Text(replay_text);
             c.ImGui_Text(size_text);
@@ -258,22 +258,22 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {
             defer c.ImGui_EndTabItem();
 
-            try drawCaptureSettings(state_actor);
+            try drawCaptureSettings(actor);
 
             c.ImGui_SeparatorText("GUI Settings");
 
-            var fg_fps = @as(f32, @floatFromInt(state_actor.state.user_settings.settings.gui_foreground_fps));
+            var fg_fps = @as(f32, @floatFromInt(actor.state.user_settings.settings.gui_foreground_fps));
             if (c.ImGui_DragFloatEx("FG FPS", &fg_fps, 1, 1.0, 240.0, "%.0f", 0)) {
-                try state_actor.dispatch(.{ .user_settings = .{
+                try actor.dispatch(.{ .user_settings = .{
                     .set_gui_foreground_fps = @as(u32, @intFromFloat(fg_fps)),
                 } });
             }
             c.ImGui_SameLine();
             imgui_util.help_marker("Forground FPS. This is the max frame rate Spacecap will render while focused. Drag or double click to change.");
 
-            var bg_fps = @as(f32, @floatFromInt(state_actor.state.user_settings.settings.gui_background_fps));
+            var bg_fps = @as(f32, @floatFromInt(actor.state.user_settings.settings.gui_background_fps));
             if (c.ImGui_DragFloatEx("BG FPS", &bg_fps, 1, 1.0, 240.0, "%.0f", 0)) {
-                try state_actor.dispatch(.{ .user_settings = .{
+                try actor.dispatch(.{ .user_settings = .{
                     .set_gui_background_fps = @as(u32, @intFromFloat(bg_fps)),
                 } });
             }
@@ -289,7 +289,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             // const spacing = c.ImGui_GetStyle().*.ItemSpacing.x;
             // const button_width = @max(0.0, c.ImGui_GetContentRegionAvail().x - help_marker_width - spacing);
             // if (c.ImGui_ButtonEx("Configure Shortcuts", .{ .x = button_width, .y = 0 })) {
-            //     try state_actor.dispatch(.open_global_shortcuts);
+            //     try actor.dispatch(.open_global_shortcuts);
             // }
             // c.ImGui_SameLineEx(0, spacing);
             // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
@@ -297,7 +297,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
             c.ImGui_SeparatorText("imgui debug");
 
             if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                try state_actor.dispatch(.show_demo);
+                try actor.dispatch(.show_demo);
             }
             const io = c.ImGui_GetIO();
             c.ImGui_Text("%.3f ms/frame", 1000.0 / io.*.Framerate);
@@ -306,15 +306,15 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, state_actor: *StateActor) !v
     }
 }
 
-fn drawCaptureSettings(state_actor: *StateActor) !void {
+fn drawCaptureSettings(actor: *Actor) !void {
     c.ImGui_SeparatorText("Capture Settings");
-    const current_capture_fps: i32 = @intCast(state_actor.state.user_settings.settings.capture_fps);
+    const current_capture_fps: i32 = @intCast(actor.state.user_settings.settings.capture_fps);
     var fps = capture_fps_local orelse current_capture_fps;
     if (c.ImGui_DragIntEx("FPS", &fps, 1.0, CAPTURE_FPS_MIN, CAPTURE_FPS_MAX, "%d", c.ImGuiSliderFlags_AlwaysClamp)) {
         capture_fps_local = fps;
     }
     if (c.ImGui_IsItemDeactivatedAfterEdit() and fps > 0 and fps != current_capture_fps) {
-        try state_actor.dispatch(.{ .user_settings = .{
+        try actor.dispatch(.{ .user_settings = .{
             .set_capture_fps = @intCast(fps),
         } });
         capture_fps_local = null;

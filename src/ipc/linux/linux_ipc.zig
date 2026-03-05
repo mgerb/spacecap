@@ -1,5 +1,5 @@
 const std = @import("std");
-const StateActor = @import("../../state_actor.zig").StateActor;
+const Actor = @import("../../actor.zig").Actor;
 const Ipc = @import("../ipc.zig").Ipc;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 const IpcServer = @import("./linux_ipc_server.zig").IpcServer;
@@ -10,14 +10,14 @@ pub const LinuxIpc = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    state_actor: ?*StateActor,
+    actor: ?*Actor,
     server: ?IpcServer = null,
 
-    pub fn init(allocator: std.mem.Allocator, state_actor: ?*StateActor) !*Self {
+    pub fn init(allocator: std.mem.Allocator, actor: ?*Actor) !*Self {
         const self = try allocator.create(Self);
         self.* = .{
             .allocator = allocator,
-            .state_actor = state_actor,
+            .actor = actor,
             .server = null,
         };
         return self;
@@ -38,8 +38,8 @@ pub const LinuxIpc = struct {
             return;
         }
 
-        const state_actor = self.state_actor orelse return error.StateActorRequired;
-        self.server = try IpcServer.init(self.allocator, state_actor);
+        const actor = self.actor orelse return error.ActorRequired;
+        self.server = try IpcServer.init(self.allocator, actor);
         errdefer {
             if (self.server) |*server| {
                 server.deinit();
