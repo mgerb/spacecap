@@ -6,16 +6,20 @@ const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 
-pub const COLUMN_WIDTH = 280;
+pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
 const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
 const CAPTURE_FPS_MIN: c_int = 1;
 const CAPTURE_FPS_MAX: c_int = 240;
+const CAPTURE_BIT_RATE_BPS_PER_KBPS: u64 = 1_000;
+const CAPTURE_BIT_RATE_KBPS_MIN: c_int = 1_000;
+const CAPTURE_BIT_RATE_KBPS_MAX: c_int = 200_000;
 
 /// This is bound to a drag input. We keep a locally bound value
 /// because we only want to update the global state when not dragging.
 var capture_fps_local: ?i32 = null;
+var capture_bit_rate_kbps_local: ?i32 = null;
 
 fn deviceTypeLabel(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
@@ -324,4 +328,25 @@ fn drawCaptureSettings(actor: *Actor) !void {
     }
     c.ImGui_SameLine();
     imgui_util.help_marker("Capture FPS. Drag or double click to change.");
+
+    var current_capture_bit_rate_kbps: i32 = @intCast(actor.state.user_settings.settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
+    if (c.ImGui_InputIntEx(
+        "Bitrate",
+        &current_capture_bit_rate_kbps,
+        CAPTURE_BIT_RATE_KBPS_MIN,
+        CAPTURE_BIT_RATE_KBPS_MAX,
+        c.ImGuiInputTextFlags_None,
+    )) {
+        try actor.dispatch(.{ .user_settings = .{
+            .set_capture_bit_rate = @as(u64, @intCast(current_capture_bit_rate_kbps)) * CAPTURE_BIT_RATE_BPS_PER_KBPS,
+        } });
+    }
+    c.ImGui_SameLine();
+    imgui_util.help_marker("Capture bitrate in Kbps.");
+
+    if (actor.state.is_recording_video) {
+        c.ImGui_PushTextWrapPos(0);
+        c.ImGui_TextUnformatted("Recording in progress. bit_rate changes take effect after restarting recording.");
+        c.ImGui_PopTextWrapPos();
+    }
 }

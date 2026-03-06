@@ -21,7 +21,6 @@ const ReplayBufferViewModel = struct {
 // User settings
 user_settings: UserSettingsState,
 replay_seconds: u32 = 60,
-bit_rate: u64 = 20_000_000,
 
 is_recording_video: bool = false,
 is_capturing_video: bool = false,
