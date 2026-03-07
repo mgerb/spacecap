@@ -40,8 +40,8 @@
             pname = "linuxdeploy";
             version = "continuous";
             src = pkgs.fetchurl {
-              url = "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage";
-              sha256 = "sha256-nFCMLLcA+ExmAufWDpnxgGodn5Doomw8nrvHxiu5UFs=";
+              url = "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage";
+              sha256 = "sha256-wgzXHjpOO4DDSDzveTzaP06ZCsoUAU0jxUTKPOEnC00=";
             };
             dontUnpack = true;
             dontFixup = true;
