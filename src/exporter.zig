@@ -2,13 +2,8 @@
 //// e.g. Export from replay buffers.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
-const VideoReplayBufferNode = @import("./vulkan/video_replay_buffer.zig").VideoReplayBufferNode;
 const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
-const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
-const audio_mixer = @import("./audio_mixer.zig");
-const mixAudio = audio_mixer.mixAudio;
 const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
 const checkErr = @import("./ffmpeg.zig").checkErr;
 const Muxer = @import("./muxer.zig").Muxer;
@@ -24,11 +19,7 @@ pub fn exportReplayBuffers(
     fps: u32,
     video_replay_buffer: *VideoReplayBuffer,
     audio_replay_buffer: *AudioReplayBuffer,
-    audio_sample_rate: u32,
-    audio_channels: u32,
 ) !void {
-    assert(audio_sample_rate > 0);
-    assert(audio_channels > 0);
     defer audio_replay_buffer.deinit();
     defer video_replay_buffer.deinit();
 
@@ -37,39 +28,25 @@ pub fn exportReplayBuffers(
         return;
     }
 
-    // The final output is based on the captured video. We first need to
-    // prepare the video before we do any audio processing.
+    // The final output is based on the captured video. We still need to align
+    // audio against the replay window after the first valid IDR frame is known.
     video_replay_buffer.ensureFirstFrameIsIdr();
     const replay_window = video_replay_buffer.getReplayWindow() orelse {
         log.warn("[exportReplayBuffers] replay window is not valid", .{});
         return;
     };
-
-    var mixed_audio_samples = try mixAudio(
-        allocator,
-        audio_replay_buffer,
-        replay_window,
-        audio_sample_rate,
-        audio_channels,
-    ) orelse {
-        log.warn("[exportReplayBuffers] unable to mix audio", .{});
-        return;
-    };
-    defer mixed_audio_samples.deinit(allocator);
-
-    // NOTE: This is for testing purposes. Write only audio file. Eventually this can be used
-    // for audio only recording.
-    // try writeAudioToFile(allocator, sample_rate, channels, audio_samples.items);
+    // Capture-time encoding can still leave one partial AAC frame buffered.
+    // Finalize drains that tail before the muxer starts consuming packets.
+    try audio_replay_buffer.finalize();
 
     var muxer = try Muxer.init(
         allocator,
         video_replay_buffer,
+        audio_replay_buffer,
+        replay_window,
         width,
         height,
         fps,
-        mixed_audio_samples.items,
-        audio_sample_rate,
-        audio_channels,
         "replay",
     );
     defer muxer.deinit();

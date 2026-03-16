@@ -126,3 +126,63 @@ pub fn getAppDataDir(allocator: std.mem.Allocator) ![]u8 {
 
     return app_config_dir;
 }
+
+pub fn LinkedListIterator(comptime T: type) type {
+    return struct {
+        current: ?*@FieldType(T, "node"),
+
+        pub fn init(list: anytype) @This() {
+            return .{ .current = list.first };
+        }
+
+        pub fn next(self: *@This()) ?*T {
+            const current = self.current orelse return null;
+            self.current = current.next;
+            return @fieldParentPtr("node", current);
+        }
+    };
+}
+
+test "LinkedListIterator iterates doubly linked list data in order" {
+    const TestNode = struct {
+        value: u32,
+        node: std.DoublyLinkedList.Node = .{},
+    };
+
+    var list: std.DoublyLinkedList = .{};
+    var first = TestNode{ .value = 1 };
+    var second = TestNode{ .value = 2 };
+    var third = TestNode{ .value = 3 };
+
+    list.append(&first.node);
+    list.append(&second.node);
+    list.append(&third.node);
+
+    var iter = LinkedListIterator(TestNode).init(&list);
+    try std.testing.expectEqual(1, iter.next().?.value);
+    try std.testing.expectEqual(2, iter.next().?.value);
+    try std.testing.expectEqual(3, iter.next().?.value);
+    try std.testing.expectEqual(null, iter.next());
+}
+
+test "LinkedListIterator iterates singly linked list data in order" {
+    const TestNode = struct {
+        value: u32,
+        node: std.SinglyLinkedList.Node = .{},
+    };
+
+    var list: std.SinglyLinkedList = .{};
+    var first = TestNode{ .value = 1 };
+    var second = TestNode{ .value = 2 };
+    var third = TestNode{ .value = 3 };
+
+    list.prepend(&third.node);
+    list.prepend(&second.node);
+    list.prepend(&first.node);
+
+    var iter = LinkedListIterator(TestNode).init(&list);
+    try std.testing.expectEqual(1, iter.next().?.value);
+    try std.testing.expectEqual(2, iter.next().?.value);
+    try std.testing.expectEqual(3, iter.next().?.value);
+    try std.testing.expectEqual(null, iter.next());
+}

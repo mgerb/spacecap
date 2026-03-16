@@ -84,9 +84,7 @@ pub const VideoReplayBuffer = struct {
         };
 
         // Remove all frames before the replay window.
-        // TODO: Double check if we need this now. Replays have been refactored since this.
-        // Add 1 second buffer - this makes the video time more accurate in a player
-        const oldest_ns = frame_time_ns - (@as(i128, @intCast(self.replay_seconds + 1)) * std.time.ns_per_s);
+        const oldest_ns = frame_time_ns - (@as(i128, @intCast(self.replay_seconds)) * std.time.ns_per_s);
         while (true) {
             if (self.frames.first) |first| {
                 const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
@@ -113,7 +111,7 @@ pub const VideoReplayBuffer = struct {
 
                 if (first_node != last_node) {
                     const total_time = last_node.data.timestamp_ns - first_node.data.timestamp_ns;
-                    const total_seconds: u32 = @intCast(@divFloor(total_time, std.time.ns_per_s));
+                    const total_seconds: u32 = @intCast(std.math.divCeil(i128, total_time, std.time.ns_per_s) catch unreachable);
                     return total_seconds;
                 }
             }
@@ -180,8 +178,7 @@ test "addFrame - should add a frame with 3 bytes" {
 
 test "addFrame - should trim frames outside replay window" {
     const replay_seconds = 2;
-    // The implementation keeps replay_seconds + 1 seconds of data.
-    const max_seconds_retained = replay_seconds + 1;
+    const max_seconds_retained = replay_seconds;
     const max_frames = max_seconds_retained + 1;
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, replay_seconds, &.{});
     defer replay_buffer.deinit();

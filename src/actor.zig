@@ -9,8 +9,6 @@ const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCapt
 const VideoCaptureSelection = @import("./capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
 const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
-const SAMPLE_RATE = @import("./capture/audio/audio_capture.zig").SAMPLE_RATE;
-const CHANNELS = @import("./capture/audio/audio_capture.zig").CHANNELS;
 const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const BufferedChan = @import("./channel.zig").BufferedChan;
 const ChanError = @import("./channel.zig").ChanError;
@@ -263,12 +261,11 @@ pub const Actor = struct {
                 )).?;
                 errdefer audio_replay_buffer.deinit();
 
+                // TODO: create swapReplayBuffer method when this is moved to video state.
                 var video_replay_buffer: ?*VideoReplayBuffer = null;
                 {
                     self.video_record_mutex.lock();
                     defer self.video_record_mutex.unlock();
-
-                    const video_encoder = self.vulkan.video_encoder orelse return error.video_encoder_is_null;
 
                     var video_replay_buffer_locked = self.video_replay_buffer.lock();
                     defer video_replay_buffer_locked.unlock();
@@ -277,6 +274,10 @@ pub const Actor = struct {
                     // video_replay_buffer should never be null here. If the state is recording,
                     // it will always be valid.
                     assert(video_replay_buffer != null);
+
+                    // The encoder should never be null if we have a video replay buffer.
+                    assert(self.vulkan.video_encoder != null);
+                    const video_encoder = self.vulkan.video_encoder.?;
 
                     video_replay_buffer_locked.set(try .init(
                         self.allocator,
@@ -292,8 +293,6 @@ pub const Actor = struct {
                     fps,
                     video_replay_buffer.?,
                     audio_replay_buffer,
-                    SAMPLE_RATE,
-                    CHANNELS,
                 );
             },
             .select_video_source => |source_type| {
