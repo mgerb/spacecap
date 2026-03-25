@@ -33,7 +33,7 @@ pub const LinuxAudioCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn receiveData(context: *anyopaque) ChanError!*AudioCaptureData {
+    pub fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire_audio.data_chan.recv();
     }
@@ -43,22 +43,22 @@ pub const LinuxAudioCapture = struct {
         self.pipewire_audio.data_chan.close(.{ .drain = true });
     }
 
-    pub fn getAvailableDevices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {
+    pub fn get_available_devices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {
         _ = context;
         return listAudioDevices(allocator);
     }
 
-    pub fn updateSelectedDevices(context: *anyopaque, selected_devices: []const SelectedAudioDevice) !void {
+    pub fn update_selected_devices(context: *anyopaque, selected_devices: []const SelectedAudioDevice) !void {
         const self: *Self = @ptrCast(@alignCast(context));
-        try self.pipewire_audio.updateSelectedDevices(selected_devices);
+        try self.pipewire_audio.update_selected_devices(selected_devices);
     }
 
-    pub fn audioCapture(self: *Self) AudioCapture {
+    pub fn audio_capture(self: *Self) AudioCapture {
         return .{ .ptr = self, .vtable = &.{
             .deinit = deinit,
-            .receiveData = receiveData,
-            .getAvailableDevices = getAvailableDevices,
-            .updateSelectedDevices = updateSelectedDevices,
+            .receive_data = receive_data,
+            .get_available_devices = get_available_devices,
+            .update_selected_devices = update_selected_devices,
             .stop = stop,
         } };
     }

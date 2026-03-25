@@ -5,11 +5,11 @@ const log = std.log.scoped(.token_storage);
 
 /// Read token from user app directory.
 /// Caller owns the memory.
-pub fn loadToken(
+pub fn load_token(
     allocator: std.mem.Allocator,
     token_file_name: []const u8,
 ) !?[]u8 {
-    const dir = try util.getAppDataDir(allocator);
+    const dir = try util.get_app_data_dir(allocator);
     defer allocator.free(dir);
     const file_path = try std.fmt.allocPrint(
         allocator,
@@ -37,11 +37,11 @@ pub fn loadToken(
 
 /// Read token from user app directory.
 /// Caller owns the memory.
-pub fn loadTokenZ(
+pub fn load_token_z(
     allocator: std.mem.Allocator,
     token_file_name: []const u8,
 ) !?[:0]u8 {
-    if (try loadToken(allocator, token_file_name)) |token| {
+    if (try load_token(allocator, token_file_name)) |token| {
         defer allocator.free(token);
         const token_z = try allocator.dupeZ(u8, token);
         return token_z;
@@ -50,12 +50,12 @@ pub fn loadTokenZ(
 }
 
 /// Write token to user app directory
-pub fn saveToken(
+pub fn save_token(
     allocator: std.mem.Allocator,
     token_file_name: []const u8,
     token_value: []const u8,
 ) !void {
-    const dir = try util.getAppDataDir(allocator);
+    const dir = try util.get_app_data_dir(allocator);
     defer allocator.free(dir);
     const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}.txt", .{
         dir,
@@ -73,11 +73,11 @@ pub fn saveToken(
 }
 
 /// Delete token file from user app directory. Ignore if file not found.
-pub fn deleteToken(
+pub fn delete_token(
     allocator: std.mem.Allocator,
     token_file_name: []const u8,
 ) !void {
-    const dir = try util.getAppDataDir(allocator);
+    const dir = try util.get_app_data_dir(allocator);
     defer allocator.free(dir);
     const file_path = try std.fmt.allocPrint(allocator, "{s}/{s}.txt", .{
         dir,

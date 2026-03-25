@@ -12,7 +12,7 @@ const ReplayBufferViewModel = struct {
     size: u64 = 0,
     seconds: u64 = 0,
 
-    pub fn sizeInMB(self: *const @This()) f64 {
+    pub fn size_in_mb(self: *const @This()) f64 {
         const mb = @as(f64, @floatFromInt(self.size)) / (1024.0 * 1024.0);
         return mb;
     }

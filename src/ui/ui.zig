@@ -10,8 +10,8 @@ const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").C
 const Actor = @import("../actor.zig").Actor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
-const drawLeftColumn = @import("./draw_left_column.zig").drawLeftColumn;
-const drawVideoPreview = @import("./draw_video_preview.zig").drawVideoPreview;
+const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
+const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
 // TODO: save and restore window size
@@ -54,16 +54,16 @@ pub const UI = struct {
         const version = c.SDL_GetVersion();
         std.log.info("SDL version: {}\n", .{version});
 
-        try self.initVulkan();
+        try self.init_vulkan();
 
         return self;
     }
 
     pub fn deinit(self: *Self) void {
-        const did_wait = self.vulkan.waitForAllGraphicsFencesBegin();
+        const did_wait = self.vulkan.wait_for_all_graphics_fences_begin();
         defer {
             if (did_wait) {
-                self.vulkan.waitForAllGraphicsFencesEnd();
+                self.vulkan.wait_for_all_graphics_fences_end();
             } else |err| {
                 log.err("[deinit] wait for fence error: {}", .{err});
             }
@@ -78,8 +78,8 @@ pub const UI = struct {
 
         if (self.vulkan.window) |window| {
             c.cImGui_ImplVulkanH_DestroyWindow(
-                self.vkInstance(),
-                self.vkDevice(),
+                self.vk_instance(),
+                self.vk_device(),
                 @ptrCast(@constCast(&window)),
                 null,
             );
@@ -99,7 +99,7 @@ pub const UI = struct {
         self.allocator.destroy(self);
     }
 
-    fn initVulkan(self: *Self) !void {
+    fn init_vulkan(self: *Self) !void {
         self.window = c.SDL_CreateWindow("Spacecap", WIDTH, HEIGHT, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if (self.window == null) return error.SDL_CreateWindowFailure;
         errdefer {
@@ -110,7 +110,7 @@ pub const UI = struct {
 
         var surface: c.VkSurfaceKHR = undefined;
 
-        if (!c.SDL_Vulkan_CreateSurface(self.window, self.vkInstance(), null, &surface)) {
+        if (!c.SDL_Vulkan_CreateSurface(self.window, self.vk_instance(), null, &surface)) {
             return error.SDL_Vulkan_CreateSurfaceFailure;
         }
         self.surface = surface;
@@ -119,10 +119,10 @@ pub const UI = struct {
             return error.ImGuiVulkanLoadFailure;
         }
 
-        try self.setupVulkanWindow();
+        try self.setup_vulkan_window();
         errdefer c.cImGui_ImplVulkanH_DestroyWindow(
-            self.vkInstance(),
-            self.vkDevice(),
+            self.vk_instance(),
+            self.vk_device(),
             @ptrCast(&self.vulkan.window),
             null,
         );
@@ -184,13 +184,13 @@ pub const UI = struct {
         errdefer self.vulkan.device.destroyDescriptorPool(self.descriptor_pool.?, null);
 
         var init_info = c.ImGui_ImplVulkan_InitInfo{};
-        init_info.Instance = self.vkInstance();
-        init_info.PhysicalDevice = self.vkPhysicalDevice();
-        init_info.Device = self.vkDevice();
+        init_info.Instance = self.vk_instance();
+        init_info.PhysicalDevice = self.vk_physical_device();
+        init_info.Device = self.vk_device();
         init_info.QueueFamily = self.vulkan.graphics_queue.family;
-        init_info.Queue = self.vkQueue();
+        init_info.Queue = self.vk_queue();
         init_info.PipelineCache = g_PipelineCache; // TODO: maybe need?
-        init_info.DescriptorPool = self.vkDescriptorPool();
+        init_info.DescriptorPool = self.vk_descriptor_pool();
         init_info.RenderPass = self.vulkan.window.?.RenderPass;
         init_info.Subpass = 0;
         init_info.MinImageCount = MIN_IMAGE_COUNT;
@@ -288,14 +288,14 @@ pub const UI = struct {
                     self.vulkan.window.?.Height != fb_height))
             {
                 // This causes big problems if we don't wait for the GPU to be ready.
-                try self.vulkan.waitForAllGraphicsFencesBegin();
-                defer self.vulkan.waitForAllGraphicsFencesEnd();
+                try self.vulkan.wait_for_all_graphics_fences_begin();
+                defer self.vulkan.wait_for_all_graphics_fences_end();
 
                 c.cImGui_ImplVulkan_SetMinImageCount(MIN_IMAGE_COUNT);
                 c.cImGui_ImplVulkanH_CreateOrResizeWindow(
-                    self.vkInstance(),
-                    self.vkPhysicalDevice(),
-                    self.vkDevice(),
+                    self.vk_instance(),
+                    self.vk_physical_device(),
+                    self.vk_device(),
                     &self.vulkan.window.?,
                     self.vulkan.graphics_queue.family,
                     null,
@@ -345,18 +345,18 @@ pub const UI = struct {
                         }
                     }
 
-                    try drawLeftColumn(self.allocator, self.actor);
+                    try draw_left_column(self.allocator, self.actor);
 
                     if (!self.actor.state.is_video_capture_supprted) {
-                        try drawVideoPreview(.vulkan_video_not_supported);
+                        try draw_video_preview(.vulkan_video_not_supported);
                     } else if (self.actor.state.is_capturing_video) {
                         const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
                         defer capture_preview_ring_buffer_locked.unlock();
                         if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
-                            if (capture_preview_ring_buffer.getMostRecentBuffer()) |buffer| {
+                            if (capture_preview_ring_buffer.get_most_recent_buffer()) |buffer| {
                                 capture_preview_buffer = buffer;
-                                capture_preview_texture = try self.vulkan.getCapturePreviewTexture(buffer.value.*);
-                                try drawVideoPreview(.{ .capture_preview = .{
+                                capture_preview_texture = try self.vulkan.get_capture_preview_texture(buffer.value.*);
+                                try draw_video_preview(.{ .capture_preview = .{
                                     .capture_preview_buffer = capture_preview_texture.?.value,
                                     .width = buffer.value.*.width,
                                     .height = buffer.value.*.height,
@@ -375,7 +375,7 @@ pub const UI = struct {
                 self.vulkan.window.?.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
                 self.vulkan.window.?.ClearValue.color.float32[3] = clear_color.w;
                 if (!is_minimized) {
-                    try self.frameRender(draw_data);
+                    try self.frame_render(draw_data);
                 }
 
                 if (io.*.ConfigFlags & c.ImGuiConfigFlags_ViewportsEnable > 0) {
@@ -384,7 +384,7 @@ pub const UI = struct {
                 }
 
                 if (!is_minimized) {
-                    try self.framePresent();
+                    try self.frame_present();
                 }
             }
 
@@ -407,7 +407,7 @@ pub const UI = struct {
         try self.actor.dispatch(.exit);
     }
 
-    fn frameRender(self: *Self, draw_data: *c.ImDrawData) !void {
+    fn frame_render(self: *Self, draw_data: *c.ImDrawData) !void {
         var wd = &self.vulkan.window.?;
 
         const image_acquired_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].ImageAcquiredSemaphore;
@@ -476,11 +476,11 @@ pub const UI = struct {
             };
 
             try self.vulkan.device.endCommandBuffer(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
-            try self.vulkan.queueSubmit(.graphics, &.{info}, .{ .fence = @enumFromInt(@intFromPtr(fd.Fence.?)) });
+            try self.vulkan.queue_submit(.graphics, &.{info}, .{ .fence = @enumFromInt(@intFromPtr(fd.Fence.?)) });
         }
     }
 
-    fn framePresent(self: *Self) !void {
+    fn frame_present(self: *Self) !void {
         var wd = &self.vulkan.window.?;
         if (self.swapchain_rebuild) {
             return;
@@ -493,7 +493,7 @@ pub const UI = struct {
             .p_swapchains = @ptrCast(&wd.Swapchain),
             .p_image_indices = @ptrCast(&wd.FrameIndex),
         };
-        self.vulkan.queuePresentKHR(&info) catch |err| {
+        self.vulkan.queue_present_khr(&info) catch |err| {
             switch (err) {
                 error.OutOfDateKHR => {
                     self.swapchain_rebuild = true;
@@ -506,7 +506,7 @@ pub const UI = struct {
         wd.SemaphoreIndex = (wd.SemaphoreIndex + 1) % wd.SemaphoreCount; // Now we can use the next set of semaphores
     }
 
-    fn setupVulkanWindow(self: *Self) !void {
+    fn setup_vulkan_window(self: *Self) !void {
         self.vulkan.window = .{
             .Surface = self.surface.?,
             .ClearEnable = true,
@@ -523,7 +523,7 @@ pub const UI = struct {
         const requestSurfaceImageFormat = [_]c.VkFormat{ c.VK_FORMAT_B8G8R8A8_UNORM, c.VK_FORMAT_R8G8B8A8_UNORM, c.VK_FORMAT_B8G8R8_UNORM, c.VK_FORMAT_R8G8B8_UNORM };
         const requestSurfaceColorSpace = c.VK_COLORSPACE_SRGB_NONLINEAR_KHR;
         self.vulkan.window.?.SurfaceFormat = c.cImGui_ImplVulkanH_SelectSurfaceFormat(
-            self.vkPhysicalDevice(),
+            self.vk_physical_device(),
             self.vulkan.window.?.Surface,
             @ptrCast(&requestSurfaceImageFormat),
             requestSurfaceImageFormat.len,
@@ -539,7 +539,7 @@ pub const UI = struct {
             c.VK_PRESENT_MODE_MAILBOX_KHR,
         };
         self.vulkan.window.?.PresentMode = c.cImGui_ImplVulkanH_SelectPresentMode(
-            self.vkPhysicalDevice(),
+            self.vk_physical_device(),
             self.vulkan.window.?.Surface,
             &present_modes[0],
             present_modes.len,
@@ -553,9 +553,9 @@ pub const UI = struct {
         }
 
         c.cImGui_ImplVulkanH_CreateOrResizeWindow(
-            self.vkInstance(),
-            self.vkPhysicalDevice(),
-            self.vkDevice(),
+            self.vk_instance(),
+            self.vk_physical_device(),
+            self.vk_device(),
             &self.vulkan.window.?,
             self.vulkan.graphics_queue.family,
             null,
@@ -576,23 +576,23 @@ pub const UI = struct {
         if (err < 0) std.process.exit(1);
     }
 
-    fn vkInstance(self: *const Self) c.VkInstance {
+    fn vk_instance(self: *const Self) c.VkInstance {
         return @ptrFromInt(@intFromEnum(self.vulkan.instance.handle));
     }
 
-    fn vkDevice(self: *const Self) c.VkDevice {
+    fn vk_device(self: *const Self) c.VkDevice {
         return @ptrFromInt(@intFromEnum(self.vulkan.device.handle));
     }
 
-    fn vkPhysicalDevice(self: *const Self) c.VkPhysicalDevice {
+    fn vk_physical_device(self: *const Self) c.VkPhysicalDevice {
         return @ptrFromInt(@intFromEnum(self.vulkan.physical_device));
     }
 
-    fn vkDescriptorPool(self: *const Self) c.VkDescriptorPool {
+    fn vk_descriptor_pool(self: *const Self) c.VkDescriptorPool {
         return @ptrFromInt(@intFromEnum(self.descriptor_pool.?));
     }
 
-    fn vkQueue(self: *const Self) c.VkQueue {
+    fn vk_queue(self: *const Self) c.VkQueue {
         return @ptrFromInt(@intFromEnum(self.vulkan.graphics_queue.handle));
     }
 };

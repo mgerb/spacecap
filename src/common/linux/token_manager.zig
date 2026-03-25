@@ -1,7 +1,7 @@
 const std = @import("std");
 
 /// Caller owns the memory
-pub fn getRequestPath(allocator: std.mem.Allocator, unique_name: [:0]const u8, token: [:0]const u8) std.mem.Allocator.Error![:0]const u8 {
+pub fn get_request_path(allocator: std.mem.Allocator, unique_name: [:0]const u8, token: [:0]const u8) std.mem.Allocator.Error![:0]const u8 {
     // Generate the path
     const path: [:0]u8 = try std.fmt.allocPrintSentinel(
         allocator,
@@ -18,7 +18,7 @@ pub fn getRequestPath(allocator: std.mem.Allocator, unique_name: [:0]const u8, t
     return path;
 }
 
-pub fn generateToken(allocator: std.mem.Allocator) ![:0]const u8 {
+pub fn generate_token(allocator: std.mem.Allocator) ![:0]const u8 {
     return std.fmt.allocPrintSentinel(
         allocator,
         "spacecap{x:0<7}",
@@ -30,7 +30,7 @@ pub fn generateToken(allocator: std.mem.Allocator) ![:0]const u8 {
 test "getRequestPath - formats and sanitizes unique name" {
     const a = std.testing.allocator;
 
-    const path = try getRequestPath(a, "1.192", "spacecap123");
+    const path = try get_request_path(a, "1.192", "spacecap123");
     defer a.free(path);
     try std.testing.expectEqualStrings(
         "/org/freedesktop/portal/desktop/request/1_192/spacecap123",
@@ -41,7 +41,7 @@ test "getRequestPath - formats and sanitizes unique name" {
 test "generateToken - prefix and hex suffix" {
     const a = std.testing.allocator;
 
-    const token = try generateToken(a);
+    const token = try generate_token(a);
     defer a.free(token);
 
     try std.testing.expect(std.mem.startsWith(u8, token, "spacecap"));

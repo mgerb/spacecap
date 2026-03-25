@@ -49,9 +49,9 @@ pub const LinuxIpc = struct {
         try self.server.?.start();
     }
 
-    pub fn sendCommand(context: *anyopaque, command: IpcCommand) !void {
+    pub fn send_command(context: *anyopaque, command: IpcCommand) !void {
         const self: *Self = @ptrCast(@alignCast(context));
-        try IpcServer.sendIpcCommand(self.allocator, command);
+        try IpcServer.send_ipc_command(self.allocator, command);
     }
 
     pub fn ipc(self: *Self) Ipc {
@@ -59,7 +59,7 @@ pub const LinuxIpc = struct {
             .ptr = self,
             .vtable = &.{
                 .start = start,
-                .sendCommand = sendCommand,
+                .send_command = send_command,
                 .deinit = deinit,
             },
         };

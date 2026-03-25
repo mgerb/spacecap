@@ -71,28 +71,28 @@ pub const AudioCapture = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        receiveData: *const fn (*anyopaque) ChanError!*AudioCaptureData,
+        receive_data: *const fn (*anyopaque) ChanError!*AudioCaptureData,
         stop: *const fn (*anyopaque) anyerror!void,
-        getAvailableDevices: *const fn (*anyopaque, std.mem.Allocator) anyerror!AudioDeviceList,
-        updateSelectedDevices: *const fn (*anyopaque, []const SelectedAudioDevice) anyerror!void,
+        get_available_devices: *const fn (*anyopaque, std.mem.Allocator) anyerror!AudioDeviceList,
+        update_selected_devices: *const fn (*anyopaque, []const SelectedAudioDevice) anyerror!void,
         deinit: *const fn (*anyopaque) void,
     };
 
     /// Receive audio capture data. Caller owns the memory and must deinit.
-    pub fn receiveData(self: *Self) ChanError!*AudioCaptureData {
-        return self.vtable.receiveData(self.ptr);
+    pub fn receive_data(self: *Self) ChanError!*AudioCaptureData {
+        return self.vtable.receive_data(self.ptr);
     }
 
     pub fn stop(self: *Self) !void {
         return self.vtable.stop(self.ptr);
     }
 
-    pub fn getAvailableDevices(self: *Self, allocator: std.mem.Allocator) !AudioDeviceList {
-        return self.vtable.getAvailableDevices(self.ptr, allocator);
+    pub fn get_available_devices(self: *Self, allocator: std.mem.Allocator) !AudioDeviceList {
+        return self.vtable.get_available_devices(self.ptr, allocator);
     }
 
-    pub fn updateSelectedDevices(self: *Self, devices: []const SelectedAudioDevice) !void {
-        return self.vtable.updateSelectedDevices(self.ptr, devices);
+    pub fn update_selected_devices(self: *Self, devices: []const SelectedAudioDevice) !void {
+        return self.vtable.update_selected_devices(self.ptr, devices);
     }
 
     pub fn deinit(self: *Self) void {

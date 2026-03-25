@@ -29,41 +29,41 @@ pub const WindowsVideoCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) !void {
+    pub fn select_source(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = selection;
         _ = fps;
     }
 
-    pub fn updateFps(context: *anyopaque, fps: u32) !void {
+    pub fn update_fps(context: *anyopaque, fps: u32) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = fps;
     }
 
-    pub fn shouldRestoreCaptureSession(context: *anyopaque) !bool {
+    pub fn should_restore_capture_session(context: *anyopaque) !bool {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return false;
     }
 
-    pub fn waitForReady(context: *anyopaque) !void {
+    pub fn wait_for_ready(context: *anyopaque) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn nextFrame(context: *anyopaque) ChanError!void {
+    pub fn next_frame(context: *anyopaque) ChanError!void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn closeAllChannels(context: *anyopaque) void {
+    pub fn close_all_channels(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
 
-    pub fn waitForFrame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn wait_for_frame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return ChanError.Closed;
@@ -91,16 +91,16 @@ pub const WindowsVideoCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn videoCapture(self: *Self) VideoCapture {
+    pub fn video_capture(self: *Self) VideoCapture {
         return .{
             .ptr = self,
             .vtable = &.{
-                .selectSource = selectSource,
-                .updateFps = updateFps,
-                .shouldRestoreCaptureSession = shouldRestoreCaptureSession,
-                .nextFrame = nextFrame,
-                .closeAllChannels = closeAllChannels,
-                .waitForFrame = waitForFrame,
+                .select_source = select_source,
+                .update_fps = update_fps,
+                .should_restore_capture_session = should_restore_capture_session,
+                .next_frame = next_frame,
+                .close_all_channels = close_all_channels,
+                .wait_for_frame = wait_for_frame,
                 .size = size,
                 .stop = stop,
                 .deinit = deinit,
@@ -110,7 +110,7 @@ pub const WindowsVideoCapture = struct {
 };
 
 /// Capture a screenshot in windows - the caller owns the returned memory
-pub fn windowsCapture(allocator: std.mem.Allocator) ![]u8 {
+pub fn windows_capture(allocator: std.mem.Allocator) ![]u8 {
     const win32 = @import("win32");
     const c = win32.everything;
 

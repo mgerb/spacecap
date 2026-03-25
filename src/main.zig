@@ -30,7 +30,7 @@ pub fn main() !void {
 /// Handle command-line-only modes and return whether execution
 /// should stop before launching the full app.
 fn cli_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !bool {
-    if (!comptime Util.isLinux()) return false;
+    if (!comptime Util.is_linux()) return false;
     const linux_args = parsed_args orelse return false;
 
     switch (linux_args) {
@@ -40,7 +40,7 @@ fn cli_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !bool {
                 var ipc = _ipc.ipc();
                 defer ipc.deinit();
 
-                ipc.sendCommand(.save_replay) catch |err| {
+                ipc.send_command(.save_replay) catch |err| {
                     switch (err) {
                         error.SpacecapNotRunning => {
                             std.debug.print("spacecap is not running.\n", .{});
@@ -78,11 +78,11 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
 
     // TODO: create dropdown selector in UI to select capture method when more are implemented.
     const _video_capture = try PlatformVideoCapture.init(allocator, vulkan);
-    var video_capture_interface = _video_capture.videoCapture();
+    var video_capture_interface = _video_capture.video_capture();
     defer video_capture_interface.deinit();
 
     const _audio_capture = try PlatformAudioCapture.init(allocator);
-    var audio_capture_interface = _audio_capture.audioCapture();
+    var audio_capture_interface = _audio_capture.audio_capture();
     defer audio_capture_interface.deinit();
 
     const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
@@ -99,7 +99,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     );
     defer actor.deinit();
 
-    global_shortcuts.registerShortcutHandler(.{ .ptr = actor, .handler = Actor.globalShortcutsHandler });
+    global_shortcuts.register_shortcut_handler(.{ .ptr = actor, .handler = Actor.global_shortcuts_handler });
 
     const StateThread = struct {
         pub fn run(_state: *Actor) void {

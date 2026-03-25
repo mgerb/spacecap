@@ -29,7 +29,7 @@ pub const WindowsAudioCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn receiveData(context: *anyopaque) ChanError!*AudioCaptureData {
+    pub fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.data_chan.recv();
     }
@@ -39,22 +39,22 @@ pub const WindowsAudioCapture = struct {
         self.data_chan.close(.{ .drain = true });
     }
 
-    pub fn getAvailableDevices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {
+    pub fn get_available_devices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {
         _ = context;
         return AudioDeviceList.init(allocator);
     }
 
-    pub fn updateSelectedDevices(context: *anyopaque, selected_devices: []const SelectedAudioDevice) !void {
+    pub fn update_selected_devices(context: *anyopaque, selected_devices: []const SelectedAudioDevice) !void {
         _ = context;
         _ = selected_devices;
     }
 
-    pub fn audioCapture(self: *Self) AudioCapture {
+    pub fn audio_capture(self: *Self) AudioCapture {
         return .{ .ptr = self, .vtable = &.{
             .deinit = deinit,
-            .receiveData = receiveData,
-            .getAvailableDevices = getAvailableDevices,
-            .updateSelectedDevices = updateSelectedDevices,
+            .receive_data = receive_data,
+            .get_available_devices = get_available_devices,
+            .update_selected_devices = update_selected_devices,
             .stop = stop,
         } };
     }

@@ -146,7 +146,7 @@ pub const VulkanImageBuffer = struct {
     }
 
     /// Copy an external vulkan image into the local image buffer.
-    pub fn copyImage(
+    pub fn copy_image(
         self: *Self,
         args: struct {
             src_image: vk.Image,
@@ -167,7 +167,7 @@ pub const VulkanImageBuffer = struct {
         var signal_semaphores = if (args.use_signal_semaphore) [_]vk.Semaphore{self.signal_semaphore} else null;
         var wait_semaphores = if (args.wait_semaphore != null) [_]vk.Semaphore{args.wait_semaphore.?} else null;
 
-        try self.vulkan.copyImage(
+        try self.vulkan.copy_image(
             self.command_buffer,
             args.src_image,
             self.image,

@@ -9,19 +9,19 @@ const c = @cImport({
     @cInclude("libportal/portal.h");
 });
 
-fn freeMaybe(ptr: ?*anyopaque) void {
+fn free_maybe(ptr: ?*anyopaque) void {
     if (ptr != null) {
         c.g_free(ptr);
     }
 }
 
-fn freeErrorMaybe(err: ?*c.GError) void {
+fn free_error_maybe(err: ?*c.GError) void {
     if (err != null) {
         c.g_error_free(err);
     }
 }
 
-fn mapGError(err: *c.GError) ?VideoCaptureError {
+fn map_g_error(err: *c.GError) ?VideoCaptureError {
     // When the portal service is missing or the user cancels, match the old portal.zig errors.
     if (err.code == c.G_IO_ERROR_INVAL) {
         return VideoCaptureError.portal_service_not_found;
@@ -55,7 +55,7 @@ pub const Portal = struct {
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const portal = c.xdp_portal_new() orelse return error.xdp_portal_new_failed;
 
-        const restore_token = TokenStorage.loadToken(allocator, "restore_token") catch null;
+        const restore_token = TokenStorage.load_token(allocator, "restore_token") catch null;
 
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
@@ -68,15 +68,15 @@ pub const Portal = struct {
         return self;
     }
 
-    pub fn selectSource(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
+    pub fn select_source(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
         // A stale restore token can fail before a session starts. Clear and continue.
-        errdefer self.clearRestoreToken();
-        try self.createSession(selection);
-        const node_id = try self.startSession(selection);
+        errdefer self.clear_restore_token();
+        try self.create_session(selection);
+        const node_id = try self.start_session(selection);
         return node_id;
     }
 
-    pub fn openPipewireRemote(self: *const Self) !i32 {
+    pub fn open_pipewire_remote(self: *const Self) !i32 {
         if (self.session == null) {
             return error.session_not_started;
         }
@@ -113,7 +113,7 @@ pub const Portal = struct {
         g_error: ?*c.GError = null,
     };
 
-    fn createSessionCallback(
+    fn create_session_callback(
         source_object: ?*c.GObject,
         res: ?*c.GAsyncResult,
         user_data: ?*anyopaque,
@@ -125,7 +125,7 @@ pub const Portal = struct {
         c.g_main_loop_quit(ctx.loop);
     }
 
-    fn createSession(self: *Self, selection: VideoCaptureSelection) !void {
+    fn create_session(self: *Self, selection: VideoCaptureSelection) !void {
         if (self.session != null) {
             return error.session_already_exists;
         }
@@ -149,7 +149,7 @@ pub const Portal = struct {
             c.XDP_PERSIST_MODE_PERSISTENT,
             if (selection == .restore_session and self.restore_token != null) self.restore_token.?.ptr else null,
             null,
-            createSessionCallback,
+            create_session_callback,
             &ctx,
         );
 
@@ -157,8 +157,8 @@ pub const Portal = struct {
         c.g_main_loop_unref(loop);
 
         if (ctx.g_error) |err| {
-            defer freeErrorMaybe(err);
-            if (mapGError(err)) |cerr| {
+            defer free_error_maybe(err);
+            if (map_g_error(err)) |cerr| {
                 return cerr;
             }
             return error.create_screencast_session_failed;
@@ -183,7 +183,7 @@ pub const Portal = struct {
         g_error: ?*c.GError = null,
     };
 
-    fn startSessionCallback(
+    fn start_session_callback(
         source_object: ?*c.GObject,
         res: ?*c.GAsyncResult,
         user_data: ?*anyopaque,
@@ -195,7 +195,7 @@ pub const Portal = struct {
 
         if (ctx.detached) {
             if (err) |gerr| {
-                freeErrorMaybe(gerr);
+                free_error_maybe(gerr);
             }
             return;
         }
@@ -208,7 +208,7 @@ pub const Portal = struct {
         }
     }
 
-    fn restoreStartTimeoutCallback(user_data: ?*anyopaque) callconv(.c) c.gboolean {
+    fn restore_start_timeout_callback(user_data: ?*anyopaque) callconv(.c) c.gboolean {
         const ctx: *StartSessionContext = @ptrCast(@alignCast(user_data));
         ctx.timed_out = true;
         if (ctx.cancellable) |gc| {
@@ -220,7 +220,7 @@ pub const Portal = struct {
         return 0;
     }
 
-    fn startSession(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
+    fn start_session(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
         const loop = c.g_main_loop_new(null, 0) orelse return error.g_main_loop_new_failed;
         const ctx = try self.allocator.create(StartSessionContext);
         defer self.allocator.destroy(ctx);
@@ -246,14 +246,14 @@ pub const Portal = struct {
         }
 
         if (ctx.cancellable != null) {
-            restore_timeout_id = c.g_timeout_add(SESSION_RESTORE_TIMEOUT_MS, restoreStartTimeoutCallback, ctx);
+            restore_timeout_id = c.g_timeout_add(SESSION_RESTORE_TIMEOUT_MS, restore_start_timeout_callback, ctx);
         }
 
         c.xdp_session_start(
             self.session.?,
             null,
             ctx.cancellable,
-            startSessionCallback,
+            start_session_callback,
             ctx,
         );
 
@@ -268,8 +268,8 @@ pub const Portal = struct {
         }
 
         if (ctx.g_error) |err| {
-            defer freeErrorMaybe(err);
-            if (mapGError(err)) |cerr| {
+            defer free_error_maybe(err);
+            if (map_g_error(err)) |cerr| {
                 return cerr;
             }
             return error.start_session_failed;
@@ -279,17 +279,17 @@ pub const Portal = struct {
             return error.start_session_failed;
         }
 
-        try self.updateRestoreToken(selection == .source_type);
+        try self.update_restore_token(selection == .source_type);
 
-        return try self.processStreams();
+        return try self.process_streams();
     }
 
-    fn updateRestoreToken(self: *Self, clear_if_missing: bool) !void {
+    fn update_restore_token(self: *Self, clear_if_missing: bool) !void {
         const token_ptr = c.xdp_session_get_restore_token(self.session.?);
-        defer freeMaybe(token_ptr);
+        defer free_maybe(token_ptr);
         if (token_ptr == null) {
             if (clear_if_missing) {
-                self.clearRestoreToken();
+                self.clear_restore_token();
             }
             return;
         }
@@ -302,22 +302,22 @@ pub const Portal = struct {
         }
         self.restore_token = duped;
 
-        TokenStorage.saveToken(self.allocator, "restore_token", duped[0..duped.len]) catch |err| {
+        TokenStorage.save_token(self.allocator, "restore_token", duped[0..duped.len]) catch |err| {
             log.err("failed to save restore token: {}", .{err});
         };
     }
 
-    fn clearRestoreToken(self: *Self) void {
+    fn clear_restore_token(self: *Self) void {
         if (self.restore_token) |token| {
             self.allocator.free(token);
             self.restore_token = null;
         }
-        TokenStorage.deleteToken(self.allocator, "restore_token") catch |err| {
+        TokenStorage.delete_token(self.allocator, "restore_token") catch |err| {
             log.warn("failed to delete restore token: {}", .{err});
         };
     }
 
-    fn processStreams(self: *Self) !u32 {
+    fn process_streams(self: *Self) !u32 {
         const streams = c.xdp_session_get_streams(self.session.?);
         if (streams == null) {
             return error.no_streams;

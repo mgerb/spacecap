@@ -21,7 +21,7 @@ pub const SendCommand = enum {
     @"save-replay",
 };
 
-pub const Args = if (Util.isLinux())
+pub const Args = if (Util.is_linux())
     union(enum) {
         /// Send a command to the IPC server.
         send: SendCommand,
@@ -30,17 +30,17 @@ else
     struct {};
 
 pub fn parse(allocator: std.mem.Allocator) ?Args {
-    if (comptime Util.isLinux()) {
-        return parseLinux(allocator);
-    } else if (comptime Util.isWindows()) {
-        return parseWindows(allocator);
+    if (comptime Util.is_linux()) {
+        return parse_linux(allocator);
+    } else if (comptime Util.is_windows()) {
+        return parse_windows(allocator);
     } else {
         log.err("unsupported platform", .{});
         unreachable;
     }
 }
 
-fn parseLinux(allocator: std.mem.Allocator) ?Args {
+fn parse_linux(allocator: std.mem.Allocator) ?Args {
     const parsers = comptime .{
         .command = clap.parsers.enumeration(SendCommand),
     };
@@ -64,7 +64,7 @@ fn parseLinux(allocator: std.mem.Allocator) ?Args {
     return null;
 }
 
-fn parseWindows(allocator: std.mem.Allocator) ?Args {
+fn parse_windows(allocator: std.mem.Allocator) ?Args {
     var res = clap.parse(clap.Help, &windows_params_parsed, comptime .{}, .{
         .allocator = allocator,
     }) catch |err| {

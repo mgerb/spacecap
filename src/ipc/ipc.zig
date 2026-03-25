@@ -13,7 +13,7 @@ pub const Ipc = struct {
 
     const VTable = struct {
         start: *const fn (*anyopaque) anyerror!void,
-        sendCommand: *const fn (*anyopaque, IpcCommand) anyerror!void,
+        send_command: *const fn (*anyopaque, IpcCommand) anyerror!void,
         deinit: *const fn (*anyopaque) void,
     };
 
@@ -22,8 +22,8 @@ pub const Ipc = struct {
         return self.vtable.start(self.ptr);
     }
 
-    pub fn sendCommand(self: *Self, command: IpcCommand) !void {
-        return self.vtable.sendCommand(self.ptr, command);
+    pub fn send_command(self: *Self, command: IpcCommand) !void {
+        return self.vtable.send_command(self.ptr, command);
     }
 
     pub fn deinit(self: *Self) void {

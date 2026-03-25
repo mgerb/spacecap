@@ -46,7 +46,7 @@ pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensi
 
 /// If Linux, try Wayland, fallback to x11.
 pub fn init() !void {
-    if (util.isLinux()) {
+    if (util.is_linux()) {
         if (try try_sdl_init_with_hint("wayland")) {
             log.info("[sdl_init] using wayland", .{});
             return;

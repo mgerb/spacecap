@@ -57,7 +57,7 @@ pub const AudioState = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.stopCaptureThread();
+        self.stop_capture_thread();
         assert(self.capture_thread == null);
 
         {
@@ -69,25 +69,25 @@ pub const AudioState = struct {
             }
         }
 
-        self.clearDevices();
+        self.clear_devices();
         self.devices.deinit(self.allocator);
     }
 
-    pub fn handleActions(self: *Self, actor: *Actor, action: AudioActions) !void {
+    pub fn handle_actions(self: *Self, actor: *Actor, action: AudioActions) !void {
         switch (action) {
             .start_capture_thread => {
                 // This should only ever get called once, so the capture_thread must always be null.
                 assert(self.capture_thread == null);
-                self.capture_thread = try std.Thread.spawn(.{}, captureThreadHandler, .{ self, actor });
+                self.capture_thread = try std.Thread.spawn(.{}, capture_thread_handler, .{ self, actor });
             },
             .get_available_audio_devices => {
-                var available_devices = try self.audio_capture.getAvailableDevices(self.allocator);
+                var available_devices = try self.audio_capture.get_available_devices(self.allocator);
                 defer available_devices.deinit();
 
                 actor.ui_mutex.lock();
                 defer actor.ui_mutex.unlock();
-                self.clearDevices();
-                errdefer self.clearDevices();
+                self.clear_devices();
+                errdefer self.clear_devices();
 
                 for (available_devices.devices.items) |device| {
                     const persisted_settings = actor.state.user_settings.settings.audio_devices.map.get(device.id);
@@ -103,7 +103,7 @@ pub const AudioState = struct {
                     try self.devices.append(self.allocator, device_copy);
                 }
 
-                try self.updateSelectedDevices();
+                try self.update_selected_devices();
             },
             .toggle_audio_device => |device_id| {
                 defer self.allocator.free(device_id);
@@ -115,7 +115,7 @@ pub const AudioState = struct {
                     for (self.devices.items) |*device| {
                         if (!std.mem.eql(u8, device.id, device_id)) continue;
                         device.selected = !device.selected;
-                        try self.updateSelectedDevices();
+                        try self.update_selected_devices();
 
                         try actor.dispatch(.{
                             .user_settings = .{
@@ -156,10 +156,10 @@ pub const AudioState = struct {
         }
     }
 
-    fn stopCaptureThread(self: *Self) void {
+    fn stop_capture_thread(self: *Self) void {
         if (self.capture_thread) |capture_thread| {
             self.audio_capture.stop() catch |err| {
-                log.err("[stopCaptureThread] audio_capture.stop error: {}", .{err});
+                log.err("[stop_capture_thread] audio_capture.stop error: {}", .{err});
             };
             capture_thread.join();
             self.capture_thread = null;
@@ -167,7 +167,7 @@ pub const AudioState = struct {
     }
 
     /// Return the current replay buffer to owned. Create a new replay buffer.
-    pub fn swapReplayBuffer(self: *Self, allocator: Allocator, replay_seconds: u32) !?*AudioReplayBuffer {
+    pub fn swap_replay_buffer(self: *Self, allocator: Allocator, replay_seconds: u32) !?*AudioReplayBuffer {
         var replay_buffer_locked = self.replay_buffer.lock();
         defer replay_buffer_locked.unlock();
 
@@ -178,7 +178,7 @@ pub const AudioState = struct {
 
     /// Communicates with the audio capture interface and tells it which audio devices
     /// were selected.
-    fn updateSelectedDevices(self: *Self) !void {
+    fn update_selected_devices(self: *Self) !void {
         var selected_devices = try std.ArrayList(SelectedAudioDevice).initCapacity(self.allocator, 0);
         defer selected_devices.deinit(self.allocator);
 
@@ -190,32 +190,32 @@ pub const AudioState = struct {
             });
         }
 
-        try self.audio_capture.updateSelectedDevices(selected_devices.items);
+        try self.audio_capture.update_selected_devices(selected_devices.items);
     }
 
-    pub fn clearDevices(self: *Self) void {
+    pub fn clear_devices(self: *Self) void {
         for (self.devices.items) |device| {
             device.deinit();
         }
         self.devices.clearRetainingCapacity();
     }
 
-    fn captureThreadHandler(self: *Self, actor: *Actor) !void {
+    fn capture_thread_handler(self: *Self, actor: *Actor) !void {
         {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
-            const ptr = replay_buffer_locked.unwrapPtr();
+            const ptr = replay_buffer_locked.unwrap_ptr();
             std.debug.assert(ptr.* == null);
             ptr.* = try AudioReplayBuffer.init(self.allocator, actor.state.replay_seconds);
         }
 
         while (true) {
-            const data = self.audio_capture.receiveData() catch |err| {
+            const data = self.audio_capture.receive_data() catch |err| {
                 if (err == ChanError.Closed) {
-                    log.debug("[captureThreadHandler] chan closed", .{});
+                    log.debug("[capture_thread_handler] chan closed", .{});
                     break;
                 }
-                log.err("[captureThreadHandler] data_chan error: {}", .{err});
+                log.err("[capture_thread_handler] data_chan error: {}", .{err});
                 return err;
             };
 
@@ -233,7 +233,7 @@ pub const AudioState = struct {
                     }
                 }
 
-                log.err("[captureThreadHandler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
+                log.err("[capture_thread_handler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
                 assert(false);
 
                 // Return a default value to keep the compiler happy. We should never reach this point anyway.
@@ -250,7 +250,7 @@ pub const AudioState = struct {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
-                replay_buffer.addData(data) catch |err| {
+                replay_buffer.add_data(data) catch |err| {
                     data.deinit();
                     return err;
                 };

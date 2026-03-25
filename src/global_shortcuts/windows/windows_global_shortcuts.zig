@@ -40,7 +40,7 @@ pub const WindowsGlobalShortcuts = struct {
         // TODO:
     }
 
-    fn registerShortcutHandler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
+    fn register_shortcut_handler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = handler;
@@ -54,7 +54,7 @@ pub const WindowsGlobalShortcuts = struct {
                 .run = run,
                 .stop = stop,
                 .open = open,
-                .registerShortcutHandler = registerShortcutHandler,
+                .register_shortcut_handler = register_shortcut_handler,
                 .deinit = deinit,
             },
         };

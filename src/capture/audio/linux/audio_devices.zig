@@ -48,13 +48,13 @@ const ListData = struct {
         allocator.destroy(self.arena);
     }
 
-    fn setDefault(self: *ListData, key: []const u8, value: []const u8) !void {
+    fn set_default(self: *ListData, key: []const u8, value: []const u8) !void {
         const trimmed = if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"')
             value[1 .. value.len - 1]
         else
             value;
         const allocator = self.arena.allocator();
-        const parsed_name = parseDefaultName(allocator, trimmed);
+        const parsed_name = parse_default_name(allocator, trimmed);
         const selected_name = parsed_name orelse try allocator.dupe(u8, trimmed);
 
         if (std.mem.eql(u8, key, "default.audio.sink")) {
@@ -70,7 +70,7 @@ const ListData = struct {
 
     /// Parse PipeWire metadata JSON and return the `"name"` field.
     /// Caller owns the memory.
-    fn parseDefaultName(allocator: std.mem.Allocator, value: []const u8) ?[]const u8 {
+    fn parse_default_name(allocator: std.mem.Allocator, value: []const u8) ?[]const u8 {
         const ParsedDefaultName = struct {
             name: []const u8,
         };
@@ -101,7 +101,7 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
     var registry_listener: pw.spa_hook = undefined;
     const registry_events = pw.pw_registry_events{
         .version = pw.PW_VERSION_REGISTRY_EVENTS,
-        .global = onRegistryGlobal,
+        .global = on_registry_global,
         .global_remove = null,
     };
 
@@ -128,7 +128,7 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
     errdefer devices.deinit();
 
     for (list_data.devices.items) |device| {
-        const device_type: AudioDeviceType = if (isAudioSink(device.media_class)) .sink else .source;
+        const device_type: AudioDeviceType = if (is_audio_sink(device.media_class)) .sink else .source;
         const device_name = if (device.node_desc.len > 0) device.node_desc else device.node_name;
 
         try devices.append(.{
@@ -136,8 +136,8 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
             .name = device_name,
             .device_type = device_type,
             .is_default = switch (device_type) {
-                .sink => nameMatches(selected_sink_name, device.node_name),
-                .source => nameMatches(selected_source_name, device.node_name),
+                .sink => name_matches(selected_sink_name, device.node_name),
+                .source => name_matches(selected_source_name, device.node_name),
             },
         });
     }
@@ -145,7 +145,7 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
     return devices;
 }
 
-fn onRegistryGlobal(
+fn on_registry_global(
     userdata: ?*anyopaque,
     id: u32,
     permissions: u32,
@@ -198,7 +198,7 @@ fn onRegistryGlobal(
     const media_class_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_MEDIA_CLASS);
     if (media_class_c == null) return;
     const media_class = std.mem.span(media_class_c);
-    if (!isAudioSource(media_class) and !isAudioSink(media_class)) return;
+    if (!is_audio_source(media_class) and !is_audio_sink(media_class)) return;
 
     const node_name_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_NODE_NAME);
     const node_desc_c = pw.spa_dict_lookup(props_ptr, pw.PW_KEY_NODE_DESCRIPTION);
@@ -218,16 +218,16 @@ fn onRegistryGlobal(
     list_data.devices.append(allocator, device) catch {};
 }
 
-fn nameMatches(name: ?[]const u8, node_name: []const u8) bool {
+fn name_matches(name: ?[]const u8, node_name: []const u8) bool {
     return name != null and std.mem.eql(u8, node_name, name.?);
 }
 
 const metadata_events = pw.pw_metadata_events{
     .version = pw.PW_VERSION_METADATA_EVENTS,
-    .property = onMetadataProperty,
+    .property = on_metadata_property,
 };
 
-fn onMetadataProperty(
+fn on_metadata_property(
     userdata: ?*anyopaque,
     subject: u32,
     key: [*c]const u8,
@@ -246,19 +246,19 @@ fn onMetadataProperty(
         !std.mem.eql(u8, key_slice, "default.configured.audio.sink") and
         !std.mem.eql(u8, key_slice, "default.configured.audio.source"))
     {
-        log.warn("[onMetadataProperty] unknown audio device type", .{});
+        log.warn("[on_metadata_property] unknown audio device type", .{});
         return 0;
     }
 
     const value_slice = std.mem.span(value);
-    list_data.setDefault(key_slice, value_slice) catch {};
+    list_data.set_default(key_slice, value_slice) catch {};
     return 0;
 }
 
-fn isAudioSource(media_class: []const u8) bool {
+fn is_audio_source(media_class: []const u8) bool {
     return std.mem.startsWith(u8, media_class, "Audio/Source");
 }
 
-fn isAudioSink(media_class: []const u8) bool {
+fn is_audio_sink(media_class: []const u8) bool {
     return std.mem.startsWith(u8, media_class, "Audio/Sink");
 }

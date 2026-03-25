@@ -8,7 +8,7 @@ pub const ffmpeg = @cImport({
     @cInclude("libavcodec/avcodec.h");
 });
 
-pub fn checkErr(ret: c_int) !void {
+pub fn check_err(ret: c_int) !void {
     if (ret < 0) {
         var errbuf = std.mem.zeroes([64]u8);
         const errbuf_p: [*c]u8 = @ptrCast(&errbuf);

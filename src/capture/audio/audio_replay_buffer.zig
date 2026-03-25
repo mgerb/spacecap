@@ -6,7 +6,7 @@ const AudioTimeline = @import("./audio_timeline.zig").AudioTimeline;
 const CodecContextInfo = @import("./audio_timeline.zig").CodecContextInfo;
 const SampleWindow = @import("./audio_timeline.zig").SampleWindow;
 const EncodedAudioPacketNode = @import("../../audio_encoder.zig").EncodedAudioPacketNode;
-const deinitPacketList = @import("../../audio_encoder.zig").deinitPacketList;
+const deinitPacketList = @import("../../audio_encoder.zig").deinit_packet_list;
 const SAMPLE_RATE = @import("../../capture/audio/audio_capture.zig").SAMPLE_RATE;
 const CHANNELS = @import("../../capture/audio/audio_capture.zig").CHANNELS;
 
@@ -50,39 +50,39 @@ pub fn deinit(self: *Self) void {
     self.allocator.destroy(self);
 }
 
-pub fn addData(self: *Self, data: *AudioCaptureData) !void {
-    self.timeline.addData(data) catch |err| switch (err) {
+pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
+    self.timeline.add_data(data) catch |err| switch (err) {
         error.UnsupportedAudioFormat => {
-            log.err("[addData] unsopported format: sample rate: {}, channels: {}", .{ SAMPLE_RATE, CHANNELS });
+            log.err("[add_data] unsopported format: sample rate: {}, channels: {}", .{ SAMPLE_RATE, CHANNELS });
             return error.UnsupportedAudioFormat;
         },
         else => return err,
     };
 
-    var ready_packets = self.timeline.takeReadyPackets();
+    var ready_packets = self.timeline.take_ready_packets();
     defer deinitPacketList(&ready_packets);
-    self.appendPackets(&ready_packets);
-    self.trimPackets();
+    self.append_packets(&ready_packets);
+    self.trim_packets();
 }
 
 pub fn finalize(self: *Self) !void {
     try self.timeline.finalize();
 
-    var ready_packets = self.timeline.takeReadyPackets();
+    var ready_packets = self.timeline.take_ready_packets();
     defer deinitPacketList(&ready_packets);
-    self.appendPackets(&ready_packets);
-    self.trimPackets();
+    self.append_packets(&ready_packets);
+    self.trim_packets();
 }
 
-pub fn packetIterator(self: *Self) LinkedListIterator(EncodedAudioPacketNode) {
+pub fn packet_iterator(self: *Self) LinkedListIterator(EncodedAudioPacketNode) {
     return LinkedListIterator(EncodedAudioPacketNode).init(&self.packets);
 }
 
-pub fn hasPackets(self: *Self) bool {
+pub fn has_packets(self: *Self) bool {
     return self.packets.first != null;
 }
 
-fn appendPackets(self: *Self, packets: *std.DoublyLinkedList) void {
+fn append_packets(self: *Self, packets: *std.DoublyLinkedList) void {
     while (packets.popFirst()) |current| {
         const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", current);
         self.len += 1;
@@ -92,8 +92,8 @@ fn appendPackets(self: *Self, packets: *std.DoublyLinkedList) void {
 }
 
 /// Remove packets that are older than the configured replay duration.
-fn trimPackets(self: *Self) void {
-    const retention_samples = self.replayRetentionSamples();
+fn trim_packets(self: *Self) void {
+    const retention_samples = self.replay_retention_samples();
     const oldest_sample = self.timeline.encoded_until_sample - retention_samples;
 
     while (self.packets.first) |first| {
@@ -110,7 +110,7 @@ fn trimPackets(self: *Self) void {
     }
 }
 
-fn replayRetentionSamples(self: *Self) i64 {
+fn replay_retention_samples(self: *Self) i64 {
     return self.replay_seconds * SAMPLE_RATE;
 }
 
@@ -135,11 +135,11 @@ test "addData - encodes audio before export and exposes packet timing" {
         sample_rate,
         channels,
     );
-    try replay_buffer.addData(chunk);
+    try replay_buffer.add_data(chunk);
     try replay_buffer.finalize();
 
-    try std.testing.expect(replay_buffer.hasPackets());
-    const packet_window = replay_buffer.timeline.getSampleWindow(
+    try std.testing.expect(replay_buffer.has_packets());
+    const packet_window = replay_buffer.timeline.get_sample_window(
         std.time.ns_per_s,
         std.time.ns_per_s + std.time.ns_per_s / 10,
     ) orelse return error.ExpectedSampleWindow;
@@ -170,14 +170,14 @@ test "trimPackets - drops encoded packets outside replay window" {
             sample_rate,
             channels,
         );
-        try replay_buffer.addData(chunk);
+        try replay_buffer.add_data(chunk);
     }
 
     try replay_buffer.finalize();
-    try std.testing.expect(replay_buffer.hasPackets());
+    try std.testing.expect(replay_buffer.has_packets());
 
-    const expected_min_start = replay_buffer.timeline.encoded_until_sample - replay_buffer.replayRetentionSamples();
-    var iter = replay_buffer.packetIterator();
+    const expected_min_start = replay_buffer.timeline.encoded_until_sample - replay_buffer.replay_retention_samples();
+    var iter = replay_buffer.packet_iterator();
     const first_packet = iter.next() orelse return error.ExpectedEncodedPacket;
     try std.testing.expect(first_packet.data.*.pts + first_packet.data.*.duration > expected_min_start);
 }

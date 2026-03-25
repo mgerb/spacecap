@@ -4,7 +4,7 @@ const vk = @import("vulkan");
 const util = @import("../util.zig");
 const Vulkan = @import("./vulkan.zig").Vulkan;
 
-pub fn debugWriteImageToFile(
+pub fn debug_write_image_to_file(
     vulkan: *Vulkan,
     image: vk.Image,
     fence: ?vk.Fence,
@@ -128,7 +128,7 @@ pub fn debugWriteImageToFile(
     return signal_semaphore;
 }
 
-pub fn debugCopyWriteImageToFile(
+pub fn debug_copy_write_image_to_file(
     vulkan: *Vulkan,
     image: vk.Image,
     format: vk.Format,
@@ -323,7 +323,7 @@ pub fn debugCopyWriteImageToFile(
     return signal_semaphore;
 }
 
-pub fn debugBlitWriteImageToFile(
+pub fn debug_blit_write_image_to_file(
     vulkan: *Vulkan,
     image: vk.Image,
     format: vk.Format,

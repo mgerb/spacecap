@@ -5,7 +5,7 @@ const AudioCaptureData = @import("./audio_capture_data.zig");
 const AudioMixer = @import("./audio_mixer.zig").AudioMixer;
 const AudioEncoder = @import("../../audio_encoder.zig").AudioEncoder;
 const EncodedAudioPacketNode = @import("../../audio_encoder.zig").EncodedAudioPacketNode;
-const deinitPacketList = @import("../../audio_encoder.zig").deinitPacketList;
+const deinitPacketList = @import("../../audio_encoder.zig").deinit_packet_list;
 const ffmpeg = @import("../../ffmpeg.zig").ffmpeg;
 
 /// Pending per-device PCM chunk that has not yet been fully mixed into the
@@ -112,7 +112,7 @@ pub const AudioTimeline = struct {
         self.encoder.deinit();
     }
 
-    pub fn addData(self: *Self, data: *AudioCaptureData) !void {
+    pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
         if (data.sample_rate != self.sample_rate or data.channels != self.channels) {
             return error.UnsupportedAudioFormat;
         }
@@ -122,7 +122,7 @@ pub const AudioTimeline = struct {
             // not lock the replay origin too tightly. A later chunk that is
             // only slightly earlier still fits into the same positive sample
             // timeline.
-            self.timeline_origin_ns = data.start_ns() - self.processingDelayNs();
+            self.timeline_origin_ns = data.start_ns() - self.processing_delay_ns();
         }
 
         const device = try self.device_map.getOrPut(data.id);
@@ -133,15 +133,15 @@ pub const AudioTimeline = struct {
             device.value_ptr.* = .{};
         }
 
-        var start_sample = self.timestampToSampleFloor(data.start_ns());
+        var start_sample = self.timestamp_to_sample_floor(data.start_ns());
 
         // Chunks don't always arrive at exactly the timestamps they are
         // expected to. Small jitter here can cause static once multiple devices
         // are mixed, so snap near-misses to the next expected sample position.
-        const jitter_threshold_samples = self.jitterThresholdSamples();
+        const jitter_samples = self.jitter_threshold_samples();
         if (device.value_ptr.expected_next_start_sample) |expected| {
             const delta = start_sample - expected;
-            if (@abs(delta) <= jitter_threshold_samples) {
+            if (@abs(delta) <= jitter_samples) {
                 start_sample = expected;
             }
         }
@@ -154,7 +154,7 @@ pub const AudioTimeline = struct {
 
         self.max_seen_end_sample = @max(end_sample, self.max_seen_end_sample);
 
-        try self.processReadyTimeline(false);
+        try self.process_ready_timeline(false);
     }
 
     pub fn finalize(self: *Self) !void {
@@ -162,40 +162,40 @@ pub const AudioTimeline = struct {
             return;
         }
 
-        try self.processReadyTimeline(true);
+        try self.process_ready_timeline(true);
 
         var flush_result = try self.encoder.flush();
         errdefer deinitPacketList(&flush_result);
-        self.appendReadyPackets(&flush_result);
+        self.append_ready_packets(&flush_result);
     }
 
     /// Transfer ownership of all packets that have become ready.
-    pub fn takeReadyPackets(self: *Self) std.DoublyLinkedList {
+    pub fn take_ready_packets(self: *Self) std.DoublyLinkedList {
         const packets = self.ready_packets;
         self.ready_packets = .{};
         return packets;
     }
 
-    pub fn getCodecContext(self: *Self) CodecContextInfo {
+    pub fn get_codec_context(self: *Self) CodecContextInfo {
         return .{
             .audio_codec_ctx = self.encoder.audio_codec_ctx,
             .time_base = self.encoder.audio_codec_ctx.*.time_base,
         };
     }
 
-    pub fn getSampleWindow(self: *Self, start_time_ns: i128, end_time_ns: i128) ?SampleWindow {
+    pub fn get_sample_window(self: *Self, start_time_ns: i128, end_time_ns: i128) ?SampleWindow {
         if (self.timeline_origin_ns == null) return null;
         return .{
-            .start_sample = self.timestampToSampleFloor(start_time_ns),
-            .end_sample = self.timestampToSampleCeil(end_time_ns),
+            .start_sample = self.timestamp_to_sample_floor(start_time_ns),
+            .end_sample = self.timestamp_to_sample_ceil(end_time_ns),
         };
     }
 
-    fn processReadyTimeline(self: *Self, flush_all: bool) !void {
+    fn process_ready_timeline(self: *Self, flush_all: bool) !void {
         assert(self.timeline_origin_ns != null);
 
-        const processing_delay_samples = if (flush_all) 0 else self.processingDelaySamples();
-        const ready_end_sample = self.max_seen_end_sample - processing_delay_samples;
+        const delay_samples = if (flush_all) 0 else self.processing_delay_samples();
+        const ready_end_sample = self.max_seen_end_sample - delay_samples;
         if (ready_end_sample <= self.encoded_until_sample) {
             return;
         }
@@ -215,18 +215,18 @@ pub const AudioTimeline = struct {
             );
             defer mixed_pcm.deinit(self.allocator);
 
-            var packets = try self.encoder.encodeChunk(self.encoded_until_sample, mixed_pcm.items);
+            var packets = try self.encoder.encode_chunk(self.encoded_until_sample, mixed_pcm.items);
             if (packets) |*owned_packets| {
                 errdefer deinitPacketList(owned_packets);
-                self.appendReadyPackets(owned_packets);
+                self.append_ready_packets(owned_packets);
             }
 
             self.encoded_until_sample = window_end_sample;
-            self.removeConsumedChunks();
+            self.remove_consumed_chunks();
         }
     }
 
-    fn appendReadyPackets(self: *Self, packets: *std.DoublyLinkedList) void {
+    fn append_ready_packets(self: *Self, packets: *std.DoublyLinkedList) void {
         while (packets.popFirst()) |current| {
             self.ready_packets.append(current);
         }
@@ -234,7 +234,7 @@ pub const AudioTimeline = struct {
 
     /// Once a chunk ends before `encoded_until_sample`, every sample position
     /// it covers has already been mixed into encoded output and can be dropped.
-    fn removeConsumedChunks(self: *Self) void {
+    fn remove_consumed_chunks(self: *Self) void {
         var iter = self.device_map.iterator();
         while (iter.next()) |entry| {
             var node = entry.value_ptr.chunks.first;
@@ -251,24 +251,24 @@ pub const AudioTimeline = struct {
     }
 
     /// Returns the number of samples for 10ms.
-    fn jitterThresholdSamples(self: *Self) i64 {
+    fn jitter_threshold_samples(self: *Self) i64 {
         return @max(1, @divFloor(self.sample_rate * 10, std.time.ms_per_s));
     }
 
     /// Returns the number of samples for 50ms.
-    fn processingDelaySamples(self: *Self) i64 {
+    fn processing_delay_samples(self: *Self) i64 {
         return @max(1, @divFloor(self.sample_rate * 50, std.time.ms_per_s));
     }
 
-    fn processingDelayNs(self: *Self) i128 {
+    fn processing_delay_ns(self: *Self) i128 {
         return @divFloor(
-            self.processingDelaySamples() * std.time.ns_per_s,
+            self.processing_delay_samples() * std.time.ns_per_s,
             self.sample_rate,
         );
     }
 
     /// Floor is used for starts so a chunk never begins after its true time.
-    fn timestampToSampleFloor(self: *Self, timestamp_ns: i128) i64 {
+    fn timestamp_to_sample_floor(self: *Self, timestamp_ns: i128) i64 {
         assert(self.timeline_origin_ns != null);
         const delta_ns = timestamp_ns - self.timeline_origin_ns.?;
         const sample: i64 = @intCast(@divFloor(delta_ns * self.sample_rate, std.time.ns_per_s));
@@ -277,7 +277,7 @@ pub const AudioTimeline = struct {
 
     /// Ceil is used for ends so the requested window fully covers the desired
     /// duration even when timestamps fall between exact sample boundaries.
-    fn timestampToSampleCeil(self: *Self, timestamp_ns: i128) i64 {
+    fn timestamp_to_sample_ceil(self: *Self, timestamp_ns: i128) i64 {
         assert(self.timeline_origin_ns != null);
         const delta_ns = timestamp_ns - self.timeline_origin_ns.?;
         if (delta_ns <= 0) {
@@ -297,11 +297,11 @@ test "timestampToSampleFloor" {
     const start_ns: i128 = 1_000_000_000;
     timeline.timeline_origin_ns = start_ns;
 
-    try std.testing.expectEqual(0, timeline.timestampToSampleFloor(start_ns));
-    try std.testing.expectEqual(48_000, timeline.timestampToSampleFloor(start_ns + std.time.ns_per_s));
-    try std.testing.expectEqual(47_999, timeline.timestampToSampleFloor(start_ns + std.time.ns_per_s - 1));
-    try std.testing.expectEqual(0, timeline.timestampToSampleFloor(start_ns + 20_833));
-    try std.testing.expectEqual(1, timeline.timestampToSampleFloor(start_ns + 20_834));
+    try std.testing.expectEqual(0, timeline.timestamp_to_sample_floor(start_ns));
+    try std.testing.expectEqual(48_000, timeline.timestamp_to_sample_floor(start_ns + std.time.ns_per_s));
+    try std.testing.expectEqual(47_999, timeline.timestamp_to_sample_floor(start_ns + std.time.ns_per_s - 1));
+    try std.testing.expectEqual(0, timeline.timestamp_to_sample_floor(start_ns + 20_833));
+    try std.testing.expectEqual(1, timeline.timestamp_to_sample_floor(start_ns + 20_834));
 }
 
 test "timestampToSampleCeil" {
@@ -312,12 +312,12 @@ test "timestampToSampleCeil" {
     const start_ns: i128 = 1_000_000_000;
     timeline.timeline_origin_ns = start_ns;
 
-    try std.testing.expectEqual(0, timeline.timestampToSampleCeil(start_ns));
-    try std.testing.expectEqual(0, timeline.timestampToSampleCeil(start_ns - 1));
-    try std.testing.expectEqual(48_000, timeline.timestampToSampleCeil(start_ns + std.time.ns_per_s));
-    try std.testing.expectEqual(48_000, timeline.timestampToSampleCeil(start_ns + std.time.ns_per_s - 1));
-    try std.testing.expectEqual(1, timeline.timestampToSampleCeil(start_ns + 20_833));
-    try std.testing.expectEqual(2, timeline.timestampToSampleCeil(start_ns + 20_834));
+    try std.testing.expectEqual(0, timeline.timestamp_to_sample_ceil(start_ns));
+    try std.testing.expectEqual(0, timeline.timestamp_to_sample_ceil(start_ns - 1));
+    try std.testing.expectEqual(48_000, timeline.timestamp_to_sample_ceil(start_ns + std.time.ns_per_s));
+    try std.testing.expectEqual(48_000, timeline.timestamp_to_sample_ceil(start_ns + std.time.ns_per_s - 1));
+    try std.testing.expectEqual(1, timeline.timestamp_to_sample_ceil(start_ns + 20_833));
+    try std.testing.expectEqual(2, timeline.timestamp_to_sample_ceil(start_ns + 20_834));
 }
 
 test "addData smooths small timestamp jitter between chunks" {
@@ -331,17 +331,17 @@ test "addData smooths small timestamp jitter between chunks" {
     const second = [_]f32{ 4.0, 4.0, 5.0, 5.0, 6.0, 6.0 };
 
     const chunk1 = try AudioCaptureData.init(allocator, "mic", &first, start_ns, 48_000, 2);
-    try timeline.addData(chunk1);
+    try timeline.add_data(chunk1);
 
     const second_delta_ns = @divFloor(
         @as(i128, 8) * std.time.ns_per_s + @as(i128, 48_000) - 1,
         @as(i128, 48_000),
     );
     const chunk2 = try AudioCaptureData.init(allocator, "mic", &second, start_ns + second_delta_ns, 48_000, 2);
-    try timeline.addData(chunk2);
+    try timeline.add_data(chunk2);
 
     const device = timeline.device_map.get("mic") orelse return error.ExpectedDeviceState;
-    const expected_end_sample = timeline.processingDelaySamples() + @as(i64, @intCast(samples * 2));
+    const expected_end_sample = timeline.processing_delay_samples() + @as(i64, @intCast(samples * 2));
     try std.testing.expectEqual(expected_end_sample, device.expected_next_start_sample.?);
     try std.testing.expectEqual(expected_end_sample, timeline.max_seen_end_sample);
 }

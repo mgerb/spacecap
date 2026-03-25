@@ -4,7 +4,7 @@ const ffmpeg_build_util = @import("build/ffmpeg_build.zig");
 
 const EXE_NAME = "spacecap";
 
-fn compileShader(
+fn compile_shader(
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
@@ -27,16 +27,16 @@ fn compileShader(
     });
 }
 
-fn addSharedDependencies(
+fn add_shared_dependencies(
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
-    try compileShader(allocator, b, exe, "random.frag", "random_frag_shader");
-    try compileShader(allocator, b, exe, "random.vert", "random_vert_shader");
-    try compileShader(allocator, b, exe, "bgr-ycbcr-shader-2plane.comp", "bgr-ycbcr-shader-2plane");
+    try compile_shader(allocator, b, exe, "random.frag", "random_frag_shader");
+    try compile_shader(allocator, b, exe, "random.vert", "random_vert_shader");
+    try compile_shader(allocator, b, exe, "bgr-ycbcr-shader-2plane.comp", "bgr-ycbcr-shader-2plane");
 
     // vulkan
     const vulkan_headers = b.dependency("vulkan_headers", .{});
@@ -80,7 +80,7 @@ fn addSharedDependencies(
     ffmpeg_build_util.link_libs(exe, ffmpeg_build);
 }
 
-fn addLinuxDependencies(
+fn add_linux_dependencies(
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
@@ -116,7 +116,7 @@ fn addLinuxDependencies(
 ///
 /// Lib name should be the name of the lib without extensions
 /// e.g. avformat NOT libavformat.so
-fn installAndLinkSystemLibrary(args: struct {
+fn install_and_link_system_library(args: struct {
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
@@ -153,7 +153,7 @@ fn installAndLinkSystemLibrary(args: struct {
     args.exe.root_module.linkSystemLibrary(args.lib_name, args.link_options);
 }
 
-fn buildWindows(
+fn build_windows(
     allocator: std.mem.Allocator,
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
@@ -178,11 +178,11 @@ fn buildWindows(
     // TODO: seems like rpath is not working
     exe.addRPath(b.path("./lib"));
 
-    try addSharedDependencies(allocator, b, exe, target, optimize);
+    try add_shared_dependencies(allocator, b, exe, target, optimize);
 
     exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").? });
 
-    try installAndLinkSystemLibrary(.{
+    try install_and_link_system_library(.{
         .allocator = allocator,
         .b = b,
         .exe = exe,
@@ -205,7 +205,7 @@ fn buildWindows(
     b.getInstallStep().dependOn(&install_step.step);
 }
 
-fn buildLinux(
+fn build_linux(
     allocator: std.mem.Allocator,
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -235,8 +235,8 @@ fn buildLinux(
         exe.root_module.addRPathSpecial("$ORIGIN/lib");
     }
 
-    try addSharedDependencies(allocator, b, exe, target, optimize);
-    try addLinuxDependencies(allocator, b, exe, target, optimize);
+    try add_shared_dependencies(allocator, b, exe, target, optimize);
+    try add_linux_dependencies(allocator, b, exe, target, optimize);
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "linux" } },
@@ -258,7 +258,7 @@ fn buildLinux(
     return &install_step.step;
 }
 
-fn buildLinuxAppImage(
+fn build_linux_app_image(
     b: *std.Build,
     allocator: std.mem.Allocator,
     linux_install_step: *std.Build.Step,
@@ -281,7 +281,7 @@ fn buildLinuxAppImage(
     return appimage_step;
 }
 
-fn buildUnitTestsDefault(
+fn build_unit_tests_default(
     allocator: std.mem.Allocator,
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -308,8 +308,8 @@ fn buildUnitTestsDefault(
 
         exe.linkLibC();
 
-        try addSharedDependencies(allocator, b, exe, target, optimize);
-        try addLinuxDependencies(allocator, b, exe, target, optimize);
+        try add_shared_dependencies(allocator, b, exe, target, optimize);
+        try add_linux_dependencies(allocator, b, exe, target, optimize);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
 
@@ -340,7 +340,7 @@ pub fn build(b: *std.Build) !void {
         return error.InvalidBuildConfig;
     }
 
-    try buildWindows(allocator, b, optimize);
+    try build_windows(allocator, b, optimize);
 
     const linux_target = if (nix == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
         .os_tag = .linux,
@@ -348,18 +348,18 @@ pub fn build(b: *std.Build) !void {
         .cpu_arch = .x86_64,
     });
 
-    const linux_install_step = try buildLinux(
+    const linux_install_step = try build_linux(
         allocator,
         b,
         linux_target,
         optimize,
         nix,
     );
-    const appimage_step = buildLinuxAppImage(b, allocator, linux_install_step);
+    const appimage_step = build_linux_app_image(b, allocator, linux_install_step);
 
     if (appimage) {
         b.getInstallStep().dependOn(appimage_step);
     }
 
-    try buildUnitTestsDefault(allocator, b, linux_target, optimize);
+    try build_unit_tests_default(allocator, b, linux_target, optimize);
 }

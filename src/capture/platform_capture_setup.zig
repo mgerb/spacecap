@@ -2,7 +2,7 @@
 
 const Util = @import("../util.zig");
 
-pub const PlatformCaptureSetup = if (Util.isLinux()) struct {
+pub const PlatformCaptureSetup = if (Util.is_linux()) struct {
     const pw = @import("pipewire").c;
 
     pub fn init() void {
