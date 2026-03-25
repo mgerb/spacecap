@@ -1,55 +1,63 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
 const checkErr = @import("./ffmpeg.zig").checkErr;
 
-pub const AudioEncodeResult = struct {
-    const Self = @This();
+pub const EncodedAudioPacketNode = struct {
+    data: [*c]const ffmpeg.AVPacket,
+    node: std.DoublyLinkedList.Node = .{},
     allocator: Allocator,
-    packets: std.ArrayList([*c]ffmpeg.AVPacket),
 
-    pub fn init(allocator: Allocator) !Self {
-        return .{
+    pub fn init(allocator: Allocator, packet: [*c]const ffmpeg.AVPacket) !*@This() {
+        const self = try allocator.create(@This());
+        errdefer allocator.destroy(self);
+
+        self.* = .{
+            .data = packet,
             .allocator = allocator,
-            .packets = try .initCapacity(allocator, 0),
         };
+        return self;
     }
 
-    pub fn deinit(self: *Self) void {
-        for (self.packets.items) |*item| {
-            const i: [*c][*c]ffmpeg.struct_AVPacket = item;
-            ffmpeg.av_packet_free(i);
-        }
-        self.packets.deinit(self.allocator);
-    }
-
-    pub fn append(self: *Self, item: [*c]ffmpeg.AVPacket) !void {
-        try self.packets.append(self.allocator, item);
+    pub fn deinit(self: *@This()) void {
+        var packet: [*c]ffmpeg.AVPacket = @constCast(self.data);
+        ffmpeg.av_packet_free(&packet);
+        self.allocator.destroy(self);
     }
 };
 
-/// Encode audio with ffmpeg. Only aac supported currently.
 pub const AudioEncoder = struct {
     const Self = @This();
+
     allocator: Allocator,
     audio_codec_ctx: [*c]ffmpeg.AVCodecContext,
-    audio_stream: [*c]ffmpeg.AVStream,
     channels: u32,
+    // A rolling buffer of raw audio waiting to be encoded. We only encode
+    // once enough sample positions have accumulated.
+    pending_samples: std.ArrayList(f32),
+    // Absolute sample position of the first sample in `pending_samples`.
+    pending_start_sample: ?i64 = null,
+    is_flushed: bool = false,
 
     pub fn init(
         allocator: Allocator,
         sample_rate: u32,
         channels: u32,
-        format_context: *ffmpeg.AVFormatContext,
     ) !Self {
+        assert(channels > 0);
+        assert(sample_rate > 0);
         const audio_codec = ffmpeg.avcodec_find_encoder(ffmpeg.AV_CODEC_ID_AAC) orelse return error.MissingAudioEncoder;
-        const audio_codec_ctx = ffmpeg.avcodec_alloc_context3(audio_codec) orelse return error.FFmpegError;
+        var audio_codec_ctx = ffmpeg.avcodec_alloc_context3(audio_codec) orelse return error.FFmpegError;
+        errdefer ffmpeg.avcodec_free_context(&audio_codec_ctx);
 
         audio_codec_ctx.*.sample_rate = @intCast(sample_rate);
         _ = ffmpeg.av_channel_layout_default(&audio_codec_ctx.*.ch_layout, @intCast(channels));
         audio_codec_ctx.*.time_base = ffmpeg.AVRational{ .num = 1, .den = @intCast(sample_rate) };
         audio_codec_ctx.*.bit_rate = 320_000;
 
+        // Prefer floating-point formats so the replay mixer can hand PCM to the
+        // encoder without an extra sample conversion stage.
         var chosen_fmt: ffmpeg.AVSampleFormat = ffmpeg.AV_SAMPLE_FMT_NONE;
         if (audio_codec.*.sample_fmts != null) {
             var fmt_ptr = audio_codec.*.sample_fmts;
@@ -66,56 +74,72 @@ pub const AudioEncoder = struct {
             chosen_fmt = ffmpeg.AV_SAMPLE_FMT_FLTP;
         }
 
-        if (chosen_fmt == ffmpeg.AV_SAMPLE_FMT_NONE) return error.UnsupportedAudioSampleFormat;
+        if (chosen_fmt == ffmpeg.AV_SAMPLE_FMT_NONE) {
+            return error.UnsupportedAudioSampleFormat;
+        }
         audio_codec_ctx.*.sample_fmt = chosen_fmt;
         audio_codec_ctx.*.profile = ffmpeg.AV_PROFILE_AAC_LOW;
-
-        if (format_context.oformat.*.flags & ffmpeg.AVFMT_GLOBALHEADER != 0) {
-            audio_codec_ctx.*.flags |= ffmpeg.AV_CODEC_FLAG_GLOBAL_HEADER;
-        }
 
         _ = ffmpeg.av_opt_set_int(audio_codec_ctx.*.priv_data, "aac_pns", 0, 0);
         _ = ffmpeg.av_opt_set_int(audio_codec_ctx.*.priv_data, "vbr", 4, 0);
 
-        // Open the encoder before attaching it to the stream.
-        var ret = ffmpeg.avcodec_open2(audio_codec_ctx, audio_codec, null);
+        const ret = ffmpeg.avcodec_open2(audio_codec_ctx, audio_codec, null);
         try checkErr(ret);
-
-        const audio_stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
-
-        ret = ffmpeg.avcodec_parameters_from_context(audio_stream.*.codecpar, audio_codec_ctx);
-        try checkErr(ret);
-
-        audio_stream.*.time_base = audio_codec_ctx.*.time_base;
 
         return .{
             .allocator = allocator,
             .audio_codec_ctx = audio_codec_ctx,
-            .audio_stream = audio_stream,
             .channels = channels,
+            .pending_samples = try .initCapacity(allocator, 0),
         };
     }
 
     pub fn deinit(self: *Self) void {
+        self.pending_samples.deinit(self.allocator);
         ffmpeg.avcodec_free_context(&self.audio_codec_ctx);
     }
 
-    pub fn encode(
+    /// Encode a chunk of contiguous audio that begins at `start_sample`.
+    /// Timeline shaping is handled by the replay buffer before audio reaches
+    /// the encoder.
+    pub fn encodeChunk(
         self: *Self,
-        samples: []const f32,
-    ) !AudioEncodeResult {
-        var audio_packets: AudioEncodeResult = try .init(self.allocator);
+        start_sample: i64,
+        pcm: []const f32,
+    ) !?std.DoublyLinkedList {
+        assert(!self.is_flushed);
 
-        // Interpret interleaved f32 samples as frames for the encoder.
-        const channels_usize: usize = @intCast(self.channels);
-        const total_frames: usize = samples.len / channels_usize;
-        if (total_frames == 0) return error.NoAudioSamples;
+        const total_samples: usize = pcm.len / self.channels;
 
-        // AAC prefers fixed frame sizes; pad the final frame if needed.
-        const frame_size: usize = if (self.audio_codec_ctx.*.frame_size > 0)
-            @intCast(self.audio_codec_ctx.*.frame_size)
-        else
-            1024;
+        if (total_samples == 0) {
+            return null;
+        }
+
+        if (self.pending_start_sample == null) {
+            // The first chunk establishes the absolute sample position for the
+            // rolling PCM buffer.
+            self.pending_start_sample = start_sample;
+        } else {
+            const expected_next_sample = self.pending_start_sample.? +
+                @as(i64, @intCast(self.pending_samples.items.len / self.channels));
+            if (start_sample != expected_next_sample) {
+                return error.NonContiguousAudioPts;
+            }
+        }
+
+        try self.pending_samples.appendSlice(self.allocator, pcm);
+
+        return try self.encodeBufferedFrames(false);
+    }
+
+    /// Encode buffered samples if there are enough to fill the codec frame size.
+    /// allow_partial - Set to true to ignore this check and encode anyway.
+    fn encodeBufferedFrames(self: *Self, allow_partial: bool) !std.DoublyLinkedList {
+        var audio_packets: std.DoublyLinkedList = .{};
+        errdefer deinitPacketList(&audio_packets);
+
+        assert(self.audio_codec_ctx.*.frame_size > 0);
+        const codec_samples_per_packet: usize = @intCast(self.audio_codec_ctx.*.frame_size);
 
         var frame = ffmpeg.av_frame_alloc() orelse return error.FFmpegError;
         defer ffmpeg.av_frame_free(&frame);
@@ -123,102 +147,192 @@ pub const AudioEncoder = struct {
         frame.*.format = self.audio_codec_ctx.*.sample_fmt;
         frame.*.ch_layout = self.audio_codec_ctx.*.ch_layout;
         frame.*.sample_rate = self.audio_codec_ctx.*.sample_rate;
-        frame.*.nb_samples = @intCast(frame_size);
+        frame.*.nb_samples = @intCast(codec_samples_per_packet);
 
-        // Allocate backing buffers for the audio frame.
-        var ret = ffmpeg.av_frame_get_buffer(frame, 0);
+        const ret = ffmpeg.av_frame_get_buffer(frame, 0);
         try checkErr(ret);
 
-        var audio_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-        defer ffmpeg.av_packet_free(&audio_pkt);
-
-        const err_eagain = ffmpeg.AVERROR(ffmpeg.EAGAIN);
-        const err_eof = ffmpeg.AVERROR_EOF;
-        const audio_stream_idx = self.audio_stream.*.index;
-
-        var sample_index: usize = 0;
-        var next_audio_pts: i64 = 0;
-
-        // Feed frames into the encoder in order, then drain any queued packets.
-        while (sample_index < total_frames) {
-            const remaining_frames = total_frames - sample_index;
-            const nb_samples = if (remaining_frames >= frame_size) frame_size else remaining_frames;
-
-            frame.*.nb_samples = @intCast(nb_samples);
-            ret = ffmpeg.av_frame_make_writable(frame);
-            try checkErr(ret);
-
-            // Fill the encoder frame in the expected sample format.
-            if (self.audio_codec_ctx.*.sample_fmt == ffmpeg.AV_SAMPLE_FMT_FLTP) {
-                var ch: usize = 0;
-                while (ch < channels_usize) : (ch += 1) {
-                    const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[ch]));
-                    if (nb_samples < frame_size) {
-                        @memset(dst[0..frame_size], @as(f32, 0.0));
-                    }
-                    var i: usize = 0;
-                    while (i < nb_samples) : (i += 1) {
-                        dst[i] = samples[(sample_index + i) * channels_usize + ch];
-                    }
-                }
-            } else if (self.audio_codec_ctx.*.sample_fmt == ffmpeg.AV_SAMPLE_FMT_FLT) {
-                const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[0]));
-                const copy_len = nb_samples * channels_usize;
-                if (nb_samples < frame_size) {
-                    @memset(dst[0 .. frame_size * channels_usize], @as(f32, 0.0));
-                }
-                @memcpy(dst[0..copy_len], samples[sample_index * channels_usize .. sample_index * channels_usize + copy_len]);
-            } else {
-                return error.UnsupportedAudioSampleFormat;
-            }
-
-            // Keep PTS in samples to match audio time_base.
-            frame.*.pts = next_audio_pts;
-            next_audio_pts += @intCast(nb_samples);
-
-            // Submit the frame and collect any ready packets.
-            ret = ffmpeg.avcodec_send_frame(self.audio_codec_ctx, frame);
-            try checkErr(ret);
-
-            while (true) {
-                ret = ffmpeg.avcodec_receive_packet(self.audio_codec_ctx, audio_pkt);
-                if (ret == err_eagain or ret == err_eof) break;
-                try checkErr(ret);
-
-                // Convert packet timestamps to the container's time base.
-                ffmpeg.av_packet_rescale_ts(audio_pkt, self.audio_codec_ctx.*.time_base, self.audio_stream.*.time_base);
-                audio_pkt.*.stream_index = audio_stream_idx;
-
-                // Keep a copy for later interleaving with video by nanosecond PTS.
-                const stored_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-                ret = ffmpeg.av_packet_ref(stored_pkt, audio_pkt);
-                try checkErr(ret);
-                try audio_packets.append(stored_pkt);
-                ffmpeg.av_packet_unref(audio_pkt);
-            }
-
-            sample_index += nb_samples;
-        }
-
-        ret = ffmpeg.avcodec_send_frame(self.audio_codec_ctx, null);
-        try checkErr(ret);
-
-        // Drain the encoder for delayed packets.
         while (true) {
-            ret = ffmpeg.avcodec_receive_packet(self.audio_codec_ctx, audio_pkt);
-            if (ret == err_eagain or ret == err_eof) break;
-            try checkErr(ret);
+            const buffered_samples = self.pending_samples.items.len / self.channels;
+            if (buffered_samples < codec_samples_per_packet and !(allow_partial and buffered_samples > 0)) {
+                break;
+            }
 
-            ffmpeg.av_packet_rescale_ts(audio_pkt, self.audio_codec_ctx.*.time_base, self.audio_stream.*.time_base);
-            audio_pkt.*.stream_index = audio_stream_idx;
+            const submitted_samples: usize = @min(codec_samples_per_packet, buffered_samples);
+            // `sendFrame` reads from the front of `pending_samples`, so after it
+            // returns we compact the remaining PCM to keep the rolling buffer
+            // contiguous for the next capture chunk.
+            try self.sendFrame(&audio_packets, frame, self.pending_start_sample.?, codec_samples_per_packet, submitted_samples);
 
-            const stored_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-            ret = ffmpeg.av_packet_ref(stored_pkt, audio_pkt);
-            try checkErr(ret);
-            try audio_packets.append(stored_pkt);
-            ffmpeg.av_packet_unref(audio_pkt);
+            const consumed_samples = submitted_samples * self.channels;
+            const remaining_samples = self.pending_samples.items.len - consumed_samples;
+            std.mem.copyForwards(
+                f32,
+                self.pending_samples.items[0..remaining_samples],
+                self.pending_samples.items[consumed_samples..],
+            );
+            try self.pending_samples.resize(self.allocator, remaining_samples);
+
+            self.pending_start_sample.? += @intCast(submitted_samples);
+            if (remaining_samples == 0) {
+                self.pending_start_sample = null;
+                break;
+            }
         }
 
         return audio_packets;
     }
+
+    pub fn flush(self: *Self) !std.DoublyLinkedList {
+        assert(!self.is_flushed);
+
+        var audio_packets = try self.encodeBufferedFrames(true);
+        errdefer deinitPacketList(&audio_packets);
+
+        self.is_flushed = true;
+        const ret = ffmpeg.avcodec_send_frame(self.audio_codec_ctx, null);
+        try checkErr(ret);
+        try self.collectReadyPackets(&audio_packets);
+        return audio_packets;
+    }
+
+    fn sendFrame(
+        self: *Self,
+        audio_packets: *std.DoublyLinkedList,
+        frame: [*c]ffmpeg.AVFrame,
+        start_sample: i64,
+        codec_samples_per_packet: usize,
+        submitted_samples: usize,
+    ) !void {
+        const source_pcm = self.pending_samples.items[0 .. submitted_samples * self.channels];
+
+        var ret = ffmpeg.av_frame_make_writable(frame);
+        try checkErr(ret);
+
+        if (self.audio_codec_ctx.*.sample_fmt == ffmpeg.AV_SAMPLE_FMT_FLTP) {
+            // Planar float expects one channel per FFmpeg plane.
+            var ch: usize = 0;
+            while (ch < self.channels) : (ch += 1) {
+                const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[ch]));
+                if (submitted_samples < codec_samples_per_packet) {
+                    @memset(dst[0..codec_samples_per_packet], 0.0);
+                }
+                var i: usize = 0;
+                while (i < submitted_samples) : (i += 1) {
+                    dst[i] = source_pcm[i * self.channels + ch];
+                }
+            }
+        } else if (self.audio_codec_ctx.*.sample_fmt == ffmpeg.AV_SAMPLE_FMT_FLT) {
+            // Interleaved float stores all channels in the first plane.
+            const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[0]));
+            if (submitted_samples < codec_samples_per_packet) {
+                @memset(dst[0 .. codec_samples_per_packet * self.channels], 0.0);
+            }
+            @memcpy(dst[0..source_pcm.len], source_pcm);
+        } else {
+            return error.UnsupportedAudioSampleFormat;
+        }
+
+        frame.*.nb_samples = @intCast(submitted_samples);
+        frame.*.pts = start_sample;
+
+        ret = ffmpeg.avcodec_send_frame(self.audio_codec_ctx, frame);
+        try checkErr(ret);
+        // A single submitted frame can produce zero, one, or multiple packets
+        // depending on encoder delay, so always drain after each send.
+        try self.collectReadyPackets(audio_packets);
+    }
+
+    fn collectReadyPackets(
+        self: *Self,
+        audio_packets: *std.DoublyLinkedList,
+    ) !void {
+        var audio_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
+        defer ffmpeg.av_packet_free(&audio_pkt);
+
+        while (true) {
+            const ret = ffmpeg.avcodec_receive_packet(self.audio_codec_ctx, audio_pkt);
+            if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) or ret == ffmpeg.AVERROR_EOF) {
+                break;
+            }
+            try checkErr(ret);
+            var owned_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
+            errdefer ffmpeg.av_packet_free(&owned_pkt);
+            ffmpeg.av_packet_move_ref(owned_pkt, audio_pkt);
+            const node = try EncodedAudioPacketNode.init(self.allocator, owned_pkt);
+            audio_packets.append(&node.node);
+        }
+    }
 };
+
+pub fn deinitPacketList(packets: *std.DoublyLinkedList) void {
+    while (packets.popFirst()) |node| {
+        const packet_node: *EncodedAudioPacketNode = @alignCast(@fieldParentPtr("node", node));
+        packet_node.deinit();
+    }
+}
+
+test "encodeChunk rejects non-contiguous sample input" {
+    const allocator = std.testing.allocator;
+
+    var encoder = try AudioEncoder.init(allocator, 48_000, 2);
+    defer encoder.deinit();
+
+    const pcm = [_]f32{ 0.0, 0.0, 0.0, 0.0 };
+    var first_result = (try encoder.encodeChunk(0, &pcm)).?;
+    defer deinitPacketList(&first_result);
+    try std.testing.expect(first_result.first == null);
+    try std.testing.expectError(error.NonContiguousAudioPts, encoder.encodeChunk(3, &pcm));
+}
+
+test "encodeChunk plus flush produces encoded audio packets" {
+    const allocator = std.testing.allocator;
+    const sample_rate: u32 = 48_000;
+    const channels: u32 = 2;
+    const start_sample: i64 = 12_345;
+    const sample_positions: usize = 2_048;
+
+    var encoder = try AudioEncoder.init(allocator, sample_rate, channels);
+    defer encoder.deinit();
+
+    const pcm = try allocator.alloc(f32, sample_positions * channels);
+    defer allocator.free(pcm);
+
+    for (0..sample_positions) |sample_idx| {
+        const value = @as(f32, @floatFromInt(@mod(sample_idx, 32))) / 32.0;
+        const pcm_offset = sample_idx * channels;
+        pcm[pcm_offset] = value;
+        pcm[pcm_offset + 1] = -value;
+    }
+
+    var all_packets: std.DoublyLinkedList = .{};
+    defer deinitPacketList(&all_packets);
+
+    var encoded_packets = (try encoder.encodeChunk(start_sample, pcm)).?;
+    while (encoded_packets.popFirst()) |node| {
+        all_packets.append(node);
+    }
+
+    var flushed_packets = try encoder.flush();
+    while (flushed_packets.popFirst()) |node| {
+        all_packets.append(node);
+    }
+
+    try std.testing.expect(all_packets.first != null);
+
+    var node = all_packets.first;
+    var previous_pts: ?i64 = null;
+    while (node) |current| : (node = current.next) {
+        const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", current);
+        try std.testing.expect(packet_node.data.*.size > 0);
+        try std.testing.expect(packet_node.data.*.pts != ffmpeg.AV_NOPTS_VALUE);
+        try std.testing.expect(packet_node.data.*.dts != ffmpeg.AV_NOPTS_VALUE);
+        try std.testing.expect(packet_node.data.*.duration > 0);
+        if (previous_pts) |prev| {
+            try std.testing.expect(packet_node.data.*.pts >= prev);
+        }
+        previous_pts = packet_node.data.*.pts;
+    }
+}
+
+// TODO: Add integration test to compare encoded audio file.
