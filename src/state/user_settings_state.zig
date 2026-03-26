@@ -3,12 +3,14 @@ const Allocator = std.mem.Allocator;
 const Actor = @import("../actor.zig").Actor;
 const ActionPayload = @import("../actor.zig").ActionPayload;
 const util = @import("../util.zig");
+const Actions = @import("../actor.zig").Actions;
 
 const log = std.log.scoped(.user_settings_state);
 
 pub const UserSettingsActions = union(enum) {
     set_capture_fps: u32,
     set_capture_bit_rate: u64,
+    set_replay_seconds: u32,
     set_gui_foreground_fps: u32,
     set_gui_background_fps: u32,
     set_audio_device_settings: *ActionPayload(struct {
@@ -49,72 +51,72 @@ pub const UserSettingsState = struct {
         self.settings.deinit(self.allocator);
     }
 
-    pub fn handle_actions(self: *Self, actor: *Actor, action: UserSettingsActions) !void {
+    pub fn handle_action(self: *Self, actor: *Actor, action: Actions) !void {
         switch (action) {
-            .set_capture_fps => |fps| {
-                var settings_snapshot: UserSettings = undefined;
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    self.settings.capture_fps = fps;
-                    settings_snapshot = try self.settings.clone(self.allocator);
+            .user_settings => |user_settings_action| {
+                switch (user_settings_action) {
+                    .set_capture_fps => |capture_fps| {
+                        try self.set_state(actor, "capture_fps", capture_fps);
+                        try actor.video_capture.update_fps(capture_fps);
+                    },
+                    .set_capture_bit_rate => |capture_bit_rate| {
+                        try self.set_state(actor, "capture_bit_rate", capture_bit_rate);
+                    },
+                    .set_replay_seconds => |replay_seconds| {
+                        try self.set_state(actor, "replay_seconds", replay_seconds);
+                    },
+                    .set_gui_foreground_fps => |gui_foreground_fps| {
+                        try self.set_state(actor, "gui_foreground_fps", gui_foreground_fps);
+                    },
+                    .set_gui_background_fps => |gui_background_fps| {
+                        try self.set_state(actor, "gui_background_fps", gui_background_fps);
+                    },
+                    .set_audio_device_settings => |_action| {
+                        defer _action.deinit();
+                        const payload = _action.payload;
+                        var settings_snapshot: UserSettings = undefined;
+                        {
+                            actor.ui_mutex.lock();
+                            defer actor.ui_mutex.unlock();
+                            try self.settings.update_audio_device_settings(
+                                self.allocator,
+                                payload.device_id,
+                                payload.selected,
+                                payload.gain,
+                            );
+                            settings_snapshot = try self.settings.clone(self.allocator);
+                        }
+                        defer settings_snapshot.deinit(self.allocator);
+                        try self.save(&settings_snapshot);
+                    },
                 }
-                defer settings_snapshot.deinit(self.allocator);
-                try self.save(&settings_snapshot);
-                try actor.video_capture.update_fps(fps);
             },
-            .set_capture_bit_rate => |bit_rate| {
-                var settings_snapshot: UserSettings = undefined;
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    self.settings.capture_bit_rate = bit_rate;
-                    settings_snapshot = try self.settings.clone(self.allocator);
-                }
-                defer settings_snapshot.deinit(self.allocator);
-                try self.save(&settings_snapshot);
-            },
-            .set_gui_foreground_fps => |fps| {
-                var settings_snapshot: UserSettings = undefined;
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    self.settings.gui_foreground_fps = fps;
-                    settings_snapshot = try self.settings.clone(self.allocator);
-                }
-                defer settings_snapshot.deinit(self.allocator);
-                try self.save(&settings_snapshot);
-            },
-            .set_gui_background_fps => |fps| {
-                var settings_snapshot: UserSettings = undefined;
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    self.settings.gui_background_fps = fps;
-                    settings_snapshot = try self.settings.clone(self.allocator);
-                }
-                defer settings_snapshot.deinit(self.allocator);
-                try self.save(&settings_snapshot);
-            },
-            .set_audio_device_settings => |_action| {
-                defer _action.deinit();
-                const payload = _action.payload;
-                var settings_snapshot: UserSettings = undefined;
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    try self.settings.update_audio_device_settings(
-                        self.allocator,
-                        payload.device_id,
-                        payload.selected,
-                        payload.gain,
-                    );
-                    settings_snapshot = try self.settings.clone(self.allocator);
-                }
-                defer settings_snapshot.deinit(self.allocator);
-                try self.save(&settings_snapshot);
-            },
+            else => {},
         }
+    }
+
+    /// Helper function to set a value on the state.
+    ///
+    /// Locks the UI mutex.
+    /// Updates the field.
+    /// Deep copy the settings.
+    /// Then save (write to disk).
+    ///
+    /// `field_name` a field on the UserSettings type.
+    fn set_state(
+        self: *Self,
+        actor: *Actor,
+        comptime field_name: []const u8,
+        value: anytype,
+    ) !void {
+        var settings_snapshot: UserSettings = blk: {
+            actor.ui_mutex.lock();
+            defer actor.ui_mutex.unlock();
+            @field(self.settings, field_name) = value;
+            break :blk try self.settings.clone(self.allocator);
+        };
+        defer settings_snapshot.deinit(self.allocator);
+        try self.save(&settings_snapshot);
     }
 
     /// Read the settings json file if it exists, otherwise use defaults.
@@ -146,6 +148,7 @@ pub const UserSettingsState = struct {
         var loaded: UserSettings = .{
             .capture_fps = parsed.value.capture_fps,
             .capture_bit_rate = parsed.value.capture_bit_rate,
+            .replay_seconds = parsed.value.replay_seconds,
             .gui_foreground_fps = parsed.value.gui_foreground_fps,
             .gui_background_fps = parsed.value.gui_background_fps,
         };
@@ -198,6 +201,7 @@ const UserSettings = struct {
     capture_fps: u32 = 60,
     /// In bits per second (bps).
     capture_bit_rate: u64 = 10_000_000,
+    replay_seconds: u32 = 30,
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     fn deinit(self: *@This(), allocator: Allocator) void {
@@ -243,6 +247,7 @@ const UserSettings = struct {
         var settings_copy: @This() = .{
             .capture_fps = self.capture_fps,
             .capture_bit_rate = self.capture_bit_rate,
+            .replay_seconds = self.replay_seconds,
             .gui_foreground_fps = self.gui_foreground_fps,
             .gui_background_fps = self.gui_background_fps,
         };

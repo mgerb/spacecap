@@ -18,15 +18,15 @@ const ReplayBufferViewModel = struct {
     }
 };
 
-// User settings
-user_settings: UserSettingsState,
-replay_seconds: u32 = 30,
-
+// TODO: Move any "global" state into its own object.
 is_recording_video: bool = false,
 is_capturing_video: bool = false,
 show_demo: bool = false,
 is_video_capture_supprted: bool,
+
 audio: AudioState,
+// User settings
+user_settings: UserSettingsState,
 
 replay_buffer: ReplayBufferViewModel = .{},
 

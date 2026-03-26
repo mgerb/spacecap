@@ -14,6 +14,32 @@ pub fn print_elapsed(start_time: i128, prefix: []const u8) void {
     std.debug.print("[{s}] time elapsed {}ms\n", .{ prefix, total_time });
 }
 
+pub fn format_duration_label(allocator: std.mem.Allocator, total_seconds: u32) ![:0]u8 {
+    const hours = total_seconds / 3600;
+    const minutes = (total_seconds % 3600) / 60;
+    const seconds = total_seconds % 60;
+
+    if (hours > 0 and minutes > 0 and seconds > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}m {d}s", .{ hours, minutes, seconds }, 0);
+    }
+    if (hours > 0 and minutes > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}m", .{ hours, minutes }, 0);
+    }
+    if (hours > 0 and seconds > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}s", .{ hours, seconds }, 0);
+    }
+    if (hours > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}h", .{hours}, 0);
+    }
+    if (minutes > 0 and seconds > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}m {d}s", .{ minutes, seconds }, 0);
+    }
+    if (minutes > 0) {
+        return std.fmt.allocPrintSentinel(allocator, "{d}m", .{minutes}, 0);
+    }
+    return std.fmt.allocPrintSentinel(allocator, "{d}s", .{seconds}, 0);
+}
+
 /// Write bgrx data to a .bmp file - used for testing
 pub fn write_bmp_bgrx(
     allocator: std.mem.Allocator,
@@ -141,6 +167,30 @@ pub fn LinkedListIterator(comptime T: type) type {
             return @fieldParentPtr("node", current);
         }
     };
+}
+
+test "format_duration_label formats compact duration strings" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct {
+        seconds: u32,
+        expected: []const u8,
+    }{
+        .{ .seconds = 0, .expected = "0s" },
+        .{ .seconds = 45, .expected = "45s" },
+        .{ .seconds = 60, .expected = "1m" },
+        .{ .seconds = 65, .expected = "1m 5s" },
+        .{ .seconds = 3600, .expected = "1h" },
+        .{ .seconds = 3605, .expected = "1h 5s" },
+        .{ .seconds = 3660, .expected = "1h 1m" },
+        .{ .seconds = 3665, .expected = "1h 1m 5s" },
+    };
+
+    for (cases) |case| {
+        const label = try format_duration_label(allocator, case.seconds);
+        defer allocator.free(label);
+
+        try std.testing.expectEqualStrings(case.expected, label);
+    }
 }
 
 test "LinkedListIterator iterates doubly linked list data in order" {

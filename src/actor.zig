@@ -230,6 +230,8 @@ pub const Actor = struct {
     }
 
     fn handle_action(self: *Self, action: Actions) !void {
+        try self.state.audio.handle_action(self, action);
+        try self.state.user_settings.handle_action(self, action);
         switch (action) {
             .start_record => {
                 try self.start_record();
@@ -248,7 +250,7 @@ pub const Actor = struct {
                         return;
                     }
                     fps = self.state.user_settings.settings.capture_fps;
-                    replay_seconds = self.state.replay_seconds;
+                    replay_seconds = self.state.user_settings.settings.replay_seconds;
                 }
 
                 // We should always have a size if the state is recording.
@@ -317,12 +319,22 @@ pub const Actor = struct {
             .open_global_shortcuts => {
                 try self.global_shortcuts.open();
             },
-            .user_settings => {
-                try self.state.user_settings.handle_actions(self, action.user_settings);
+            .user_settings => |user_settings_action| {
+                switch (user_settings_action) {
+                    .set_replay_seconds => |replay_seconds| {
+                        self.video_record_mutex.lock();
+                        defer self.video_record_mutex.unlock();
+
+                        var video_replay_buffer_locked = self.video_replay_buffer.lock();
+                        defer video_replay_buffer_locked.unlock();
+                        if (video_replay_buffer_locked.unwrap()) |video_replay_buffer| {
+                            video_replay_buffer.set_replay_seconds(replay_seconds);
+                        }
+                    },
+                    else => {},
+                }
             },
-            .audio => {
-                try self.state.audio.handle_actions(self, action.audio);
-            },
+            else => {},
         }
     }
 
@@ -527,7 +539,7 @@ pub const Actor = struct {
             if (!self.state.is_capturing_video or self.state.is_recording_video) return;
             fps = self.state.user_settings.settings.capture_fps;
             capture_bit_rate = self.state.user_settings.settings.capture_bit_rate;
-            replay_seconds = self.state.replay_seconds;
+            replay_seconds = self.state.user_settings.settings.replay_seconds;
         }
 
         const size = self.video_capture.size() orelse {

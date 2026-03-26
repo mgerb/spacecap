@@ -74,6 +74,11 @@ pub fn finalize(self: *Self) !void {
     self.trim_packets();
 }
 
+pub fn set_replay_seconds(self: *Self, replay_seconds: u32) void {
+    self.replay_seconds = replay_seconds;
+    self.trim_packets();
+}
+
 pub fn packet_iterator(self: *Self) LinkedListIterator(EncodedAudioPacketNode) {
     return LinkedListIterator(EncodedAudioPacketNode).init(&self.packets);
 }
