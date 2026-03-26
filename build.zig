@@ -1,8 +1,10 @@
 const util = @import("src/util.zig");
 const std = @import("std");
 const ffmpeg_build_util = @import("build/ffmpeg_build.zig");
+const version = @import("build/version.zig");
 
 const EXE_NAME = "spacecap";
+const PackageVersion = version.PackageVersion;
 
 fn compile_shader(
     allocator: std.mem.Allocator,
@@ -157,6 +159,8 @@ fn build_windows(
     allocator: std.mem.Allocator,
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
+    package_version: PackageVersion,
+    options: *std.Build.Step.Options,
 ) !void {
     const target = b.resolveTargetQuery(.{
         .os_tag = .windows,
@@ -170,10 +174,13 @@ fn build_windows(
         .optimize = optimize,
         .link_libc = true,
     });
+    module.addOptions("build_options", options);
 
     const exe = b.addExecutable(.{
         .name = EXE_NAME,
         .root_module = module,
+        .version = package_version.semantic_version,
+        .use_llvm = true,
     });
     // TODO: seems like rpath is not working
     exe.addRPath(b.path("./lib"));
@@ -211,6 +218,8 @@ fn build_linux(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     nix: bool,
+    package_version: PackageVersion,
+    options: *std.Build.Step.Options,
 ) !*std.Build.Step {
     const module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -218,10 +227,12 @@ fn build_linux(
         .optimize = optimize,
         .link_libc = true,
     });
+    module.addOptions("build_options", options);
 
     const exe = b.addExecutable(.{
         .name = EXE_NAME,
         .root_module = module,
+        .version = package_version.semantic_version,
         // TODO: There are currently some pointer alignment issues
         // with pipewire using the Zig backend. Just stick to LLVM for now...
         .use_llvm = true,
@@ -286,6 +297,7 @@ fn build_unit_tests_default(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    options: *std.Build.Step.Options,
 ) !void {
     const unit_test_files = [_][]const u8{
         "./src/test.zig",
@@ -294,13 +306,14 @@ fn build_unit_tests_default(
     const test_step = b.step("test", "Run unit tests");
 
     for (unit_test_files) |f| {
-        const root_module = b.createModule(.{
+        const module = b.createModule(.{
             .root_source_file = b.path(f),
             .target = target,
             .optimize = optimize,
         });
+        module.addOptions("build_options", options);
         const exe = b.addTest(.{
-            .root_module = root_module,
+            .root_module = module,
             .test_runner = .{ .path = b.path("./src/test_runner.zig"), .mode = .simple },
             // Keep test linking behavior aligned with Linux executable builds.
             .use_llvm = true,
@@ -326,23 +339,42 @@ pub fn build(b: *std.Build) !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const nix = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
-    const appimage = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
+    // Build Options
+    const nix_option = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
+    const appimage_option = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
+    const release_version_option = b.option(bool, "release-version", "Build the stable Spacecap version from build.zig.zon instead of a git-derived dev version.") orelse false;
 
-    if (appimage and nix == true) {
+    var package_version = try version.get_package_version(b, allocator);
+    defer package_version.deinit();
+
+    const resolved_version = if (release_version_option)
+        package_version.release_version
+    else
+        package_version.nightly_version;
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", resolved_version);
+
+    if (appimage_option and nix_option == true) {
         std.log.err("AppImage builds require generic linux target. Run without -Dnix.", .{});
         return error.InvalidBuildConfig;
     }
 
     const optimize = b.standardOptimizeOption(.{});
-    if (appimage and optimize == .Debug) {
+    if (appimage_option and optimize == .Debug) {
         std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseFast, -Doptimize=ReleaseSafe, or -Doptimize=ReleaseSmall.", .{});
         return error.InvalidBuildConfig;
     }
 
-    try build_windows(allocator, b, optimize);
+    try build_windows(
+        allocator,
+        b,
+        optimize,
+        package_version,
+        options,
+    );
 
-    const linux_target = if (nix == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
+    const linux_target = if (nix_option == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
         .os_tag = .linux,
         .abi = .gnu,
         .cpu_arch = .x86_64,
@@ -353,13 +385,21 @@ pub fn build(b: *std.Build) !void {
         b,
         linux_target,
         optimize,
-        nix,
+        nix_option,
+        package_version,
+        options,
     );
-    const appimage_step = build_linux_app_image(b, allocator, linux_install_step);
 
-    if (appimage) {
+    if (appimage_option) {
+        const appimage_step = build_linux_app_image(b, allocator, linux_install_step);
         b.getInstallStep().dependOn(appimage_step);
     }
 
-    try build_unit_tests_default(allocator, b, linux_target, optimize);
+    try build_unit_tests_default(
+        allocator,
+        b,
+        linux_target,
+        optimize,
+        options,
+    );
 }

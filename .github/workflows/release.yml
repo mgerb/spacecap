@@ -28,7 +28,7 @@ jobs:
       - name: Enable Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Resolve and Validate Release Version
+      - name: Resolve Release Metadata
         id: version
         run: |
           # Grab the version from build.zig.zon.
@@ -49,31 +49,41 @@ jobs:
             fi
 
             release_tag="${actual_tag}"
-            release_version="${base_version}"
             prerelease="false"
-          # Triggered by merge to main.
+            test_build_args="-Dnix -Drelease-version"
+            release_build_args="-Drelease-version"
           else
-            short_sha="$(git rev-parse --short=8 HEAD)"
-            release_version="${base_version}+g${short_sha}"
             release_tag="nightly"
             prerelease="true"
+            test_build_args="-Dnix"
+            release_build_args=""
           fi
 
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
-          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "test_build_args=${test_build_args}" >> "$GITHUB_OUTPUT"
+          echo "release_build_args=${release_build_args}" >> "$GITHUB_OUTPUT"
 
       - name: Build and Test
         run: |
           nix develop -c bash -lc '
             set -euo pipefail
-            echo "Release version: ${{ steps.version.outputs.release_version }}"
-            zig build -Dnix
-            zig build test -Dnix
+            zig build ${{ steps.version.outputs.test_build_args }}
+            zig build test ${{ steps.version.outputs.test_build_args }}
           '
 
+      - name: Resolve Built Version
+        id: built_version
+        run: |
+          release_version="$(./zig-out/linux/spacecap --version | sed 's/^spacecap //')"
+          if [ -z "$release_version" ]; then
+            echo "Failed to read version from built binary" >&2
+            exit 1
+          fi
+          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
+
       - name: Build Release Binaries
-        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseFast
+        run: nix develop -c zig build ${{ steps.version.outputs.release_build_args }} -Dappimage -Doptimize=ReleaseFast
 
       # - name: Package Linux
       #   run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux
@@ -124,6 +134,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.release_tag }}
+          name: Spacecap ${{ steps.built_version.outputs.release_version }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: ${{ github.ref_type != 'tag' || steps.existing_release.outputs.exists != 'true' }}
