@@ -40,7 +40,7 @@ const DEVICE_VIDEO_EXTENSIONS = blk: {
     };
 
     // linux specific device extensions
-    if (util.isLinux()) {
+    if (util.is_linux()) {
         break :blk base_device_extensions ++ .{
             vk.extensions.ext_image_drm_format_modifier.name,
             vk.extensions.khr_external_memory.name,
@@ -52,7 +52,7 @@ const DEVICE_VIDEO_EXTENSIONS = blk: {
     }
 
     // windows specific device extensions
-    if (util.isWindows()) {
+    if (util.is_windows()) {
         break :blk base_device_extensions ++ .{};
     }
 
@@ -189,7 +189,7 @@ pub const Vulkan = struct {
                     .performance_bit_ext = true,
                     .device_address_binding_bit_ext = false,
                 },
-                .pfn_user_callback = debugCallback,
+                .pfn_user_callback = debug_callback,
             }, null);
         }
         errdefer {
@@ -198,13 +198,13 @@ pub const Vulkan = struct {
             }
         }
 
-        const candidate = try pickPhysicalDevice(instance, allocator);
+        const candidate = try pick_physical_device(instance, allocator);
 
         const pdev = candidate.pdev;
         const props = candidate.props;
         const mem_props = instance.getPhysicalDeviceMemoryProperties(pdev);
 
-        const device_candidate = try initializeCandidate(allocator, instance, candidate);
+        const device_candidate = try initialize_candidate(allocator, instance, candidate);
         const vkd = try allocator.create(DeviceDispatch);
         errdefer allocator.destroy(vkd);
         vkd.* = DeviceDispatch.load(device_candidate, instance.wrapper.dispatch.vkGetDeviceProcAddr.?);
@@ -239,9 +239,9 @@ pub const Vulkan = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.destroyVideoEncoder();
-        self.destroyCapturePreviewRingBuffer();
-        self.destroyCaptureRingBuffer();
+        self.destroy_video_encoder();
+        self.destroy_capture_preview_ring_buffer();
+        self.destroy_capture_ring_buffer();
         self.capture_preview_textures.deinit();
 
         if (self.debug_messenger) |debug_messenger| {
@@ -256,7 +256,7 @@ pub const Vulkan = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn initVideoEncoder(
+    pub fn init_video_encoder(
         self: *Self,
         width: u32,
         height: u32,
@@ -277,14 +277,14 @@ pub const Vulkan = struct {
         );
     }
 
-    pub fn destroyVideoEncoder(self: *Self) void {
+    pub fn destroy_video_encoder(self: *Self) void {
         if (self.video_encoder) |encoder| {
             encoder.deinit();
             self.video_encoder = null;
         }
     }
 
-    pub fn getCapturePreviewTexture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(CapturePreviewTexture) {
+    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(CapturePreviewTexture) {
         if (self.capture_preview_textures.get(vulkan_image_buffer)) |capture_preview_texture| {
             return capture_preview_texture.retain();
         } else {
@@ -301,7 +301,7 @@ pub const Vulkan = struct {
         }
     }
 
-    fn clearCapturePreviewTextures(self: *Self) void {
+    fn clear_capture_preview_textures(self: *Self) void {
         var iter = self.capture_preview_textures.iterator();
         while (iter.next()) |entry| {
             if (entry.value_ptr.releaseUnwrap()) |*val| {
@@ -311,7 +311,7 @@ pub const Vulkan = struct {
         self.capture_preview_textures.clearRetainingCapacity();
     }
 
-    pub fn initCapturePreviewRingBuffer(self: *Self, width: u32, height: u32) !void {
+    pub fn init_capture_preview_ring_buffer(self: *Self, width: u32, height: u32) !void {
         self.capture_preview_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
                 .allocator = self.allocator,
@@ -334,8 +334,8 @@ pub const Vulkan = struct {
     }
 
     /// Destroy the ring buffer, but also clear the capture preview textures.
-    pub fn destroyCapturePreviewRingBuffer(self: *Self) void {
-        self.waitForUIFences();
+    pub fn destroy_capture_preview_ring_buffer(self: *Self) void {
+        self.wait_for_ui_fences();
         var capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
         defer capture_preview_ring_buffer_locked.unlock();
 
@@ -343,10 +343,10 @@ pub const Vulkan = struct {
             capture_preview_ring_buffer.deinit();
             capture_preview_ring_buffer_locked.set(null);
         }
-        self.clearCapturePreviewTextures();
+        self.clear_capture_preview_textures();
     }
 
-    pub fn initCaptureRingBuffer(self: *Self, width: u32, height: u32) !void {
+    pub fn init_capture_ring_buffer(self: *Self, width: u32, height: u32) !void {
         self.capture_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
                 .allocator = self.allocator,
@@ -368,13 +368,13 @@ pub const Vulkan = struct {
         ));
     }
 
-    pub fn destroyCaptureRingBuffer(self: *Self) void {
-        const did_wait = self.waitForAllGraphicsFencesBegin();
+    pub fn destroy_capture_ring_buffer(self: *Self) void {
+        const did_wait = self.wait_for_all_graphics_fences_begin();
         defer {
             if (did_wait) {
-                self.waitForAllGraphicsFencesEnd();
+                self.wait_for_all_graphics_fences_end();
             } else |err| {
-                log.err("[destroyCaptureRingBuffer] wait for fence error: {}", .{err});
+                log.err("[destroy_capture_ring_buffer] wait for fence error: {}", .{err});
             }
         }
         const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
@@ -382,11 +382,11 @@ pub const Vulkan = struct {
         if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
             capture_ring_buffer.deinit();
         }
-        capture_ring_buffer_locked.unwrapPtr().* = null;
+        capture_ring_buffer_locked.unwrap_ptr().* = null;
     }
 
     /// Caller owns the memory - must free
-    pub fn queryFormatModifiers(self: *const Self, format: vk.Format) !std.ArrayList(u64) {
+    pub fn query_format_modifiers(self: *const Self, format: vk.Format) !std.ArrayList(u64) {
         var modifiers_list = vk.DrmFormatModifierPropertiesListEXT{};
         var props = vk.FormatProperties2{
             .p_next = @ptrCast(&modifiers_list),
@@ -411,7 +411,7 @@ pub const Vulkan = struct {
         return modifiers;
     }
 
-    fn pickPhysicalDevice(
+    fn pick_physical_device(
         instance: Instance,
         allocator: std.mem.Allocator,
     ) !DeviceCandidate {
@@ -422,8 +422,8 @@ pub const Vulkan = struct {
         var best_score: u32 = 0;
 
         for (pdevs) |pdev| {
-            if (try checkSuitable(instance, pdev, allocator)) |candidate| {
-                const score = deviceScore(candidate.props, candidate.queues);
+            if (try check_suitable(instance, pdev, allocator)) |candidate| {
+                const score = device_score(candidate.props, candidate.queues);
                 if (best_candidate == null or score > best_score) {
                     best_candidate = candidate;
                     best_score = score;
@@ -437,7 +437,7 @@ pub const Vulkan = struct {
 
         const device = best_candidate.?;
 
-        log.info("[pickPhysicalDevice] using device: {s}", .{device.props.device_name});
+        log.info("[pick_physical_device] using device: {s}", .{device.props.device_name});
 
         return device;
     }
@@ -445,7 +445,7 @@ pub const Vulkan = struct {
     /// Simple score function to determine what GPU to auto select based on its capabilties.
     /// Prefer devices that support Vulkan video encoding above all, because the app doesn't
     /// work otherwise.
-    fn deviceScore(props: vk.PhysicalDeviceProperties, queues: QueueAllocation) u32 {
+    fn device_score(props: vk.PhysicalDeviceProperties, queues: QueueAllocation) u32 {
         var score: u32 = 0;
 
         if (queues.video_encode_family != null) {
@@ -462,31 +462,31 @@ pub const Vulkan = struct {
         return score;
     }
 
-    fn checkSuitable(
+    fn check_suitable(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
     ) !?DeviceCandidate {
         const props = instance.getPhysicalDeviceProperties(pdev);
-        log.debug("[checkSuitable] checking potential device: {s}, device type: {}", .{ props.device_name, props.device_type });
+        log.debug("[check_suitable] checking potential device: {s}, device type: {}", .{ props.device_name, props.device_type });
 
-        if (!try checkDeviceExtensionSupport(.device, instance, pdev, allocator)) {
+        if (!try check_device_extension_support(.device, instance, pdev, allocator)) {
             return null;
         }
 
-        if (try initQueues(instance, pdev, allocator)) |allocation| {
+        if (try init_queues(instance, pdev, allocator)) |allocation| {
             return DeviceCandidate{
                 .pdev = pdev,
                 .props = props,
                 .queues = allocation,
-                .video_extensions_supported = try checkDeviceExtensionSupport(.video, instance, pdev, allocator),
+                .video_extensions_supported = try check_device_extension_support(.video, instance, pdev, allocator),
             };
         }
 
         return null;
     }
 
-    fn checkDeviceExtensionSupport(
+    fn check_device_extension_support(
         extension_type: enum { device, video },
         instance: Instance,
         pdev: vk.PhysicalDevice,
@@ -498,8 +498,8 @@ pub const Vulkan = struct {
             .device => {
                 // Loop through all extensions so that we can log all the unsupported ones.
                 for (DEVICE_EXTENSIONS) |extension| {
-                    if (!try extensionSupported(instance, pdev, allocator, extension)) {
-                        log.info("[extensionEnabled] extension is not supported on device: {s}", .{extension});
+                    if (!try extension_supported(instance, pdev, allocator, extension)) {
+                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
                         supported = false;
                     }
                 }
@@ -507,8 +507,8 @@ pub const Vulkan = struct {
             .video => {
                 // Loop through all extensions so that we can log all the unsupported ones.
                 for (DEVICE_VIDEO_EXTENSIONS) |extension| {
-                    if (!try extensionSupported(instance, pdev, allocator, extension)) {
-                        log.info("[extensionEnabled] extension is not supported on device: {s}", .{extension});
+                    if (!try extension_supported(instance, pdev, allocator, extension)) {
+                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
                         supported = false;
                     }
                 }
@@ -518,7 +518,7 @@ pub const Vulkan = struct {
         return supported;
     }
 
-    fn extensionSupported(
+    fn extension_supported(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -538,7 +538,7 @@ pub const Vulkan = struct {
     }
 
     /// Does not actually allocate anything in Vulkan. It just gets the queue family indexes.
-    fn initQueues(
+    fn init_queues(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -574,7 +574,7 @@ pub const Vulkan = struct {
     /// - create device
     /// - add device extensions
     /// - add device queues
-    fn initializeCandidate(allocator: std.mem.Allocator, instance: Instance, candidate: DeviceCandidate) !vk.Device {
+    fn initialize_candidate(allocator: std.mem.Allocator, instance: Instance, candidate: DeviceCandidate) !vk.Device {
         const priority = [_]f32{1};
         var qci = try std.ArrayList(vk.DeviceQueueCreateInfo).initCapacity(allocator, 1);
         defer qci.deinit(allocator);
@@ -622,7 +622,7 @@ pub const Vulkan = struct {
         }, null);
     }
 
-    fn debugCallback(
+    fn debug_callback(
         message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
         message_types: vk.DebugUtilsMessageTypeFlagsEXT,
         p_callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT,
@@ -633,11 +633,11 @@ pub const Vulkan = struct {
         _ = p_user_data;
         b: {
             const msg = (p_callback_data orelse break :b).p_message orelse break :b;
-            log.warn("[debugCallback] {s}", .{msg});
+            log.warn("[debug_callback] {s}", .{msg});
 
             return .false;
         }
-        log.warn("[debugCallback] unrecognized validation layer debug message", .{});
+        log.warn("[debug_callback] unrecognized validation layer debug message", .{});
         return .true;
     }
 
@@ -649,12 +649,12 @@ pub const Vulkan = struct {
     ) !vk.DeviceMemory {
         return try self.device.allocateMemory(&.{
             .allocation_size = requirements.size,
-            .memory_type_index = try self.findMemoryTypeIndex(requirements.memory_type_bits, flags),
+            .memory_type_index = try self.find_memory_type_index(requirements.memory_type_bits, flags),
             .p_next = p_next,
         }, null);
     }
 
-    pub fn findMemoryTypeIndex(self: *Self, memory_type_bits: u32, flags: vk.MemoryPropertyFlags) !u32 {
+    pub fn find_memory_type_index(self: *Self, memory_type_bits: u32, flags: vk.MemoryPropertyFlags) !u32 {
         for (self.mem_props.memory_types[0..self.mem_props.memory_type_count], 0..) |mem_type, i| {
             if (memory_type_bits & (@as(u32, 1) << @truncate(i)) != 0 and mem_type.property_flags.contains(flags)) {
                 return @truncate(i);
@@ -668,7 +668,7 @@ pub const Vulkan = struct {
     /// - locks queue mutex
     /// - resets fence if not null
     /// - submits queue
-    pub fn queueSubmit(
+    pub fn queue_submit(
         self: *Self,
         queue: enum { graphics, encode },
         submit_info: []const vk.SubmitInfo,
@@ -694,19 +694,19 @@ pub const Vulkan = struct {
     }
 
     /// Lock graphics mutex and present.
-    pub fn queuePresentKHR(self: *Self, present_info: *const vk.PresentInfoKHR) !void {
+    pub fn queue_present_khr(self: *Self, present_info: *const vk.PresentInfoKHR) !void {
         self.graphics_queue.mutex.lock();
         defer self.graphics_queue.mutex.unlock();
         _ = try self.device.queuePresentKHR(self.graphics_queue.handle, present_info);
     }
 
     /// Wait for all fences on the imgui Vulkan window.
-    pub fn waitForUIFences(self: *Self) void {
+    pub fn wait_for_ui_fences(self: *Self) void {
         if (self.window) |window| {
             for (0..@intCast(window.Frames.Size)) |i| {
                 const fd = window.Frames.Data[i];
                 _ = self.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64)) catch |err| {
-                    log.err("[waitForUIFences] err: {}", .{err});
+                    log.err("[wait_for_ui_fences] err: {}", .{err});
                 };
             }
         }
@@ -716,7 +716,7 @@ pub const Vulkan = struct {
     ///
     /// WARNING: Must be followed up by `waitForAllGraphicsFencesEnd` to
     /// unlock mutexes EXCEPT when it returns an error.
-    pub fn waitForAllGraphicsFencesBegin(self: *Self) !void {
+    pub fn wait_for_all_graphics_fences_begin(self: *Self) !void {
         var wait_fences = try std.ArrayList(vk.Fence).initCapacity(self.allocator, 0);
         defer wait_fences.deinit(self.allocator);
 
@@ -768,17 +768,17 @@ pub const Vulkan = struct {
                 std.math.maxInt(u64),
             );
         } else {
-            log.debug("[waitForAllGraphicsFencesBegin] wait_fences length is 0", .{});
+            log.debug("[wait_for_all_graphics_fences_begin] wait_fences length is 0", .{});
         }
     }
 
-    pub fn waitForAllGraphicsFencesEnd(self: *Self) void {
+    pub fn wait_for_all_graphics_fences_end(self: *Self) void {
         self.graphics_queue.mutex.unlock();
     }
 
     /// Copy a vulkan image on the GPU.
     /// NOTE: This is only for the graphics queue.
-    pub fn copyImage(
+    pub fn copy_image(
         self: *Self,
         command_buffer: vk.CommandBuffer,
         src_image: vk.Image,
@@ -955,6 +955,6 @@ pub const Vulkan = struct {
             .signal_semaphore_count = @intCast(args.signal_semaphores.len),
         };
 
-        try self.queueSubmit(.graphics, &.{submit_info}, .{ .fence = args.fence });
+        try self.queue_submit(.graphics, &.{submit_info}, .{ .fence = args.fence });
     }
 };

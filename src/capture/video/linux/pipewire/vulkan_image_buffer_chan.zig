@@ -44,13 +44,13 @@ pub const VulkanImageBufferChan = struct {
         return self.chan.recv();
     }
 
-    pub fn tryRecv(self: *Self) ChanError!?rc.Arc(*VulkanImageBuffer) {
+    pub fn try_recv(self: *Self) ChanError!?rc.Arc(*VulkanImageBuffer) {
         return self.chan.tryRecv();
     }
 
     /// Drain and release all queued buffers.
     pub fn drain(self: *Self) void {
-        while (self.chan.tryRecv() catch null) |old_vulkan_image_buffer| {
+        while (self.chan.try_recv() catch null) |old_vulkan_image_buffer| {
             old_vulkan_image_buffer.value.*.in_use.store(false, .release);
             if (old_vulkan_image_buffer.releaseUnwrap()) |val| val.deinit();
         }

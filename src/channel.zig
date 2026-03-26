@@ -32,7 +32,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             cond: std.Thread.Condition = std.Thread.Condition{},
             data: ?T = null,
 
-            fn putDataAndSignal(self: *@This(), data: T) void {
+            fn put_data_and_signal(self: *@This(), data: T) void {
                 self.data = data;
                 self.cond.signal();
             }
@@ -45,7 +45,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             data: T,
             delivered: bool = false,
 
-            fn getDataAndSignal(self: *@This()) T {
+            fn get_data_and_signal(self: *@This()) T {
                 self.mut.lock();
                 defer self.mut.unlock();
                 self.delivered = true;
@@ -115,7 +115,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             return self.buf.len == self.len;
         }
 
-        fn debugBuf(self: *Self) void {
+        fn debug_buf(self: *Self) void {
             std.log.debug("{d} Buffer debug\n", .{std.time.milliTimestamp()});
             for (self.buf, 0..) |item, i| {
                 if (item) |unwrapped| {
@@ -128,7 +128,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Chan - will skip if no receiver is receiving
         /// BufferedChan - will skip if at capacity
         /// Returns bool if sent successfully.
-        pub fn trySend(self: *Self, data: T) ChanError!bool {
+        pub fn try_send(self: *Self, data: T) ChanError!bool {
             self.mut.lock();
             if ((bufSize == 0 and self.recvQ.items.len > 0) or
                 (bufSize > 0 and self.len < self.capacity()))
@@ -163,7 +163,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
                 var receiver: *Receiver = self.recvQ.orderedRemove(0);
                 receiver.mut.lock();
                 defer receiver.mut.unlock();
-                receiver.putDataAndSignal(data);
+                receiver.put_data_and_signal(data);
                 return;
             }
 
@@ -224,7 +224,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Try to receive
         /// Chan - if nothing is sending, return null
         /// BufferedChan - receive if items have been sent
-        pub fn tryRecv(self: *Self) ChanError!?T {
+        pub fn try_recv(self: *Self) ChanError!?T {
             self.mut.lock();
             if ((bufSize == 0 and self.sendQ.items.len > 0) or
                 (bufSize > 0 and self.len > 0))
@@ -269,7 +269,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
                 // the buffer remains the same logical length.
                 if (self.sendQ.items.len > 0) {
                     var sender: *Sender = self.sendQ.orderedRemove(0);
-                    const valFromSender: T = sender.getDataAndSignal();
+                    const valFromSender: T = sender.get_data_and_signal();
                     self.buf[l - 1] = valFromSender;
                 } else {
                     self.len -= 1;
@@ -282,7 +282,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             if (self.sendQ.items.len > 0) {
                 defer self.mut.unlock();
                 var sender: *Sender = self.sendQ.orderedRemove(0);
-                const data: T = sender.getDataAndSignal();
+                const data: T = sender.get_data_and_signal();
                 return data;
             }
 
@@ -462,7 +462,7 @@ test "BufferedChan recv top-up keeps channel logically full" {
     }
     try std.testing.expect(saw_done);
 
-    try std.testing.expectEqual(false, try chan.trySend(4));
+    try std.testing.expectEqual(false, try chan.try_send(4));
     try std.testing.expectEqual(@as(u8, 2), try chan.recv());
     try std.testing.expectEqual(@as(u8, 3), try chan.recv());
 }
@@ -705,7 +705,7 @@ test "trySend - Chan" {
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
 
-    try std.testing.expectEqual(false, try chan.trySend(1));
+    try std.testing.expectEqual(false, try chan.try_send(1));
 
     try std.testing.expectEqual(chan.len, 0);
 
@@ -718,7 +718,7 @@ test "trySend - Chan" {
     const th = try std.Thread.spawn(.{}, Thread.run, .{&chan});
 
     std.Thread.sleep(std.time.ns_per_s / 10);
-    try std.testing.expectEqual(true, try chan.trySend(1));
+    try std.testing.expectEqual(true, try chan.try_send(1));
 
     th.join();
 }
@@ -728,11 +728,11 @@ test "trySend - BufferedChan" {
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
 
-    try std.testing.expectEqual(true, try chan.trySend(1));
-    try std.testing.expectEqual(true, try chan.trySend(1));
+    try std.testing.expectEqual(true, try chan.try_send(1));
+    try std.testing.expectEqual(true, try chan.try_send(1));
 
     // should skip
-    try std.testing.expectEqual(false, try chan.trySend(1));
+    try std.testing.expectEqual(false, try chan.try_send(1));
 
     try std.testing.expectEqual(chan.len, 2);
 }
@@ -742,7 +742,7 @@ test "tryRecv - Chan" {
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
 
-    try std.testing.expectEqual(chan.tryRecv(), null);
+    try std.testing.expectEqual(chan.try_recv(), null);
 
     const Thread = struct {
         fn run(c: *T) !void {
@@ -755,7 +755,7 @@ test "tryRecv - Chan" {
 
     std.Thread.sleep(std.time.ns_per_s / 10);
 
-    try std.testing.expectEqual(chan.tryRecv(), 1);
+    try std.testing.expectEqual(chan.try_recv(), 1);
 }
 
 test "tryRecv - BufferedChan" {
@@ -764,7 +764,7 @@ test "tryRecv - BufferedChan" {
     defer chan.deinit();
 
     // should not block if nothing in it
-    try std.testing.expectEqual(null, chan.tryRecv());
+    try std.testing.expectEqual(null, chan.try_recv());
 
     const Thread = struct {
         fn run(c: *T) !void {
@@ -777,5 +777,5 @@ test "tryRecv - BufferedChan" {
 
     std.Thread.sleep(std.time.ns_per_s / 10);
 
-    try std.testing.expectEqual(1, chan.tryRecv());
+    try std.testing.expectEqual(1, chan.try_recv());
 }

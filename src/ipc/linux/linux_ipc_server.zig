@@ -39,7 +39,7 @@ pub const IpcServer = struct {
         return .{
             .allocator = allocator,
             .actor = actor,
-            .socket_path = try getSocketPath(allocator),
+            .socket_path = try get_socket_path(allocator),
         };
     }
 
@@ -54,7 +54,7 @@ pub const IpcServer = struct {
 
     pub fn start(self: *Self) !void {
         assert(self.socket_path != null);
-        self.listen_socket = bindListeningSocket(self.socket_path.?) catch |err| switch (err) {
+        self.listen_socket = bind_listening_socket(self.socket_path.?) catch |err| switch (err) {
             error.SocketAlreadyActive => {
                 log.warn("[start] IPC server disabled: another process is listening on {s}", .{self.socket_path.?});
                 return;
@@ -63,7 +63,7 @@ pub const IpcServer = struct {
         };
 
         self.stop_requested.store(false, .release);
-        self.thread = try std.Thread.spawn(.{}, serverThread, .{self});
+        self.thread = try std.Thread.spawn(.{}, server_thread, .{self});
     }
 
     pub fn stop(self: *Self) void {
@@ -92,13 +92,13 @@ pub const IpcServer = struct {
         }
 
         if (self.socket_path) |socket_path| {
-            removeSocketFile(socket_path) catch |err| {
+            remove_socket_file(socket_path) catch |err| {
                 log.warn("[stop] failed to remove IPC socket file {s}: {}", .{ socket_path, err });
             };
         }
     }
 
-    fn serverThread(self: *Self) void {
+    fn server_thread(self: *Self) void {
         assert(self.listen_socket != null);
         while (true) {
             if (self.stop_requested.load(.acquire)) {
@@ -119,30 +119,30 @@ pub const IpcServer = struct {
                     error.ConnectionResetByPeer,
                     => continue,
                     else => {
-                        log.err("[serverThread] IPC accept failed: {}", .{err});
+                        log.err("[server_thread] IPC accept failed: {}", .{err});
                         continue;
                     },
                 }
             };
             defer std.posix.close(client_socket);
 
-            handleClient(self, client_socket);
+            handle_client(self, client_socket);
         }
     }
 
-    fn handleClient(self: *Self, client_socket: std.posix.socket_t) void {
+    fn handle_client(self: *Self, client_socket: std.posix.socket_t) void {
         const stream: std.net.Stream = .{ .handle = client_socket };
         var command_buffer: [1]u8 = undefined;
         const command_len = stream.read(&command_buffer) catch |err| switch (err) {
             error.ConnectionResetByPeer,
             => return,
             else => {
-                log.warn("[handleClient] failed to read IPC command: {}", .{err});
+                log.warn("[handle_client] failed to read IPC command: {}", .{err});
                 return;
             },
         };
         if (command_len == 0) {
-            log.warn("[handleClient] command_len is 0", .{});
+            log.warn("[handle_client] command_len is 0", .{});
             return;
         }
 
@@ -152,18 +152,18 @@ pub const IpcServer = struct {
 
         const payload = std.enums.fromInt(RequestPayload, command_buffer[0]) orelse {
             stream.writeAll(&[_]u8{ResponsePayload.unknown_command.value()}) catch |err| {
-                log.err("[handleClient] failed to write response: {}", .{err});
+                log.err("[handle_client] failed to write response: {}", .{err});
             };
             return;
         };
 
-        log.info("[handleClient] message received: {}", .{payload});
+        log.info("[handle_client] message received: {}", .{payload});
         switch (payload) {
             // Used to close the socket.
             .wake => return,
             .save_replay => {
                 self.actor.dispatch(.save_replay) catch |err| {
-                    log.err("[handleClient] failed to dispatch save_replay from IPC command: {}", .{err});
+                    log.err("[handle_client] failed to dispatch save_replay from IPC command: {}", .{err});
                     stream.writeAll(&[_]u8{ResponsePayload.request_failed.value()}) catch {};
                     return;
                 };
@@ -175,10 +175,10 @@ pub const IpcServer = struct {
 
     /// Send a message to the server. This will only be used in
     /// Spacecap CLI mode (separate from the running process.
-    pub fn sendIpcCommand(allocator: std.mem.Allocator, command: IpcCommand) !void {
-        const socket_path = try getSocketPath(allocator);
+    pub fn send_ipc_command(allocator: std.mem.Allocator, command: IpcCommand) !void {
+        const socket_path = try get_socket_path(allocator);
         defer allocator.free(socket_path);
-        log.debug("[sendIpcCommand] using socket: {s}", .{socket_path});
+        log.debug("[send_ipc_command] using socket: {s}", .{socket_path});
 
         const stream = std.net.connectUnixSocket(socket_path) catch |err| switch (err) {
             error.FileNotFound,
@@ -211,7 +211,7 @@ pub const IpcServer = struct {
             return error.InvalidResponse;
         };
 
-        log.info("[sendIpcCommand] response: {}", .{response_payload});
+        log.info("[send_ipc_command] response: {}", .{response_payload});
 
         switch (response_payload) {
             .ok => return,
@@ -220,7 +220,7 @@ pub const IpcServer = struct {
         }
     }
 
-    fn bindListeningSocket(socket_path: []const u8) !std.posix.socket_t {
+    fn bind_listening_socket(socket_path: []const u8) !std.posix.socket_t {
         const listen_socket = try std.posix.socket(
             std.posix.AF.UNIX,
             std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
@@ -239,7 +239,7 @@ pub const IpcServer = struct {
                     error.ConnectionRefused,
                     error.FileNotFound,
                     => {
-                        try removeSocketFile(socket_path);
+                        try remove_socket_file(socket_path);
                         try std.posix.bind(listen_socket, &address.any, address.getOsSockLen());
                     },
                     else => return err,
@@ -253,7 +253,7 @@ pub const IpcServer = struct {
     }
 
     /// Must be freed by the caller.
-    fn getSocketPath(allocator: std.mem.Allocator) ![]u8 {
+    fn get_socket_path(allocator: std.mem.Allocator) ![]u8 {
         if (std.posix.getenv("XDG_RUNTIME_DIR")) |runtime_dir| {
             return std.fs.path.join(allocator, &.{ runtime_dir, SOCKET_FILE_NAME });
         }
@@ -261,7 +261,7 @@ pub const IpcServer = struct {
         return std.fmt.allocPrint(allocator, "/tmp/spacecap-{}.sock", .{std.posix.getuid()});
     }
 
-    fn removeSocketFile(socket_path: []const u8) !void {
+    fn remove_socket_file(socket_path: []const u8) !void {
         std.fs.cwd().deleteFile(socket_path) catch |err| switch (err) {
             error.FileNotFound => {},
             else => return err,

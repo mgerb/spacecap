@@ -16,7 +16,7 @@ pub fn Mutex(T: type) type {
                 return self.private.value.*;
             }
 
-            pub fn unwrapPtr(self: @This()) *T {
+            pub fn unwrap_ptr(self: @This()) *T {
                 return self.private.value;
             }
 
@@ -96,7 +96,7 @@ test "Mutex serializes concurrent mutation" {
             for (0..n) |_| {
                 var locked = m.lock();
                 defer locked.unlock();
-                locked.unwrapPtr().* += 1;
+                locked.unwrap_ptr().* += 1;
             }
         }
     };

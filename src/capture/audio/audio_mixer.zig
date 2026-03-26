@@ -54,7 +54,7 @@ pub const AudioMixer = struct {
     }
 };
 
-fn addTestChunk(
+fn add_test_chunk(
     allocator: Allocator,
     device_map: *std.StringHashMap(DeviceState),
     id: []const u8,
@@ -84,7 +84,7 @@ fn addTestChunk(
     entry.value_ptr.chunks.append(&node.node);
 }
 
-fn deinitTestDeviceMap(allocator: Allocator, device_map: *std.StringHashMap(DeviceState)) void {
+fn deinit_test_device_map(allocator: Allocator, device_map: *std.StringHashMap(DeviceState)) void {
     var iter = device_map.iterator();
     while (iter.next()) |entry| {
         while (entry.value_ptr.chunks.popFirst()) |node| {
@@ -99,10 +99,10 @@ fn deinitTestDeviceMap(allocator: Allocator, device_map: *std.StringHashMap(Devi
 test "AudioMixer.mix mixes a single aligned mono chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinitTestDeviceMap(allocator, &device_map);
+    defer deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 0.1, 0.2, 0.3, 0.4, 0.5 };
-    try addTestChunk(allocator, &device_map, "mic", &pcm, 0, 1, 1.0);
+    try add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 1.0);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 5);
     defer mixed.deinit(allocator);
@@ -116,10 +116,10 @@ test "AudioMixer.mix mixes a single aligned mono chunk" {
 test "AudioMixer.mix mixes a single aligned stereo chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinitTestDeviceMap(allocator, &device_map);
+    defer deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
-    try addTestChunk(allocator, &device_map, "stereo", &pcm, 0, 2, 1.0);
+    try add_test_chunk(allocator, &device_map, "stereo", &pcm, 0, 2, 1.0);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 2, 0, 3);
     defer mixed.deinit(allocator);
@@ -133,10 +133,10 @@ test "AudioMixer.mix mixes a single aligned stereo chunk" {
 test "AudioMixer.mix applies capture gain" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinitTestDeviceMap(allocator, &device_map);
+    defer deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 1.0, 0.5, 0.25 };
-    try addTestChunk(allocator, &device_map, "mic", &pcm, 0, 1, 0.5);
+    try add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 0.5);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 3);
     defer mixed.deinit(allocator);

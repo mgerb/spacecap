@@ -26,7 +26,7 @@ pub const WindowsIpc = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn sendCommand(context: *anyopaque, command: IpcCommand) !void {
+    pub fn send_command(context: *anyopaque, command: IpcCommand) !void {
         _ = context;
         _ = command;
         return error.UnsupportedPlatform;
@@ -37,7 +37,7 @@ pub const WindowsIpc = struct {
             .ptr = self,
             .vtable = &.{
                 .start = start,
-                .sendCommand = sendCommand,
+                .send_command = send_command,
                 .deinit = deinit,
             },
         };

@@ -49,7 +49,7 @@ pub const UserSettingsState = struct {
         self.settings.deinit(self.allocator);
     }
 
-    pub fn handleActions(self: *Self, actor: *Actor, action: UserSettingsActions) !void {
+    pub fn handle_actions(self: *Self, actor: *Actor, action: UserSettingsActions) !void {
         switch (action) {
             .set_capture_fps => |fps| {
                 var settings_snapshot: UserSettings = undefined;
@@ -61,7 +61,7 @@ pub const UserSettingsState = struct {
                 }
                 defer settings_snapshot.deinit(self.allocator);
                 try self.save(&settings_snapshot);
-                try actor.video_capture.updateFps(fps);
+                try actor.video_capture.update_fps(fps);
             },
             .set_capture_bit_rate => |bit_rate| {
                 var settings_snapshot: UserSettings = undefined;
@@ -103,7 +103,7 @@ pub const UserSettingsState = struct {
                 {
                     actor.ui_mutex.lock();
                     defer actor.ui_mutex.unlock();
-                    try self.settings.updateAudioDeviceSettings(
+                    try self.settings.update_audio_device_settings(
                         self.allocator,
                         payload.device_id,
                         payload.selected,
@@ -119,7 +119,7 @@ pub const UserSettingsState = struct {
 
     /// Read the settings json file if it exists, otherwise use defaults.
     fn load(self: *Self) !void {
-        const app_data_dir = try util.getAppDataDir(self.allocator);
+        const app_data_dir = try util.get_app_data_dir(self.allocator);
         defer self.allocator.free(app_data_dir);
 
         const settings_path = try std.fs.path.join(self.allocator, &.{ app_data_dir, "settings.json" });
@@ -155,7 +155,7 @@ pub const UserSettingsState = struct {
         while (iter.next()) |entry| {
             const audio_device = entry.value_ptr.*;
             const device_id = if (audio_device.id.len > 0) audio_device.id else entry.key_ptr.*;
-            try loaded.updateAudioDeviceSettings(
+            try loaded.update_audio_device_settings(
                 self.allocator,
                 device_id,
                 audio_device.selected,
@@ -170,7 +170,7 @@ pub const UserSettingsState = struct {
     /// Save a copy of settings to disk.
     /// NOTE: It is important to call this outside of the UI lock.
     fn save(self: *const Self, settings: *const UserSettings) !void {
-        const app_data_dir = try util.getAppDataDir(self.allocator);
+        const app_data_dir = try util.get_app_data_dir(self.allocator);
         defer self.allocator.free(app_data_dir);
 
         const settings_path = try std.fs.path.join(self.allocator, &.{ app_data_dir, "settings.json" });
@@ -201,11 +201,11 @@ const UserSettings = struct {
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     fn deinit(self: *@This(), allocator: Allocator) void {
-        self.clearAudioDeviceSettings(allocator);
+        self.clear_audio_device_settings(allocator);
         self.audio_devices.deinit(allocator);
     }
 
-    fn updateAudioDeviceSettings(
+    fn update_audio_device_settings(
         self: *@This(),
         allocator: Allocator,
         id: []const u8,
@@ -230,7 +230,7 @@ const UserSettings = struct {
         }
     }
 
-    fn clearAudioDeviceSettings(self: *@This(), allocator: Allocator) void {
+    fn clear_audio_device_settings(self: *@This(), allocator: Allocator) void {
         var iter = self.audio_devices.map.iterator();
         while (iter.next()) |entry| {
             allocator.free(entry.key_ptr.*);
@@ -252,7 +252,7 @@ const UserSettings = struct {
         while (iter.next()) |entry| {
             const audio_device = entry.value_ptr.*;
             const device_id = if (audio_device.id.len > 0) audio_device.id else entry.key_ptr.*;
-            try settings_copy.updateAudioDeviceSettings(
+            try settings_copy.update_audio_device_settings(
                 allocator,
                 device_id,
                 audio_device.selected,

@@ -49,7 +49,7 @@ pub const VulkanImageRingBuffer = struct {
     /// then copy the source image into the buffer. Will return
     /// a new semaphore, but if a buffer is not available, the
     /// wait semaphore provided will be returned.
-    pub fn copyImageToRingBuffer(self: *Self, args: struct {
+    pub fn copy_image_to_ring_buffer(self: *Self, args: struct {
         src_image: vk.Image,
         src_width: u32,
         src_height: u32,
@@ -74,7 +74,7 @@ pub const VulkanImageRingBuffer = struct {
                 continue;
             }
             self.most_recent_index = @intCast(i);
-            try buffer.copyImage(.{
+            try buffer.copy_image(.{
                 .src_image = args.src_image,
                 .src_width = args.src_width,
                 .src_height = args.src_height,
@@ -94,7 +94,7 @@ pub const VulkanImageRingBuffer = struct {
     /// - Get the most recent buffer
     /// - Increment ref count
     /// - set in_use to true
-    pub fn getMostRecentBuffer(self: *Self) ?rc.Arc(*VulkanImageBuffer) {
+    pub fn get_most_recent_buffer(self: *Self) ?rc.Arc(*VulkanImageBuffer) {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.most_recent_index) |most_recent_index| {

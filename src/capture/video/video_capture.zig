@@ -25,43 +25,43 @@ pub const VideoCapture = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        selectSource: *const fn (*anyopaque, VideoCaptureSelection, u32) anyerror!void,
-        updateFps: *const fn (*anyopaque, u32) anyerror!void,
-        shouldRestoreCaptureSession: *const fn (*anyopaque) anyerror!bool,
-        nextFrame: *const fn (*anyopaque) ChanError!void,
-        closeAllChannels: *const fn (*anyopaque) void,
-        waitForFrame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
+        select_source: *const fn (*anyopaque, VideoCaptureSelection, u32) anyerror!void,
+        update_fps: *const fn (*anyopaque, u32) anyerror!void,
+        should_restore_capture_session: *const fn (*anyopaque) anyerror!bool,
+        next_frame: *const fn (*anyopaque) ChanError!void,
+        close_all_channels: *const fn (*anyopaque) void,
+        wait_for_frame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
         size: *const fn (*anyopaque) ?types.Size,
         stop: *const fn (*anyopaque) anyerror!void,
         deinit: *const fn (*anyopaque) void,
     };
 
-    pub fn selectSource(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
-        return self.vtable.selectSource(self.ptr, selection, fps);
+    pub fn select_source(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
+        return self.vtable.select_source(self.ptr, selection, fps);
     }
 
-    pub fn updateFps(self: *Self, fps: u32) !void {
-        return self.vtable.updateFps(self.ptr, fps);
+    pub fn update_fps(self: *Self, fps: u32) !void {
+        return self.vtable.update_fps(self.ptr, fps);
     }
 
-    pub fn shouldRestoreCaptureSession(self: *Self) !bool {
-        return self.vtable.shouldRestoreCaptureSession(self.ptr);
+    pub fn should_restore_capture_session(self: *Self) !bool {
+        return self.vtable.should_restore_capture_session(self.ptr);
     }
 
-    pub fn nextFrame(self: *Self) ChanError!void {
-        return self.vtable.nextFrame(self.ptr);
+    pub fn next_frame(self: *Self) ChanError!void {
+        return self.vtable.next_frame(self.ptr);
     }
 
     /// Close all channels in the capture implementation. This is
     /// done so that we don't have any unexpected deadlocks. Any
     /// implementation of this interface must gracefully handle
     /// all channels being closed.
-    pub fn closeAllChannels(self: *Self) void {
-        return self.vtable.closeAllChannels(self.ptr);
+    pub fn close_all_channels(self: *Self) void {
+        return self.vtable.close_all_channels(self.ptr);
     }
 
-    pub fn waitForFrame(self: *Self) ChanError!rc.Arc(*VulkanImageBuffer) {
-        return self.vtable.waitForFrame(self.ptr);
+    pub fn wait_for_frame(self: *Self) ChanError!rc.Arc(*VulkanImageBuffer) {
+        return self.vtable.wait_for_frame(self.ptr);
     }
 
     pub fn size(self: *Self) ?types.Size {

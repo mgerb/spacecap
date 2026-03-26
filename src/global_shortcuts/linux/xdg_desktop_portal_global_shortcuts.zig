@@ -182,15 +182,15 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         // be done in the context of the main loop, otherwise
         // nothing will happen.
         if (self.ctx) |ctx| {
-            glib.MainContext.invoke(ctx, _openShortcuts, self);
+            glib.MainContext.invoke(ctx, _open_shortcuts, self);
         }
     }
 
-    fn _openShortcuts(args: ?*anyopaque) callconv(.c) c_int {
+    fn _open_shortcuts(args: ?*anyopaque) callconv(.c) c_int {
         const self: *Self = @ptrCast(@alignCast(args));
         // NOTE: This is not implemented in most xdg desktop portal implementations yet.
         // We'll revisit this later.
-        self.configureShortcuts() catch unreachable;
+        self.configure_shortcuts() catch unreachable;
         return 0;
     }
 
@@ -198,7 +198,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     // It currently does not work in my KDE Plasma 6 desktop environment. Need to revisit
     // this later.
     // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.impl.portal.GlobalShortcuts.html#org-freedesktop-impl-portal-globalshortcuts-configureshortcuts
-    fn configureShortcuts(self: *Self) !void {
+    fn configure_shortcuts(self: *Self) !void {
         const handle = self.handle orelse return error.NoSession;
 
         // TODO: Need to figure out how to get the activation token;
@@ -224,7 +224,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         );
     }
 
-    fn shortcutActivated(
+    fn shortcut_activated(
         _: *gio.DBusConnection,
         _: ?[*:0]const u8,
         _: [*:0]const u8,
@@ -269,7 +269,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         }
 
         /// Construct the payload expected by the XDG portal call.
-        fn makePayload(
+        fn make_payload(
             self: Method,
             shortcuts: *Self,
             request_token: [:0]const u8,
@@ -278,12 +278,12 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-createsession
                 .create_session => {
                     if (self.create_session.restore_session) {
-                        shortcuts.session_token = TokenStorage.loadTokenZ(shortcuts.allocator, "session_token") catch unreachable;
+                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, "session_token") catch unreachable;
                     }
 
                     if (shortcuts.session_token == null) {
-                        shortcuts.session_token = @constCast(TokenManager.generateToken(shortcuts.allocator) catch unreachable);
-                        TokenStorage.saveToken(shortcuts.allocator, "session_token", shortcuts.session_token.?) catch unreachable;
+                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator) catch unreachable);
+                        TokenStorage.save_token(shortcuts.allocator, "session_token", shortcuts.session_token.?) catch unreachable;
                     }
 
                     assert(shortcuts.session_token != null);
@@ -334,7 +334,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             }
         }
 
-        fn onResponse(self: Method, shortcuts: *Self, vardict: *glib.Variant) void {
+        fn on_response(self: Method, shortcuts: *Self, vardict: *glib.Variant) void {
             switch (self) {
                 .create_session => {
                     var handle: ?[*:0]u8 = null;
@@ -361,7 +361,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                         "/org/freedesktop/portal/desktop",
                         handle,
                         .{ .match_arg0_path = true },
-                        shortcutActivated,
+                        shortcut_activated,
                         shortcuts,
                         null,
                     );
@@ -437,7 +437,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         // When in Rome, do as the Romans do, I guess...?
 
         const callbacks = struct {
-            fn gotResponseHandle(
+            fn got_response_handle(
                 source: ?*gobject.Object,
                 res: *gio.AsyncResult,
                 _: ?*anyopaque,
@@ -488,7 +488,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 switch (response) {
                     0 => {
                         log.debug("request successful", .{});
-                        method.onResponse(self_, vardict.?);
+                        method.on_response(self_, vardict.?);
                     },
                     1 => log.debug("request was cancelled by user", .{}),
                     2 => log.warn("request ended unexpectedly", .{}),
@@ -497,12 +497,12 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             }
         };
 
-        const request_token = try TokenManager.generateToken(self.allocator);
+        const request_token = try TokenManager.generate_token(self.allocator);
         defer self.allocator.free(request_token);
 
-        const payload = method.makePayload(self, request_token) orelse return;
+        const payload = method.make_payload(self, request_token) orelse return;
         var unique_name = std.mem.span(self.dbus.getUniqueName().?);
-        const request_path = try TokenManager.getRequestPath(self.allocator, unique_name[1..], request_token);
+        const request_path = try TokenManager.get_request_path(self.allocator, unique_name[1..], request_token);
         defer self.allocator.free(request_path);
 
         self.response_subscription = self.dbus.signalSubscribe(
@@ -527,12 +527,12 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             .{},
             -1,
             null,
-            callbacks.gotResponseHandle,
+            callbacks.got_response_handle,
             null,
         );
     }
 
-    fn registerShortcutHandler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
+    fn register_shortcut_handler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
         const self: *Self = @ptrCast(@alignCast(context));
         self.registeredShortcutHandler = handler;
     }
@@ -545,7 +545,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 .run = run,
                 .stop = stop,
                 .open = open,
-                .registerShortcutHandler = registerShortcutHandler,
+                .register_shortcut_handler = register_shortcut_handler,
                 .deinit = deinit,
             },
         };

@@ -21,14 +21,14 @@ const CAPTURE_BIT_RATE_KBPS_MAX: c_int = 200_000;
 var capture_fps_local: ?i32 = null;
 var capture_bit_rate_kbps_local: ?i32 = null;
 
-fn deviceTypeLabel(device_type: AudioDeviceType) []const u8 {
+fn device_type_label(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
         .source => "Source",
         .sink => "Sink",
     };
 }
 
-fn drawAudioDeviceSelector(allocator: std.mem.Allocator, actor: *Actor) !void {
+fn draw_audio_device_selector(allocator: std.mem.Allocator, actor: *Actor) !void {
     var selected_count: usize = 0;
     var first_selected_name: ?[]const u8 = null;
     for (actor.state.audio.devices.items) |device| {
@@ -65,7 +65,7 @@ fn drawAudioDeviceSelector(allocator: std.mem.Allocator, actor: *Actor) !void {
 
         for (actor.state.audio.devices.items) |device| {
             const item_label = try std.fmt.allocPrintSentinel(allocator, "[{s}] {s}{s}##audio-device-{s}", .{
-                deviceTypeLabel(device.device_type),
+                device_type_label(device.device_type),
                 device.name,
                 if (device.is_default) " (default)" else "",
                 device.id,
@@ -86,7 +86,7 @@ fn drawAudioDeviceSelector(allocator: std.mem.Allocator, actor: *Actor) !void {
     }
 }
 
-fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, actor: *Actor) !void {
+fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: *Actor) !void {
     var selected_total: usize = 0;
     for (actor.state.audio.devices.items) |device| {
         if (device.selected) selected_total += 1;
@@ -98,7 +98,7 @@ fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, actor: *Acto
         rendered_count += 1;
 
         const device_text = try std.fmt.allocPrintSentinel(allocator, "[{s}] {s}{s}", .{
-            deviceTypeLabel(device.device_type),
+            device_type_label(device.device_type),
             device.name,
             if (device.is_default) " (default)" else "",
         }, 0);
@@ -153,7 +153,7 @@ fn drawSelectedAudioSourceGainSliders(allocator: std.mem.Allocator, actor: *Acto
     }
 }
 
-pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
+pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
@@ -198,9 +198,9 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
             c.ImGui_SeparatorText("Audio");
-            try drawAudioDeviceSelector(allocator, actor);
+            try draw_audio_device_selector(allocator, actor);
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
-            try drawSelectedAudioSourceGainSliders(allocator, actor);
+            try draw_selected_audio_source_gain_sliders(allocator, actor);
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
             c.ImGui_Separator();
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
@@ -253,7 +253,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
 
             const replay_text = try std.fmt.allocPrintSentinel(allocator, "Time: {}s", .{actor.state.replay_buffer.seconds}, 0);
             defer allocator.free(replay_text);
-            const size_text = try std.fmt.allocPrintSentinel(allocator, "Size: {d:.2}MB", .{actor.state.replay_buffer.sizeInMB()}, 0);
+            const size_text = try std.fmt.allocPrintSentinel(allocator, "Size: {d:.2}MB", .{actor.state.replay_buffer.size_in_mb()}, 0);
             defer allocator.free(size_text);
             c.ImGui_Text(replay_text);
             c.ImGui_Text(size_text);
@@ -262,7 +262,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {
             defer c.ImGui_EndTabItem();
 
-            try drawCaptureSettings(actor);
+            try draw_capture_settings(actor);
 
             c.ImGui_SeparatorText("GUI Settings");
 
@@ -310,7 +310,7 @@ pub fn drawLeftColumn(allocator: std.mem.Allocator, actor: *Actor) !void {
     }
 }
 
-fn drawCaptureSettings(actor: *Actor) !void {
+fn draw_capture_settings(actor: *Actor) !void {
     c.ImGui_SeparatorText("Capture Settings");
     const current_capture_fps: i32 = @intCast(actor.state.user_settings.settings.capture_fps);
     var fps = capture_fps_local orelse current_capture_fps;

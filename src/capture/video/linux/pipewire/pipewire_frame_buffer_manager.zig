@@ -53,7 +53,7 @@ pub const PipewireFrameBufferManager = struct {
         var iter = self.frame_buffers.iterator();
         while (iter.next()) |entry| {
             if (entry.value_ptr.frame_buffer_image) |*frame_buffer_image| {
-                self.destroyBufferImage(frame_buffer_image);
+                self.destroy_buffer_image(frame_buffer_image);
             }
         }
 
@@ -66,23 +66,23 @@ pub const PipewireFrameBufferManager = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addPipewireBuffer(self: *Self, pwb: *pw.struct_pw_buffer) !void {
+    pub fn add_pipewire_buffer(self: *Self, pwb: *pw.struct_pw_buffer) !void {
         try self.frame_buffers.put(pwb, .{
             .pwb = pwb,
         });
     }
 
-    pub fn removePipewireBuffer(self: *Self, pwb: *pw.struct_pw_buffer) void {
+    pub fn remove_pipewire_buffer(self: *Self, pwb: *pw.struct_pw_buffer) void {
         if (self.frame_buffers.getPtr(pwb)) |frame_buffer| {
             if (frame_buffer.frame_buffer_image) |*frame_buffer_image| {
-                self.destroyBufferImage(frame_buffer_image);
+                self.destroy_buffer_image(frame_buffer_image);
             }
         }
         _ = self.frame_buffers.remove(pwb);
     }
 
     /// Get a Vulkan image from a pipewire buffer. Vulkan images are lazily created.
-    pub fn getVulkanImage(
+    pub fn get_vulkan_image(
         self: *Self,
         pwb: *pw.struct_pw_buffer,
         info: pw.spa_video_info_raw,
@@ -114,11 +114,11 @@ pub const PipewireFrameBufferManager = struct {
         }
 
         const fd = frame_buffer.pwb.buffer[0].datas[0].fd;
-        try pipewire_util.dmabufExportSyncFile(self.vulkan, fd, self.vk_foreign_semaphore.?);
+        try pipewire_util.dmabuf_export_sync_file(self.vulkan, fd, self.vk_foreign_semaphore.?);
 
         // First, check if vulkan images have not yet been created for a buffer.
         if (frame_buffer.frame_buffer_image == null) {
-            frame_buffer.frame_buffer_image = try self.createVulkanImage(info, fd, subresource_layouts.items);
+            frame_buffer.frame_buffer_image = try self.create_vulkan_image(info, fd, subresource_layouts.items);
         }
 
         assert(frame_buffer.frame_buffer_image != null);
@@ -128,9 +128,9 @@ pub const PipewireFrameBufferManager = struct {
         // Next, check if the file descriptor matches, then return if so.
         if (buffer_image.fd != fd) {
             // Finally, if the FD doesn't match, destroy the buffer image and create a new one.
-            self.destroyBufferImage(&buffer_image);
+            self.destroy_buffer_image(&buffer_image);
 
-            frame_buffer.frame_buffer_image = try self.createVulkanImage(info, fd, subresource_layouts.items);
+            frame_buffer.frame_buffer_image = try self.create_vulkan_image(info, fd, subresource_layouts.items);
             assert(frame_buffer.frame_buffer_image != null);
         }
 
@@ -140,13 +140,13 @@ pub const PipewireFrameBufferManager = struct {
         };
     }
 
-    fn destroyBufferImage(self: *Self, buffer_image: *PipewireFrameBufferImage) void {
-        const did_wait = self.vulkan.waitForAllGraphicsFencesBegin();
+    fn destroy_buffer_image(self: *Self, buffer_image: *PipewireFrameBufferImage) void {
+        const did_wait = self.vulkan.wait_for_all_graphics_fences_begin();
         defer {
             if (did_wait) {
-                self.vulkan.waitForAllGraphicsFencesEnd();
+                self.vulkan.wait_for_all_graphics_fences_end();
             } else |err| {
-                log.err("[destroyBufferImage] waitForAllGraphicsFencesBegin error: {}", .{err});
+                log.err("[destroy_buffer_image] waitForAllGraphicsFencesBegin error: {}", .{err});
             }
         }
         self.vulkan.device.destroyImageView(buffer_image.image_view, null);
@@ -154,7 +154,7 @@ pub const PipewireFrameBufferManager = struct {
         self.vulkan.device.freeMemory(buffer_image.device_memory, null);
     }
 
-    fn createVulkanImage(
+    fn create_vulkan_image(
         self: *Self,
         info: pw.spa_video_info_raw,
         fd: i64,
@@ -174,7 +174,7 @@ pub const PipewireFrameBufferManager = struct {
         const image_create_info = vk.ImageCreateInfo{
             .p_next = &external_memory_image_info,
             .image_type = .@"2d",
-            .format = pipewire_util.spaToVkFormat(info.format),
+            .format = pipewire_util.spa_to_vk_format(info.format),
             .extent = .{ .depth = 1, .width = info.size.width, .height = info.size.height },
             .mip_levels = 1,
             .array_layers = 1,
@@ -215,7 +215,7 @@ pub const PipewireFrameBufferManager = struct {
         const view_info = vk.ImageViewCreateInfo{
             .image = image,
             .view_type = .@"2d",
-            .format = pipewire_util.spaToVkFormat(info.format),
+            .format = pipewire_util.spa_to_vk_format(info.format),
             .subresource_range = .{
                 .aspect_mask = .{ .color_bit = true },
                 .base_mip_level = 0,

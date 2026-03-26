@@ -2,7 +2,7 @@ const c = @import("../../../../common/linux/pipewire_include.zig");
 const std = @import("std");
 const util = @import("../../../../util.zig");
 
-fn saveFrameToBmp(
+fn save_frame_to_bmp(
     allocator: std.mem.Allocator,
     fd: i64,
     width: usize,
@@ -32,7 +32,7 @@ fn saveFrameToBmp(
 }
 
 // These write garbage because the format is likely not rgb/bgr
-fn saveFrameToPPM(fd: i64, width: u32, height: u32, size: u32, stride: i32, filename: []const u8) !void {
+fn save_frame_to_ppm(fd: i64, width: u32, height: u32, size: u32, stride: i32, filename: []const u8) !void {
     const PROT_READ = 0x1;
     const MAP_SHARED = 0x01;
 

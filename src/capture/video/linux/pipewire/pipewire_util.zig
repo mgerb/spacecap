@@ -10,7 +10,7 @@ const pw = @import("pipewire").c;
 /// need to load the whole plugin.
 ///
 /// See pipewire/spa/plugins/vulkan/vulkan-utils.c
-pub fn dmabufExportSyncFile(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Semaphore) !void {
+pub fn dmabuf_export_sync_file(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Semaphore) !void {
     errdefer _ = pw.close(@intCast(dmabuf_fd));
     var data = c.dma_buf_export_sync_file{
         .flags = c.DMA_BUF_SYNC_READ,
@@ -46,7 +46,7 @@ pub fn dmabufExportSyncFile(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Semap
     try vulkan.device.importSemaphoreFdKHR(&import_info);
 }
 
-pub fn spaToVkFormat(spa_format: u32) vk.Format {
+pub fn spa_to_vk_format(spa_format: u32) vk.Format {
     return switch (spa_format) {
         // NOTE: This may seem odd, but we will swizzle rgb
         // values in the compute shader and set the format

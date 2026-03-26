@@ -26,7 +26,7 @@ pub const GlobalShortcuts = struct {
         run: *const fn (*anyopaque) anyerror!void,
         stop: *const fn (*anyopaque) void,
         open: *const fn (*anyopaque) anyerror!void,
-        registerShortcutHandler: *const fn (*anyopaque, handler: ShortcutHandler) void,
+        register_shortcut_handler: *const fn (*anyopaque, handler: ShortcutHandler) void,
         deinit: *const fn (*anyopaque) void,
     };
 
@@ -42,8 +42,8 @@ pub const GlobalShortcuts = struct {
         return self.vtable.open(self.ptr);
     }
 
-    pub fn registerShortcutHandler(self: *Self, handler: ShortcutHandler) void {
-        return self.vtable.registerShortcutHandler(self.ptr, handler);
+    pub fn register_shortcut_handler(self: *Self, handler: ShortcutHandler) void {
+        return self.vtable.register_shortcut_handler(self.ptr, handler);
     }
 
     pub fn deinit(self: *Self) void {

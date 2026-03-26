@@ -133,36 +133,36 @@ pub const VideoEncoder = struct {
             .compute_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
         };
 
-        try self.createCommandPools();
+        try self.create_command_pools();
         errdefer {
             if (self.encode_command_pool) |encode_command_pool| {
                 self.vulkan.device.destroyCommandPool(encode_command_pool, null);
             }
         }
-        try self.createVideoSession();
+        try self.create_video_session();
         errdefer {
             if (self.video_session) |video_session| {
                 self.vulkan.device.destroyVideoSessionKHR(video_session, null);
             }
         }
 
-        try self.allocateVideoSessionMemory();
+        try self.allocate_video_session_memory();
         errdefer {
             for (self.encode_session_bind_memory.items) |bind_mem| {
                 self.vulkan.device.freeMemory(bind_mem.memory, null);
             }
         }
 
-        try self.createVideoSessionParameters();
+        try self.create_video_session_parameters();
         errdefer self.vulkan.device.destroyVideoSessionParametersKHR(
             self.video_session_parameters.?,
             null,
         );
 
-        try self.readBitstreamHeader();
+        try self.read_bitstream_header();
         errdefer self.bit_stream_header.deinit(self.allocator);
 
-        try self.allocateOutputBitStream();
+        try self.allocate_output_bit_stream();
         errdefer {
             if (self.bit_stream_memory) |bit_stream_memory| {
                 self.vulkan.device.freeMemory(bit_stream_memory, null);
@@ -172,18 +172,18 @@ pub const VideoEncoder = struct {
             }
         }
 
-        try self.allocateReferenceImages(REFERENCE_IMAGE_COUNT);
-        errdefer self.destroyImages();
+        try self.allocate_reference_images(REFERENCE_IMAGE_COUNT);
+        errdefer self.destroy_images();
 
-        try self.allocateIntermediateImage();
-        errdefer self.destroyIntermediateImages();
+        try self.allocate_intermediate_image();
+        errdefer self.destroy_intermediate_images();
         std.debug.print("^^^^^ nvidia validation issue here ^^^^^\n", .{});
 
-        try self.createOutputQueryPool();
+        try self.create_output_query_pool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);
 
-        try self.createYCbCrConversionPipeline();
-        errdefer self.destroyYCbCrConversionPipeline();
+        try self.create_ycb_cr_conversion_pipeline();
+        errdefer self.destroy_ycb_cr_conversion_pipeline();
 
         var command_buffer = std.mem.zeroes(vk.CommandBuffer);
         const alloc_info = vk.CommandBufferAllocateInfo{
@@ -200,8 +200,8 @@ pub const VideoEncoder = struct {
 
         try self.vulkan.device.beginCommandBuffer(command_buffer, &begin_info);
 
-        self.initRateControl(command_buffer, self.fps);
-        try self.transitionImagesInitial(command_buffer);
+        self.init_rate_control(command_buffer, self.fps);
+        try self.transition_images_initial(command_buffer);
 
         try self.vulkan.device.endCommandBuffer(command_buffer);
 
@@ -210,7 +210,7 @@ pub const VideoEncoder = struct {
             .p_command_buffers = @ptrCast(&command_buffer),
         };
 
-        try self.vulkan.queueSubmit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
+        try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         const result = try self.vulkan.device.waitForFences(
             1,
@@ -225,7 +225,7 @@ pub const VideoEncoder = struct {
         return self;
     }
 
-    fn createCommandPools(self: *Self) !void {
+    fn create_command_pools(self: *Self) !void {
         const create_info = vk.CommandPoolCreateInfo{
             .flags = .{ .reset_command_buffer_bit = true },
             .queue_family_index = self.vulkan.video_encode_queue.?.family,
@@ -237,7 +237,7 @@ pub const VideoEncoder = struct {
         }, null);
     }
 
-    fn createVideoSession(self: *Self) !void {
+    fn create_video_session(self: *Self) !void {
         const video_encode_h264_profile_info = vk.VideoEncodeH264ProfileInfoKHR{ .std_profile_idc = .main };
         self.video_profile = vk.VideoProfileInfoKHR{
             .video_codec_operation = .{ .encode_h264_bit_khr = true },
@@ -404,7 +404,7 @@ pub const VideoEncoder = struct {
         self.video_session = try self.vulkan.device.createVideoSessionKHR(&create_info, null);
     }
 
-    fn allocateVideoSessionMemory(self: *Self) !void {
+    fn allocate_video_session_memory(self: *Self) !void {
         var video_session_memory_requirement_count: u32 = 0;
         var result = try self.vulkan.device.getVideoSessionMemoryRequirementsKHR(
             self.video_session.?,
@@ -460,10 +460,10 @@ pub const VideoEncoder = struct {
         try self.vulkan.device.bindVideoSessionMemoryKHR(self.video_session.?, video_session_memory_requirement_count, self.encode_session_bind_memory.items.ptr);
     }
 
-    fn createVideoSessionParameters(self: *Self) !void {
-        self.vui = h264_parameters.getStdVideoH264SequenceParameterSetVui(self.fps);
-        self.sps = h264_parameters.getStdVideoH264SequenceParameterSet(self.width, self.height, &self.vui.?);
-        self.pps = h264_parameters.getStdVideoH264PictureParameterSet();
+    fn create_video_session_parameters(self: *Self) !void {
+        self.vui = h264_parameters.get_std_video_h264_sequence_parameter_set_vui(self.fps);
+        self.sps = h264_parameters.get_std_video_h264_sequence_parameter_set(self.width, self.height, &self.vui.?);
+        self.pps = h264_parameters.get_std_video_h264_picture_parameter_set();
 
         var encode_h264_session_parameters_add_info = std.mem.zeroes(vk.VideoEncodeH264SessionParametersAddInfoKHR);
         encode_h264_session_parameters_add_info.s_type = .video_encode_h264_session_parameters_add_info_khr;
@@ -489,7 +489,7 @@ pub const VideoEncoder = struct {
         );
     }
 
-    fn readBitstreamHeader(self: *Self) !void {
+    fn read_bitstream_header(self: *Self) !void {
         var h264_get_info = std.mem.zeroes(vk.VideoEncodeH264SessionParametersGetInfoKHR);
         h264_get_info.s_type = .video_encode_h264_session_parameters_get_info_khr;
         h264_get_info.std_sps_id = 0;
@@ -531,7 +531,7 @@ pub const VideoEncoder = struct {
     }
 
     // TODO: maybe just make the output bit stream its own structure
-    fn allocateOutputBitStream(self: *Self) !void {
+    fn allocate_output_bit_stream(self: *Self) !void {
         var buffer_info = std.mem.zeroes(vk.BufferCreateInfo);
         buffer_info.s_type = .buffer_create_info;
         buffer_info.size = 4 * 1024 * 1024;
@@ -553,8 +553,8 @@ pub const VideoEncoder = struct {
         self.bit_stream_data = @ptrCast(try self.vulkan.device.mapMemory(self.bit_stream_memory.?, 0, memory_reqs.size, .{}));
     }
 
-    fn allocateReferenceImages(self: *Self, count: u32) !void {
-        errdefer self.destroyImages();
+    fn allocate_reference_images(self: *Self, count: u32) !void {
+        errdefer self.destroy_images();
         for (0..count) |_| {
             const image_create_info = vk.ImageCreateInfo{
                 .p_next = &self.video_profile_list.?,
@@ -598,7 +598,7 @@ pub const VideoEncoder = struct {
         }
     }
 
-    fn allocateIntermediateImage(self: *Self) !void {
+    fn allocate_intermediate_image(self: *Self) !void {
         var image_create_info = vk.ImageCreateInfo{
             .p_next = &self.video_profile_list.?,
             .image_type = .@"2d",
@@ -664,7 +664,7 @@ pub const VideoEncoder = struct {
         try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
     }
 
-    fn createOutputQueryPool(self: *Self) !void {
+    fn create_output_query_pool(self: *Self) !void {
         const query_pool_video_encode_feedback_create_info = vk.QueryPoolVideoEncodeFeedbackCreateInfoKHR{
             .p_next = &self.video_profile.?,
             .encode_feedback_flags = .{
@@ -682,7 +682,7 @@ pub const VideoEncoder = struct {
         self.query_pool = try self.vulkan.device.createQueryPool(&query_pool_create_info, null);
     }
 
-    fn createYCbCrConversionPipeline(self: *Self) !void {
+    fn create_ycb_cr_conversion_pipeline(self: *Self) !void {
         const bgr_ycbcr_shader_2plane = @embedFile("bgr-ycbcr-shader-2plane");
         const compute_shader = bgr_ycbcr_shader_2plane;
         const shader_module_create_info = vk.ShaderModuleCreateInfo{
@@ -752,18 +752,18 @@ pub const VideoEncoder = struct {
         self.compute_pipeline = compute_pipeline[0];
     }
 
-    pub fn updateImages(self: *Self, images: []vk.Image, image_views: []vk.ImageView) !void {
+    pub fn update_images(self: *Self, images: []vk.Image, image_views: []vk.ImageView) !void {
         self.input_images = images;
         self.input_image_views = image_views;
 
-        try self.updateDescriptorSets(image_views);
+        try self.update_descriptor_sets(image_views);
     }
 
-    pub fn updateExternalWaitSemaphores(self: *Self, semaphore: ?vk.Semaphore) void {
+    pub fn update_external_wait_semaphores(self: *Self, semaphore: ?vk.Semaphore) void {
         self.external_wait_semaphore = semaphore;
     }
 
-    fn updateDescriptorSets(self: *Self, image_views: []vk.ImageView) !void {
+    fn update_descriptor_sets(self: *Self, image_views: []vk.ImageView) !void {
         if (self.descriptor_pool) |descriptor_pool| {
             self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
         }
@@ -835,7 +835,7 @@ pub const VideoEncoder = struct {
         }
     }
 
-    fn initRateControl(self: *Self, command_buffer: vk.CommandBuffer, fps: u32) void {
+    fn init_rate_control(self: *Self, command_buffer: vk.CommandBuffer, fps: u32) void {
         self.encode_h264_rate_control_layer_info = std.mem.zeroes(vk.VideoEncodeH264RateControlLayerInfoKHR);
         self.encode_h264_rate_control_layer_info.?.s_type = .video_encode_h264_rate_control_layer_info_khr;
 
@@ -890,7 +890,7 @@ pub const VideoEncoder = struct {
         self.vulkan.device.cmdEndVideoCodingKHR(command_buffer, &.{});
     }
 
-    fn transitionImagesInitial(self: *Self, command_buffer: vk.CommandBuffer) !void {
+    fn transition_images_initial(self: *Self, command_buffer: vk.CommandBuffer) !void {
         var barriers = try std.ArrayList(vk.ImageMemoryBarrier2).initCapacity(self.allocator, 0);
         defer barriers.deinit(self.allocator);
 
@@ -922,7 +922,7 @@ pub const VideoEncoder = struct {
         self.vulkan.device.cmdPipelineBarrier2(command_buffer, &dependency_info);
     }
 
-    fn convertRGBtoYCbCr(self: *Self, current_image_ix: u32) !void {
+    fn convert_rgb_to_ycb_cr(self: *Self, current_image_ix: u32) !void {
         const alloc_info = vk.CommandBufferAllocateInfo{
             .level = .primary,
             .command_pool = self.graphics_command_pool.?,
@@ -1042,10 +1042,10 @@ pub const VideoEncoder = struct {
             submit_info.p_wait_dst_stage_mask = &dst_stage_masks;
         }
 
-        try self.vulkan.queueSubmit(.graphics, &.{submit_info}, .{ .fence = self.compute_finished_fence });
+        try self.vulkan.queue_submit(.graphics, &.{submit_info}, .{ .fence = self.compute_finished_fence });
     }
 
-    pub fn prepareEncode(self: *Self, opts: struct {
+    pub fn prepare_encode(self: *Self, opts: struct {
         image: []vk.Image,
         image_view: []vk.ImageView,
         input_size: types.Size,
@@ -1058,9 +1058,9 @@ pub const VideoEncoder = struct {
             .height = sanitized_height,
         };
         if (opts.external_wait_semaphore) |external_wait_semaphore| {
-            self.updateExternalWaitSemaphores(external_wait_semaphore);
+            self.update_external_wait_semaphores(external_wait_semaphore);
         }
-        try self.updateImages(
+        try self.update_images(
             opts.image,
             opts.image_view,
         );
@@ -1068,11 +1068,11 @@ pub const VideoEncoder = struct {
 
     /// Convert rgb/bgr image to ycbcr and then encode.
     pub fn encode(self: *Self, current_image_ix: u32) !EncodeResult {
-        try self.convertRGBtoYCbCr(current_image_ix);
-        return self.encodeVideoFrame();
+        try self.convert_rgb_to_ycb_cr(current_image_ix);
+        return self.encode_video_frame();
     }
 
-    fn encodeVideoFrame(self: *Self) !EncodeResult {
+    fn encode_video_frame(self: *Self) !EncodeResult {
         const GOP_LENGTH: u32 = 16;
         const gop_frame_count = self.frame_count % GOP_LENGTH;
 
@@ -1236,23 +1236,23 @@ pub const VideoEncoder = struct {
             .signal_semaphore_count = 1,
             .p_signal_semaphores = @ptrCast(&self.inter_queue_semaphore2),
         };
-        try self.vulkan.queueSubmit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
+        try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         return .{ .idr = gop_frame_count == 0 };
     }
 
     /// Move data from the output buffer into the replay buffer
-    pub fn finishEncode(
+    pub fn finish_encode(
         self: *Self,
         encode_result: EncodeResult,
         video_replay_buffer: *VideoReplayBuffer,
         frame_time_ns: i128,
     ) !void {
-        const data = try self.getOutputVideoPacket();
-        try video_replay_buffer.addFrame(data.data[0..data.size], frame_time_ns, encode_result.idr);
+        const data = try self.get_output_video_packet();
+        try video_replay_buffer.add_frame(data.data[0..data.size], frame_time_ns, encode_result.idr);
     }
 
-    fn getOutputVideoPacket(self: *Self) !EncodeData {
+    fn get_output_video_packet(self: *Self) !EncodeData {
         defer {
             if (self.compute_command_buffer) |compute_command_buffer| {
                 self.vulkan.device.freeCommandBuffers(self.graphics_command_pool.?, 1, @ptrCast(&compute_command_buffer));
@@ -1321,14 +1321,14 @@ pub const VideoEncoder = struct {
         };
     }
 
-    fn destroyEncodeFinishedFence(self: *Self) void {
+    fn destroy_encode_finished_fence(self: *Self) void {
         self.vulkan.device.destroyFence(self.compute_finished_fence, null);
         self.vulkan.device.destroyFence(self.encode_finished_fence, null);
         self.vulkan.device.destroySemaphore(self.inter_queue_semaphore1, null);
         self.vulkan.device.destroySemaphore(self.inter_queue_semaphore2, null);
     }
 
-    fn destroyYCbCrConversionPipeline(self: *Self) void {
+    fn destroy_ycb_cr_conversion_pipeline(self: *Self) void {
         if (self.compute_pipeline) |compute_pipeline| {
             self.vulkan.device.destroyPipeline(compute_pipeline, null);
         }
@@ -1343,7 +1343,7 @@ pub const VideoEncoder = struct {
         }
     }
 
-    fn destroyImages(self: *Self) void {
+    fn destroy_images(self: *Self) void {
         for (self.dpb_images.items) |dpb_image| {
             self.vulkan.device.destroyImage(dpb_image, null);
         }
@@ -1355,7 +1355,7 @@ pub const VideoEncoder = struct {
         }
     }
 
-    fn destroyIntermediateImages(self: *Self) void {
+    fn destroy_intermediate_images(self: *Self) void {
         if (self.ycbcr_image) |ycbcr_image| {
             self.vulkan.device.destroyImage(ycbcr_image, null);
         }
@@ -1374,8 +1374,8 @@ pub const VideoEncoder = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.destroyEncodeFinishedFence();
-        self.destroyYCbCrConversionPipeline();
+        self.destroy_encode_finished_fence();
+        self.destroy_ycb_cr_conversion_pipeline();
         if (self.video_session_parameters) |video_session_parameters| {
             self.vulkan.device.destroyVideoSessionParametersKHR(video_session_parameters, null);
         }
@@ -1391,8 +1391,8 @@ pub const VideoEncoder = struct {
             self.vulkan.device.destroyBuffer(bit_stream_buffer, null);
         }
 
-        self.destroyImages();
-        self.destroyIntermediateImages();
+        self.destroy_images();
+        self.destroy_intermediate_images();
 
         if (self.bit_stream_memory) |bit_stream_memory| {
             self.vulkan.device.freeMemory(bit_stream_memory, null);

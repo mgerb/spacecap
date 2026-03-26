@@ -122,14 +122,14 @@ pub const Pipewire = struct {
             frame_buffer_manager.deinit();
         }
 
-        self.vulkan.destroyCaptureRingBuffer();
+        self.vulkan.destroy_capture_ring_buffer();
         self.portal.deinit();
         self.allocator.destroy(self);
     }
 
-    pub fn selectSource(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
-        const pipewire_node = try self.portal.selectSource(selection);
-        const pipewire_fd = try self.portal.openPipewireRemote();
+    pub fn select_source(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
+        const pipewire_node = try self.portal.select_source(selection);
+        const pipewire_fd = try self.portal.open_pipewire_remote();
         errdefer _ = pw.close(pipewire_fd);
 
         self.has_format = false;
@@ -180,18 +180,18 @@ pub const Pipewire = struct {
 
         pw.pw_stream_add_listener(self.stream, &self.stream_listener, &stream_events, self);
 
-        try self.startStream(pipewire_node, fps);
+        try self.start_stream(pipewire_node, fps);
 
-        while (!self.hasValidInfo()) {
+        while (!self.has_valid_info()) {
             pw.pw_thread_loop_wait(self.thread_loop);
         }
 
         pw.pw_thread_loop_unlock(self.thread_loop);
 
-        self.worker_thread = try std.Thread.spawn(.{}, workerMain, .{self});
+        self.worker_thread = try std.Thread.spawn(.{}, worker_main, .{self});
     }
 
-    fn hasValidInfo(self: *const Self) bool {
+    fn has_valid_info(self: *const Self) bool {
         const info = self.info orelse return false;
         return self.has_format and
             info.format >= 0 and
@@ -257,10 +257,10 @@ pub const Pipewire = struct {
         return null;
     }
 
-    fn startStream(self: *const Self, node: u32, fps: u32) !void {
-        log.debug("[startStream] starting stream for node: {}", .{node});
+    fn start_stream(self: *const Self, node: u32, fps: u32) !void {
+        log.debug("[start_stream] starting stream for node: {}", .{node});
 
-        var params = try self.buildStreamFormatParams(self.allocator, fps);
+        var params = try self.build_stream_format_params(self.allocator, fps);
         defer params.deinit(self.allocator);
 
         const status = pw.pw_stream_connect(
@@ -277,11 +277,11 @@ pub const Pipewire = struct {
         }
     }
 
-    pub fn updateFps(self: *Self, fps: u32) !void {
+    pub fn update_fps(self: *Self, fps: u32) !void {
         const stream = self.stream orelse return;
         const thread_loop = self.thread_loop orelse return;
 
-        var params = try self.buildStreamFormatParams(self.allocator, fps);
+        var params = try self.build_stream_format_params(self.allocator, fps);
         defer params.deinit(self.allocator);
 
         if (params.items.len == 0) {
@@ -298,7 +298,7 @@ pub const Pipewire = struct {
     }
 
     /// Caller owns memory and must deinit.
-    fn buildStreamFormatParams(
+    fn build_stream_format_params(
         self: *const Self,
         allocator: Allocator,
         fps: u32,
@@ -327,7 +327,7 @@ pub const Pipewire = struct {
         var params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0);
         errdefer params.deinit(allocator);
         for (formats) |format| {
-            var modifiers = try self.vulkan.queryFormatModifiers(pipewire_util.spaToVkFormat(format));
+            var modifiers = try self.vulkan.query_format_modifiers(pipewire_util.spa_to_vk_format(format));
             defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;
@@ -340,12 +340,12 @@ pub const Pipewire = struct {
         return params;
     }
 
-    fn streamProcessCallback(data: ?*anyopaque) callconv(.c) void {
-        // log.debug("[streamProcessCallback]", .{});
+    fn stream_process_callback(data: ?*anyopaque) callconv(.c) void {
+        // log.debug("[stream_process_callback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
         if (!self.has_format) {
-            log.debug("[streamProcessCallback] does not have format", .{});
+            log.debug("[stream_process_callback] does not have format", .{});
             return;
         }
 
@@ -376,18 +376,18 @@ pub const Pipewire = struct {
         // TODO: Should gracefully handle these errors.
         defer _ = pw.pw_stream_queue_buffer(self.stream.?, pwb);
 
-        const vulkan_image = self.pipewire_frame_buffer_manager.?.getVulkanImage(pwb, self.info.?) catch |err| {
-            log.err("[streamProcessCallback] unable to get buffer: {}", .{err});
+        const vulkan_image = self.pipewire_frame_buffer_manager.?.get_vulkan_image(pwb, self.info.?) catch |err| {
+            log.err("[stream_process_callback] unable to get buffer: {}", .{err});
             return;
         };
 
         const header = pw.spa_buffer_find_meta_data(pwb.buffer, pw.SPA_META_Header, @sizeOf(pw.spa_meta_header));
         if (header == null) {
-            log.err("[streamProcessCallback] unable to get metadata header. This should never happen.", .{});
+            log.err("[stream_process_callback] unable to get metadata header. This should never happen.", .{});
             return;
         }
         const metadata = @as(*pw.spa_meta_header, @ptrCast(@alignCast(header.?)));
-        var timestamp_ns = self.selectBestTimestamp(metadata, pwb);
+        var timestamp_ns = self.select_best_timestamp(metadata, pwb);
 
         // Pipewire can occasionally queue a buffer with the same timestamp
         // as the previous frame. In this case, increment it by one. We can't
@@ -407,7 +407,7 @@ pub const Pipewire = struct {
                 // Ring buffer can be temporarily unavailable during format reconfiguration.
                 return;
             };
-            break :blk ring_buffer.copyImageToRingBuffer(.{
+            break :blk ring_buffer.copy_image_to_ring_buffer(.{
                 .src_image = vulkan_image.frame_buffer.frame_buffer_image.?.image,
                 .src_width = self.info.?.size.width,
                 .src_height = self.info.?.size.height,
@@ -415,27 +415,27 @@ pub const Pipewire = struct {
                 .use_signal_semaphore = false,
                 .timestamp_ns = timestamp_ns,
             }) catch |err| {
-                log.err("[streamProcessCallback] copyImageToRingBuffer error: {}", .{err});
+                log.err("[stream_process_callback] copyImageToRingBuffer error: {}", .{err});
                 return;
             };
         };
 
         if (copy_data.fence) |fence| {
             _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), .true, std.math.maxInt(u64)) catch |err| {
-                log.err("[streamProcessCallback] error waiting for fences: {}", .{err});
+                log.err("[stream_process_callback] error waiting for fences: {}", .{err});
             };
         }
 
         if (copy_data.vulkan_image_buffer) |vulkan_image_buffer| {
             self.vulkan_image_buffer_chan.drain();
             self.vulkan_image_buffer_chan.send(vulkan_image_buffer) catch |err| {
-                log.err("[streamProcessCallback] vulkan image buffer chan send err: {}", .{err});
+                log.err("[stream_process_callback] vulkan image buffer chan send err: {}", .{err});
             };
         }
     }
 
     /// Some DE/compositors vary on where they store the presentation timestamp.
-    fn selectBestTimestamp(
+    fn select_best_timestamp(
         self: *Self,
         metadata: *const pw.spa_meta_header,
         pwb: *pw.struct_pw_buffer,
@@ -474,21 +474,21 @@ pub const Pipewire = struct {
 
         // Limit the logging otherwise it will get spammed.
         if (self.timestamp_source_log_count >= 10) {
-            log.info("[selectBestTimestamp] video timestamp source: {}", .{source});
+            log.info("[select_best_timestamp] video timestamp source: {}", .{source});
             self.timestamp_source_log_count += 1;
         }
 
         return timestamp_ns;
     }
 
-    fn workerMain(self: *Self) !void {
+    fn worker_main(self: *Self) !void {
         while (true) {
             // Wait for the consumer to request a new frame.
             _ = self.rx_chan.recv() catch |err| {
                 if (err == ChanError.Closed) {
                     break;
                 }
-                log.err("[workerMain] rx_chan error: {}", .{err});
+                log.err("[worker_main] rx_chan error: {}", .{err});
                 return err;
             };
 
@@ -497,7 +497,7 @@ pub const Pipewire = struct {
                 if (err == ChanError.Closed) {
                     break;
                 }
-                log.err("[workerMain] vulkan_image_buffer_chan error: {}", .{err});
+                log.err("[worker_main] vulkan_image_buffer_chan error: {}", .{err});
                 return err;
             };
 
@@ -509,7 +509,7 @@ pub const Pipewire = struct {
                         break;
                     },
                     else => {
-                        log.err("[workerMain] tx_chan error: {}", .{err});
+                        log.err("[worker_main] tx_chan error: {}", .{err});
                         return err;
                     },
                 }
@@ -517,7 +517,7 @@ pub const Pipewire = struct {
         }
     }
 
-    fn streamStateChangedCallback(
+    fn stream_state_changed_callback(
         data: ?*anyopaque,
         old_state: pw.pw_stream_state,
         new_state: pw.pw_stream_state,
@@ -526,22 +526,22 @@ pub const Pipewire = struct {
         const self: *Self = @ptrCast(@alignCast(data));
         _ = self;
 
-        log.debug("[streamStateChangedCallback] pipewire stream state change: {s} -> {s}", .{
+        log.debug("[stream_state_changed_callback] pipewire stream state change: {s} -> {s}", .{
             pw.pw_stream_state_as_string(old_state),
             pw.pw_stream_state_as_string(new_state),
         });
 
         if (new_state == pw.PW_STREAM_STATE_ERROR) {
-            log.debug("[streamStateChangedCallback] pipewire stream error: {s}", .{error_});
+            log.debug("[stream_state_changed_callback] pipewire stream error: {s}", .{error_});
         }
 
         if (new_state == pw.PW_STREAM_STATE_STREAMING) {
-            log.debug("[streamStateChangedCallback] pipewire state streaming", .{});
+            log.debug("[stream_state_changed_callback] pipewire state streaming", .{});
         }
     }
 
-    fn streamParamChangedCallback(data: ?*anyopaque, id: u32, param: [*c]const pw.spa_pod) callconv(.c) void {
-        log.debug("[streamParamChangedCallback]", .{});
+    fn stream_param_changed_callback(data: ?*anyopaque, id: u32, param: [*c]const pw.spa_pod) callconv(.c) void {
+        log.debug("[stream_param_changed_callback]", .{});
 
         const self: *Self = @ptrCast(@alignCast(data));
 
@@ -558,34 +558,34 @@ pub const Pipewire = struct {
             media_type != pw.SPA_MEDIA_TYPE_video or
             media_subtype != pw.SPA_MEDIA_SUBTYPE_raw)
         {
-            log.debug("[streamParamChangedCallback] media_type: {}, media_subtype: {}", .{ media_type, media_subtype });
+            log.debug("[stream_param_changed_callback] media_type: {}, media_subtype: {}", .{ media_type, media_subtype });
             return;
         }
 
         self.info = std.mem.zeroes(pw.spa_video_info_raw);
 
         if (c_def.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
-            log.debug("[streamParamChangedCallback] failed to parse video info", .{});
+            log.debug("[stream_param_changed_callback] failed to parse video info", .{});
             return;
         }
 
-        self.vulkan.destroyCaptureRingBuffer();
+        self.vulkan.destroy_capture_ring_buffer();
         // TODO: Figure out how to bubble this error up and display it on the UI.
-        self.vulkan.initCaptureRingBuffer(self.info.?.size.width, self.info.?.size.height) catch |err| {
-            log.err("[streamParamChangedCallback] initCaptureRingBuffer error: {}", .{err});
+        self.vulkan.init_capture_ring_buffer(self.info.?.size.width, self.info.?.size.height) catch |err| {
+            log.err("[stream_param_changed_callback] initCaptureRingBuffer error: {}", .{err});
             return;
         };
 
-        self.sendStreamParams();
+        self.send_stream_params();
 
-        log.debug("[streamParamChangedCallback] stream format: {}", .{self.info.?.format});
+        log.debug("[stream_param_changed_callback] stream format: {}", .{self.info.?.format});
         self.has_format = true;
         self.format_changed = false;
 
         pw.pw_thread_loop_signal(self.thread_loop, false);
     }
 
-    fn sendStreamParams(self: *Self) void {
+    fn send_stream_params(self: *Self) void {
         var buffer = std.mem.zeroes([1024]u8);
 
         var builder = pw.spa_pod_builder{
@@ -656,37 +656,37 @@ pub const Pipewire = struct {
         _ = pw.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
     }
 
-    fn streamAddBufferCallback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
+    fn stream_add_buffer_callback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
-        log.debug("[streamAddBufferCallback]", .{});
+        log.debug("[stream_add_buffer_callback]", .{});
 
-        self.pipewire_frame_buffer_manager.?.addPipewireBuffer(pwb) catch |err| {
-            log.err("[streamAddBufferCallback] failed to add to active_buffers: {}", .{err});
+        self.pipewire_frame_buffer_manager.?.add_pipewire_buffer(pwb) catch |err| {
+            log.err("[stream_add_buffer_callback] failed to add to active_buffers: {}", .{err});
         };
     }
 
-    fn streamRemoveBufferCallback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
-        log.debug("[streamRemoveBufferCallback]", .{});
+    fn stream_remove_buffer_callback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
+        log.debug("[stream_remove_buffer_callback]", .{});
         const self: *Self = @ptrCast(@alignCast(data));
 
-        self.pipewire_frame_buffer_manager.?.removePipewireBuffer(pwb);
+        self.pipewire_frame_buffer_manager.?.remove_pipewire_buffer(pwb);
     }
 
     const stream_events = pw.pw_stream_events{
         .version = pw.PW_VERSION_STREAM_EVENTS,
-        .process = streamProcessCallback,
-        .state_changed = streamStateChangedCallback,
-        .param_changed = streamParamChangedCallback,
-        .add_buffer = streamAddBufferCallback,
-        .remove_buffer = streamRemoveBufferCallback,
+        .process = stream_process_callback,
+        .state_changed = stream_state_changed_callback,
+        .param_changed = stream_param_changed_callback,
+        .add_buffer = stream_add_buffer_callback,
+        .remove_buffer = stream_remove_buffer_callback,
     };
 
     const core_events = pw.pw_core_events{
         .version = pw.PW_VERSION_CORE_EVENTS,
-        .@"error" = coreErrorCallback,
+        .@"error" = core_error_callback,
     };
 
-    fn coreErrorCallback(
+    fn core_error_callback(
         opaque_: ?*anyopaque,
         id: u32,
         seq: i32,
@@ -695,7 +695,7 @@ pub const Pipewire = struct {
     ) callconv(.c) void {
         _ = opaque_;
         log.err(
-            "[coreErrorCallback] pipewire error: id {}, seq: {}, res: {}: {s}",
+            "[core_error_callback] pipewire error: id {}, seq: {}, res: {}: {s}",
             .{
                 id,
                 seq,

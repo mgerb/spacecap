@@ -67,7 +67,7 @@ pub const VideoReplayBuffer = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addFrame(self: *Self, data: []const u8, frame_time_ns: i128, is_idr: bool) !void {
+    pub fn add_frame(self: *Self, data: []const u8, frame_time_ns: i128, is_idr: bool) !void {
         var data_list = try std.ArrayList(u8).initCapacity(self.allocator, data.len);
         try data_list.appendSlice(self.allocator, data);
 
@@ -89,7 +89,7 @@ pub const VideoReplayBuffer = struct {
             if (self.frames.first) |first| {
                 const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
                 if (first_node.data.timestamp_ns < oldest_ns) {
-                    self.removeFirstFrame();
+                    self.remove_first_frame();
                 } else {
                     break;
                 }
@@ -103,7 +103,7 @@ pub const VideoReplayBuffer = struct {
         self.size += data.len;
     }
 
-    pub fn getSeconds(self: *const Self) u32 {
+    pub fn get_seconds(self: *const Self) u32 {
         if (self.frames.first) |first| {
             const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
             if (self.frames.last) |last| {
@@ -120,7 +120,7 @@ pub const VideoReplayBuffer = struct {
     }
 
     /// Remove and deallocate first frame
-    fn removeFirstFrame(self: *Self) void {
+    fn remove_first_frame(self: *Self) void {
         if (self.frames.popFirst()) |first| {
             const node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
             self.size -= node.data.data.items.len;
@@ -130,7 +130,7 @@ pub const VideoReplayBuffer = struct {
     }
 
     /// Pop and return the first node. Caller owns the memory.
-    pub fn popFirstOwned(self: *Self) !?*VideoReplayBufferNode {
+    pub fn pop_first_owned(self: *Self) !?*VideoReplayBufferNode {
         if (self.frames.popFirst()) |first| {
             self.len -= 1;
             return @alignCast(@fieldParentPtr("node", first));
@@ -140,13 +140,13 @@ pub const VideoReplayBuffer = struct {
     }
 
     /// Remove all frames from the start until an IDR frame is reached.
-    pub fn ensureFirstFrameIsIdr(self: *Self) void {
+    pub fn ensure_first_frame_is_idr(self: *Self) void {
         var node = self.frames.first;
         while (node) |current| {
             const frame_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", current));
             if (!frame_node.data.is_idr) {
                 node = current.next;
-                self.removeFirstFrame();
+                self.remove_first_frame();
             } else {
                 break;
             }
@@ -154,7 +154,7 @@ pub const VideoReplayBuffer = struct {
     }
 
     /// Get timestamps of the first/last frames.
-    pub fn getReplayWindow(self: *Self) ?ReplayWindow {
+    pub fn get_replay_window(self: *Self) ?ReplayWindow {
         if (self.frames.first) |first_node| {
             if (self.frames.last) |last_node| {
                 const first_frame_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first_node));
@@ -171,7 +171,7 @@ pub const VideoReplayBuffer = struct {
 test "addFrame - should add a frame with 3 bytes" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 30, &.{});
     defer replay_buffer.deinit();
-    try replay_buffer.addFrame(&[_]u8{ 1, 2, 3 }, 0, false);
+    try replay_buffer.add_frame(&[_]u8{ 1, 2, 3 }, 0, false);
     try std.testing.expectEqual(@as(u64, 3), replay_buffer.size);
     try std.testing.expectEqual(@as(u32, 1), replay_buffer.len);
 }
@@ -185,7 +185,7 @@ test "addFrame - should trim frames outside replay window" {
 
     for (0..10) |i| {
         const ts_ns = @as(i128, @intCast(i)) * std.time.ns_per_s;
-        try replay_buffer.addFrame(&[_]u8{1}, ts_ns, false);
+        try replay_buffer.add_frame(&[_]u8{1}, ts_ns, false);
 
         const expected_len_u = if (i + 1 > max_frames) max_frames else i + 1;
         const expected_len: u32 = @intCast(expected_len_u);
@@ -193,20 +193,20 @@ test "addFrame - should trim frames outside replay window" {
         try std.testing.expectEqual(@as(u64, expected_len), replay_buffer.size);
     }
 
-    try std.testing.expectEqual(max_seconds_retained, replay_buffer.getSeconds());
+    try std.testing.expectEqual(max_seconds_retained, replay_buffer.get_seconds());
 }
 
 test "getReplayWindow - returns null when empty and first/last timestamps when populated" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
     defer replay_buffer.deinit();
 
-    try std.testing.expect(replay_buffer.getReplayWindow() == null);
+    try std.testing.expect(replay_buffer.get_replay_window() == null);
 
-    try replay_buffer.addFrame(&[_]u8{0xAA}, 11, false);
-    try replay_buffer.addFrame(&[_]u8{0xBB}, 22, false);
-    try replay_buffer.addFrame(&[_]u8{0xCC}, 33, true);
+    try replay_buffer.add_frame(&[_]u8{0xAA}, 11, false);
+    try replay_buffer.add_frame(&[_]u8{0xBB}, 22, false);
+    try replay_buffer.add_frame(&[_]u8{0xCC}, 33, true);
 
-    const window = replay_buffer.getReplayWindow() orelse return error.ExpectedReplayWindow;
+    const window = replay_buffer.get_replay_window() orelse return error.ExpectedReplayWindow;
     try std.testing.expectEqual(@as(i128, 11), window.start_ns);
     try std.testing.expectEqual(@as(i128, 33), window.end_ns);
 }
@@ -215,12 +215,12 @@ test "ensureFirstFrameIsIdr - removes leading non-idr frames" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
     defer replay_buffer.deinit();
 
-    try replay_buffer.addFrame(&[_]u8{0x01}, 10, false);
-    try replay_buffer.addFrame(&[_]u8{0x02}, 20, false);
-    try replay_buffer.addFrame(&[_]u8{ 0x03, 0x03 }, 30, true);
-    try replay_buffer.addFrame(&[_]u8{ 0x04, 0x05, 0x06 }, 40, false);
+    try replay_buffer.add_frame(&[_]u8{0x01}, 10, false);
+    try replay_buffer.add_frame(&[_]u8{0x02}, 20, false);
+    try replay_buffer.add_frame(&[_]u8{ 0x03, 0x03 }, 30, true);
+    try replay_buffer.add_frame(&[_]u8{ 0x04, 0x05, 0x06 }, 40, false);
 
-    replay_buffer.ensureFirstFrameIsIdr();
+    replay_buffer.ensure_first_frame_is_idr();
 
     try std.testing.expectEqual(@as(u32, 2), replay_buffer.len);
     try std.testing.expectEqual(@as(u64, 5), replay_buffer.size);

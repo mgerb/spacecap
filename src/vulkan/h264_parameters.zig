@@ -3,12 +3,12 @@ const vk = @import("vulkan");
 
 const H264MbSizeAlignment = 16;
 
-fn alignSize(comptime T: type, size: T, alignment: T) T {
+fn align_size(comptime T: type, size: T, alignment: T) T {
     std.debug.assert((alignment & (alignment - 1)) == 0); // Ensure power of two
     return (size + alignment - 1) & ~(@as(T, alignment - 1));
 }
 
-pub fn getStdVideoH264SequenceParameterSetVui(fps: u32) vk.StdVideoH264SequenceParameterSetVui {
+pub fn get_std_video_h264_sequence_parameter_set_vui(fps: u32) vk.StdVideoH264SequenceParameterSetVui {
     const flags = vk.StdVideoH264SpsVuiFlags{
         .video_signal_type_present_flag = true,
         .color_description_present_flag = true,
@@ -31,13 +31,13 @@ pub fn getStdVideoH264SequenceParameterSetVui(fps: u32) vk.StdVideoH264SequenceP
     return ret;
 }
 
-pub fn getStdVideoH264SequenceParameterSet(
+pub fn get_std_video_h264_sequence_parameter_set(
     width: u32,
     height: u32,
     p_vui: ?*const vk.StdVideoH264SequenceParameterSetVui,
 ) vk.StdVideoH264SequenceParameterSet {
-    const mb_aligned_width = alignSize(u32, width, H264MbSizeAlignment);
-    const mb_aligned_height = alignSize(u32, height, H264MbSizeAlignment);
+    const mb_aligned_width = align_size(u32, width, H264MbSizeAlignment);
+    const mb_aligned_height = align_size(u32, height, H264MbSizeAlignment);
 
     var ret = std.mem.zeroes(vk.StdVideoH264SequenceParameterSet);
     ret.profile_idc = .main;
@@ -74,7 +74,7 @@ pub fn getStdVideoH264SequenceParameterSet(
     return ret;
 }
 
-pub fn getStdVideoH264PictureParameterSet() vk.StdVideoH264PictureParameterSet {
+pub fn get_std_video_h264_picture_parameter_set() vk.StdVideoH264PictureParameterSet {
     var pps = std.mem.zeroes(vk.StdVideoH264PictureParameterSet);
     pps.flags = .{
         .deblocking_filter_control_present_flag = true,

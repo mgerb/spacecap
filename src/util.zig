@@ -1,14 +1,14 @@
 const std = @import("std");
 
-pub fn isWindows() bool {
+pub fn is_windows() bool {
     return @import("builtin").os.tag == .windows;
 }
 
-pub fn isLinux() bool {
+pub fn is_linux() bool {
     return @import("builtin").os.tag == .linux;
 }
 
-pub fn printElapsed(start_time: i128, prefix: []const u8) void {
+pub fn print_elapsed(start_time: i128, prefix: []const u8) void {
     const end = std.time.nanoTimestamp();
     const total_time = @divFloor(end - start_time, @as(i128, @intCast(std.time.ns_per_ms)));
     std.debug.print("[{s}] time elapsed {}ms\n", .{ prefix, total_time });
@@ -77,7 +77,7 @@ pub fn write_bmp_bgrx(
     }
 }
 
-pub fn checkFd(fd: i64) !void {
+pub fn check_fd(fd: i64) !void {
     var buf: [4096]u8 = undefined;
     const path = try std.fmt.bufPrint(&buf, "/proc/self/fd/{}", .{fd});
     var target_buf: [4096]u8 = undefined;
@@ -93,7 +93,7 @@ pub fn checkFd(fd: i64) !void {
 /// - Linux: $XDG_CONFIG_HOME/spacecap or $HOME/.config/spacecap
 /// The returned path is owned by the caller and must be freed.
 /// This function will create the directory if it does not exist.
-pub fn getAppDataDir(allocator: std.mem.Allocator) ![]u8 {
+pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
     // TODO: test on windows
     const base_dir: []u8 = if (@import("builtin").os.tag == .windows) blk: {
         // On Windows, use %APPDATA%

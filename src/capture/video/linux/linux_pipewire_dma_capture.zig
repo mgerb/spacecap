@@ -33,7 +33,7 @@ pub const LinuxPipewireDmaCapture = struct {
         return self;
     }
 
-    pub fn selectSource(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
+    pub fn select_source(context: *anyopaque, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             // TODO: Probably don't have to destroy all of pipewire
@@ -52,19 +52,19 @@ pub const LinuxPipewireDmaCapture = struct {
                 self.pipewire = null;
             }
         }
-        try self.pipewire.?.selectSource(selection, fps);
+        try self.pipewire.?.select_source(selection, fps);
     }
 
-    pub fn updateFps(context: *anyopaque, fps: u32) !void {
+    pub fn update_fps(context: *anyopaque, fps: u32) !void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
-            try pipewire.updateFps(fps);
+            try pipewire.update_fps(fps);
         }
     }
 
-    pub fn shouldRestoreCaptureSession(context: *anyopaque) !bool {
+    pub fn should_restore_capture_session(context: *anyopaque) !bool {
         const self: *Self = @ptrCast(@alignCast(context));
-        const restore_token = TokenStorage.loadToken(self.allocator, "restore_token") catch |err| {
+        const restore_token = TokenStorage.load_token(self.allocator, "restore_token") catch |err| {
             log.err("failed to load restore token: {}", .{err});
             return false;
         };
@@ -76,12 +76,12 @@ pub const LinuxPipewireDmaCapture = struct {
         return restore_token.?.len > 0;
     }
 
-    pub fn nextFrame(context: *anyopaque) ChanError!void {
+    pub fn next_frame(context: *anyopaque) ChanError!void {
         const self: *Self = @ptrCast(@alignCast(context));
         try self.pipewire.?.rx_chan.send(true);
     }
 
-    pub fn closeAllChannels(context: *anyopaque) void {
+    pub fn close_all_channels(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.pipewire) |pipewire| {
             pipewire.tx_chan.close(.{});
@@ -90,7 +90,7 @@ pub const LinuxPipewireDmaCapture = struct {
         }
     }
 
-    pub fn waitForFrame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn wait_for_frame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.tx_chan.recv();
     }
@@ -126,16 +126,16 @@ pub const LinuxPipewireDmaCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn videoCapture(self: *Self) VideoCapture {
+    pub fn video_capture(self: *Self) VideoCapture {
         return .{
             .ptr = self,
             .vtable = &.{
-                .selectSource = selectSource,
-                .updateFps = updateFps,
-                .shouldRestoreCaptureSession = shouldRestoreCaptureSession,
-                .nextFrame = nextFrame,
-                .closeAllChannels = closeAllChannels,
-                .waitForFrame = waitForFrame,
+                .select_source = select_source,
+                .update_fps = update_fps,
+                .should_restore_capture_session = should_restore_capture_session,
+                .next_frame = next_frame,
+                .close_all_channels = close_all_channels,
+                .wait_for_frame = wait_for_frame,
                 .size = size,
                 .stop = stop,
                 .deinit = deinit,

@@ -47,7 +47,7 @@ pub const PipewireAudio = struct {
             self.data_chan.deinit();
         }
 
-        try self.initPipewire();
+        try self.init_pipewire();
 
         return self;
     }
@@ -56,10 +56,10 @@ pub const PipewireAudio = struct {
         if (self.thread_loop) |thread_loop| {
             pw.pw_thread_loop_stop(thread_loop);
             pw.pw_thread_loop_lock(thread_loop);
-            self.clearStreams();
+            self.clear_streams();
             pw.pw_thread_loop_unlock(thread_loop);
         } else {
-            self.clearStreams();
+            self.clear_streams();
         }
 
         if (self.thread_loop) |thread_loop| {
@@ -72,7 +72,7 @@ pub const PipewireAudio = struct {
         self.allocator.destroy(self);
     }
 
-    fn initPipewire(self: *Self) !void {
+    fn init_pipewire(self: *Self) !void {
         self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-audio",
             null,
@@ -84,21 +84,21 @@ pub const PipewireAudio = struct {
         }
     }
 
-    pub fn updateSelectedDevices(self: *Self, selected_devices: []const SelectedAudioDevice) !void {
+    pub fn update_selected_devices(self: *Self, selected_devices: []const SelectedAudioDevice) !void {
         const thread_loop = self.thread_loop orelse return error.pw_thread_loop_not_initialized;
 
         pw.pw_thread_loop_lock(thread_loop);
         defer pw.pw_thread_loop_unlock(thread_loop);
 
-        self.clearStreams();
-        errdefer self.clearStreams();
+        self.clear_streams();
+        errdefer self.clear_streams();
 
         for (selected_devices) |selected_device| {
-            try self.createStream(selected_device);
+            try self.create_stream(selected_device);
         }
     }
 
-    fn clearStreams(self: *Self) void {
+    fn clear_streams(self: *Self) void {
         for (self.streams.items) |stream_data| {
             if (stream_data.stream) |stream| {
                 _ = pw.pw_stream_disconnect(stream);
@@ -110,7 +110,7 @@ pub const PipewireAudio = struct {
         self.streams.clearRetainingCapacity();
     }
 
-    fn createStream(self: *Self, selected_device: SelectedAudioDevice) !void {
+    fn create_stream(self: *Self, selected_device: SelectedAudioDevice) !void {
         const stream_data = try self.allocator.create(AudioStream);
         errdefer self.allocator.destroy(stream_data);
 
@@ -139,8 +139,8 @@ pub const PipewireAudio = struct {
 
         const stream_events = pw.pw_stream_events{
             .version = pw.PW_VERSION_STREAM_EVENTS,
-            .param_changed = streamParamChangedCallback,
-            .process = streamProcessCallback,
+            .param_changed = stream_param_changed_callback,
+            .process = stream_process_callback,
         };
 
         const stream_name = switch (selected_device.device_type) {
@@ -162,11 +162,11 @@ pub const PipewireAudio = struct {
             }
         }
 
-        try connectStream(stream_data);
+        try connect_stream(stream_data);
         try self.streams.append(self.allocator, stream_data);
     }
 
-    fn streamProcessCallback(callback_data: ?*anyopaque) callconv(.c) void {
+    fn stream_process_callback(callback_data: ?*anyopaque) callconv(.c) void {
         assert(callback_data != null);
         const stream_data: *AudioStream = @ptrCast(@alignCast(callback_data));
         const self = stream_data.pipewire_audio;
@@ -175,7 +175,7 @@ pub const PipewireAudio = struct {
         const pwb = pw.pw_stream_dequeue_buffer(stream);
 
         if (pwb == null) {
-            log.debug("[streamProcessCallback] out of buffers to dequeue", .{});
+            log.debug("[stream_process_callback] out of buffers to dequeue", .{});
             return;
         }
 
@@ -197,7 +197,7 @@ pub const PipewireAudio = struct {
         const raw_stream_nsec_ns: i128 = @intCast(pw.pw_stream_get_nsec(stream));
 
         const data_ptr = buffer.*.datas[0].data orelse {
-            log.warn("[streamProcessCallback] no data in buffer", .{});
+            log.warn("[stream_process_callback] no data in buffer", .{});
             return;
         };
 
@@ -225,7 +225,7 @@ pub const PipewireAudio = struct {
 
         // Keep timestamp source selection in one place so audio/video follow
         // the same fallback strategy and are easier to reason about.
-        const timestamp_ns = selectBestTimestamp(
+        const timestamp_ns = select_best_timestamp(
             stream_data,
             raw_metadata_pts_ns,
             raw_pwb_time_ns,
@@ -240,15 +240,15 @@ pub const PipewireAudio = struct {
             rate,
             channels,
         ) catch |err| {
-            log.err("[streamProcessCallback] error creating audio capture data: {}", .{err});
+            log.err("[stream_process_callback] error creating audio capture data: {}", .{err});
             return;
         };
 
-        const did_send = self.data_chan.trySend(audio_capture_data) catch |err| {
+        const did_send = self.data_chan.try_send(audio_capture_data) catch |err| {
             if (err == ChanError.Closed) {
-                log.debug("[streamProcessCallback] chan closed", .{});
+                log.debug("[stream_process_callback] chan closed", .{});
             } else {
-                log.err("[streamProcessCallback] chan error: {}", .{err});
+                log.err("[stream_process_callback] chan error: {}", .{err});
             }
             audio_capture_data.deinit();
             return;
@@ -259,7 +259,7 @@ pub const PipewireAudio = struct {
         }
     }
 
-    fn selectBestTimestamp(
+    fn select_best_timestamp(
         stream_data: *AudioStream,
         raw_metadata_pts_ns: i128,
         raw_pwb_time_ns: i128,
@@ -283,7 +283,7 @@ pub const PipewireAudio = struct {
         // Limit the logging otherwise it will get spammed.
         if (stream_data.timestamp_source_log_count <= 10) {
             log.info(
-                "[selectBestTimestamp] audio timestamp source: id={s}, source={}",
+                "[select_best_timestamp] audio timestamp source: id={s}, source={}",
                 .{
                     stream_data.id,
                     source,
@@ -295,7 +295,7 @@ pub const PipewireAudio = struct {
         return timestamp_ns;
     }
 
-    fn streamParamChangedCallback(userdata: ?*anyopaque, id: u32, param: [*c]const pw.struct_spa_pod) callconv(.c) void {
+    fn stream_param_changed_callback(userdata: ?*anyopaque, id: u32, param: [*c]const pw.struct_spa_pod) callconv(.c) void {
         assert(userdata != null);
         const stream_data: *AudioStream = @ptrCast(@alignCast(userdata));
 
@@ -316,13 +316,13 @@ pub const PipewireAudio = struct {
 
         _ = c_def.spa_format_audio_raw_parse(param, &stream_data.raw);
 
-        std.log.debug("[onStreamParamChanged] capturing rate: {}, channels: {}", .{
+        std.log.debug("[on_stream_param_changed] capturing rate: {}, channels: {}", .{
             stream_data.raw.rate,
             stream_data.raw.channels,
         });
     }
 
-    fn connectStream(stream_data: *AudioStream) !void {
+    fn connect_stream(stream_data: *AudioStream) !void {
         var format_buffer = std.mem.zeroes([512]u8);
         var builder = pw.spa_pod_builder{
             .data = @ptrCast(&format_buffer),

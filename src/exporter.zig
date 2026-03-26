@@ -5,14 +5,14 @@ const std = @import("std");
 const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
 const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
 const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
-const checkErr = @import("./ffmpeg.zig").checkErr;
+const checkErr = @import("./ffmpeg.zig").check_err;
 const Muxer = @import("./muxer.zig").Muxer;
 
 const log = std.log.scoped(.exporter);
 
 /// Export audio/video to a file.
 /// NOTE: This takes ownership of audio_replay_buffer/video_replay_buffer.
-pub fn exportReplayBuffers(
+pub fn export_replay_buffers(
     allocator: std.mem.Allocator,
     width: u32,
     height: u32,
@@ -24,15 +24,15 @@ pub fn exportReplayBuffers(
     defer video_replay_buffer.deinit();
 
     if (video_replay_buffer.len <= 0) {
-        log.warn("[exportReplayBuffers] video replay buffer is empty", .{});
+        log.warn("[export_replay_buffers] video replay buffer is empty", .{});
         return;
     }
 
     // The final output is based on the captured video. We still need to align
     // audio against the replay window after the first valid IDR frame is known.
-    video_replay_buffer.ensureFirstFrameIsIdr();
-    const replay_window = video_replay_buffer.getReplayWindow() orelse {
-        log.warn("[exportReplayBuffers] replay window is not valid", .{});
+    video_replay_buffer.ensure_first_frame_is_idr();
+    const replay_window = video_replay_buffer.get_replay_window() orelse {
+        log.warn("[export_replay_buffers] replay window is not valid", .{});
         return;
     };
     // Capture-time encoding can still leave one partial AAC frame buffered.
@@ -50,11 +50,11 @@ pub fn exportReplayBuffers(
         "replay",
     );
     defer muxer.deinit();
-    try muxer.muxAudioVideo();
+    try muxer.mux_audio_video();
 }
 
 /// Export only audio to file.
-pub fn exportAudio(allocator: std.mem.Allocator, sample_rate: u32, channels: u32, samples: []const f32) !void {
+pub fn export_audio(allocator: std.mem.Allocator, sample_rate: u32, channels: u32, samples: []const f32) !void {
     if (samples.len == 0) return error.NoAudioSamples;
 
     var format_context: *ffmpeg.AVFormatContext = undefined;
