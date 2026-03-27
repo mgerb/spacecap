@@ -83,24 +83,15 @@ pub const VideoReplayBuffer = struct {
             .allocator = self.allocator,
         };
 
-        // Remove all frames before the replay window.
-        const oldest_ns = frame_time_ns - (@as(i128, @intCast(self.replay_seconds)) * std.time.ns_per_s);
-        while (true) {
-            if (self.frames.first) |first| {
-                const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
-                if (first_node.data.timestamp_ns < oldest_ns) {
-                    self.remove_first_frame();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
         self.frames.append(&node.node);
+        self.trim_expired_frames();
         self.len += 1;
         self.size += data.len;
+    }
+
+    pub fn set_replay_seconds(self: *Self, replay_seconds: u32) void {
+        self.replay_seconds = replay_seconds;
+        self.trim_expired_frames();
     }
 
     pub fn get_seconds(self: *const Self) u32 {
@@ -126,6 +117,24 @@ pub const VideoReplayBuffer = struct {
             self.size -= node.data.data.items.len;
             node.deinit();
             self.len -= 1;
+        }
+    }
+
+    fn trim_expired_frames(self: *Self) void {
+        const last = self.frames.last orelse return;
+        const last_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", last));
+        const oldest_ns = last_node.data.timestamp_ns - (@as(i128, @intCast(self.replay_seconds)) * std.time.ns_per_s);
+        while (true) {
+            if (self.frames.first) |first| {
+                const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
+                if (first_node.data.timestamp_ns < oldest_ns) {
+                    self.remove_first_frame();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
     }
 

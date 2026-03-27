@@ -5,21 +5,29 @@ const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDevic
 const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
+const util = @import("../util.zig");
 
 pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
 const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
 const CAPTURE_FPS_MIN: c_int = 1;
-const CAPTURE_FPS_MAX: c_int = 240;
+const CAPTURE_FPS_MAX: c_int = 500;
+const GUI_FPS_MIN: i32 = 1;
+const GUI_FPS_MAX: i32 = 240;
 const CAPTURE_BIT_RATE_BPS_PER_KBPS: u64 = 1_000;
-const CAPTURE_BIT_RATE_KBPS_MIN: c_int = 1_000;
-const CAPTURE_BIT_RATE_KBPS_MAX: c_int = 200_000;
+const CAPTURE_BIT_RATE_KBPS_MIN: i32 = 100;
+const CAPTURE_BIT_RATE_KBPS_MAX: i32 = 1_000_000;
+const REPLAY_SECONDS_MIN: i32 = 1;
+const REPLAY_SECONDS_MAX: i32 = 60 * 60 * 24;
 
 /// This is bound to a drag input. We keep a locally bound value
 /// because we only want to update the global state when not dragging.
 var capture_fps_local: ?i32 = null;
-var capture_bit_rate_kbps_local: ?i32 = null;
+var capture_bit_rate_local: ?i32 = null;
+var replay_seconds_local: ?i32 = null;
+var fg_fps_local: ?i32 = null;
+var bg_fps_local: ?i32 = null;
 
 fn device_type_label(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
@@ -149,7 +157,9 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: 
     }
 
     if (selected_total == 0) {
+        c.ImGui_PushTextWrapPos(0);
         c.ImGui_TextDisabled("Select at least one audio source to adjust gain.");
+        c.ImGui_PopTextWrapPos();
     }
 }
 
@@ -262,27 +272,65 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {
             defer c.ImGui_EndTabItem();
 
-            try draw_capture_settings(actor);
+            try draw_capture_settings(allocator, actor);
 
             c.ImGui_SeparatorText("GUI Settings");
 
-            var fg_fps = @as(f32, @floatFromInt(actor.state.user_settings.settings.gui_foreground_fps));
-            if (c.ImGui_DragFloatEx("FG FPS", &fg_fps, 1, 1.0, 240.0, "%.0f", 0)) {
-                try actor.dispatch(.{ .user_settings = .{
-                    .set_gui_foreground_fps = @as(u32, @intFromFloat(fg_fps)),
-                } });
-            }
+            c.ImGui_Text("FG FPS");
             c.ImGui_SameLine();
             imgui_util.help_marker("Forground FPS. This is the max frame rate Spacecap will render while focused. Drag or double click to change.");
-
-            var bg_fps = @as(f32, @floatFromInt(actor.state.user_settings.settings.gui_background_fps));
-            if (c.ImGui_DragFloatEx("BG FPS", &bg_fps, 1, 1.0, 240.0, "%.0f", 0)) {
-                try actor.dispatch(.{ .user_settings = .{
-                    .set_gui_background_fps = @as(u32, @intFromFloat(bg_fps)),
-                } });
+            c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+            const current_fg_fps: i32 = @intCast(actor.state.user_settings.settings.gui_foreground_fps);
+            var fg_fps = fg_fps_local orelse current_fg_fps;
+            if (c.ImGui_InputIntEx(
+                "##fg_fps",
+                &fg_fps,
+                5,
+                10,
+                c.ImGuiInputTextFlags_None,
+            )) {
+                fg_fps = std.math.clamp(fg_fps, GUI_FPS_MIN, GUI_FPS_MAX);
+                fg_fps_local = fg_fps;
             }
+            if (c.ImGui_IsItemDeactivatedAfterEdit() and fg_fps != current_fg_fps) {
+                try actor.dispatch(.{ .user_settings = .{
+                    .set_gui_foreground_fps = @intCast(fg_fps),
+                } });
+                fg_fps_local = null;
+            } else if (!c.ImGui_IsItemActive()) {
+                // Keep the UI synced with state when not actively editing.
+                fg_fps_local = null;
+            }
+
+            c.ImGui_Text("BG FPS");
             c.ImGui_SameLine();
             imgui_util.help_marker("Background FPS. This is the max frame rate Spacecap will render while NOT focused. Drag or double click to change.");
+            c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+            const current_bg_fps: i32 = @intCast(actor.state.user_settings.settings.gui_background_fps);
+            var bg_fps = bg_fps_local orelse current_bg_fps;
+            if (c.ImGui_InputIntEx(
+                "##bg_fps",
+                &bg_fps,
+                5,
+                10,
+                c.ImGuiInputTextFlags_None,
+            )) {
+                bg_fps = std.math.clamp(bg_fps, GUI_FPS_MIN, GUI_FPS_MAX);
+                bg_fps_local = bg_fps;
+            }
+            if (c.ImGui_IsItemDeactivatedAfterEdit() and bg_fps != current_bg_fps) {
+                try actor.dispatch(.{ .user_settings = .{
+                    .set_gui_background_fps = @intCast(bg_fps),
+                } });
+                bg_fps_local = null;
+            } else if (!c.ImGui_IsItemActive()) {
+                // Keep the UI synced with state when not actively editing.
+                bg_fps_local = null;
+            }
+
+            const io = c.ImGui_GetIO();
+            c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
+            c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
 
             // NOTE: Hiding this for now. Linux shortcuts can be configured at the
             // desktop environment level. See comments regarding `Method.configure_shortcuts`
@@ -298,55 +346,113 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
             // c.ImGui_SameLineEx(0, spacing);
             // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
 
-            c.ImGui_SeparatorText("imgui debug");
+            c.ImGui_SeparatorText("IMGUI Debug");
 
             if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
                 try actor.dispatch(.show_demo);
             }
-            const io = c.ImGui_GetIO();
-            c.ImGui_Text("%.3f ms/frame", 1000.0 / io.*.Framerate);
-            c.ImGui_Text("%.1f fps", io.*.Framerate);
         }
     }
 }
 
-fn draw_capture_settings(actor: *Actor) !void {
+fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     c.ImGui_SeparatorText("Capture Settings");
-    const current_capture_fps: i32 = @intCast(actor.state.user_settings.settings.capture_fps);
-    var fps = capture_fps_local orelse current_capture_fps;
-    if (c.ImGui_DragIntEx("FPS", &fps, 1.0, CAPTURE_FPS_MIN, CAPTURE_FPS_MAX, "%d", c.ImGuiSliderFlags_AlwaysClamp)) {
-        capture_fps_local = fps;
-    }
-    if (c.ImGui_IsItemDeactivatedAfterEdit() and fps > 0 and fps != current_capture_fps) {
-        try actor.dispatch(.{ .user_settings = .{
-            .set_capture_fps = @intCast(fps),
-        } });
-        capture_fps_local = null;
-    } else if (!c.ImGui_IsItemActive()) {
-        // Keep the UI synced with state when not actively editing.
-        capture_fps_local = null;
-    }
-    c.ImGui_SameLine();
-    imgui_util.help_marker("Capture FPS. Drag or double click to change.");
 
-    var current_capture_bit_rate_kbps: i32 = @intCast(actor.state.user_settings.settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
-    if (c.ImGui_InputIntEx(
-        "Bitrate",
-        &current_capture_bit_rate_kbps,
-        CAPTURE_BIT_RATE_KBPS_MIN,
-        CAPTURE_BIT_RATE_KBPS_MAX,
-        c.ImGuiInputTextFlags_None,
-    )) {
-        try actor.dispatch(.{ .user_settings = .{
-            .set_capture_bit_rate = @as(u64, @intCast(current_capture_bit_rate_kbps)) * CAPTURE_BIT_RATE_BPS_PER_KBPS,
-        } });
+    // FPS
+    {
+        const current_capture_fps: i32 = @intCast(actor.state.user_settings.settings.capture_fps);
+        var fps = capture_fps_local orelse current_capture_fps;
+        c.ImGui_Text("Max FPS");
+        c.ImGui_SameLine();
+        imgui_util.help_marker("The maximum capture rate (frames per second). If your system can't keep up, it may be slower than the desired FPS.");
+        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        if (c.ImGui_InputIntEx(
+            "##capture_fps",
+            &fps,
+            5,
+            10,
+            c.ImGuiInputTextFlags_None,
+        )) {
+            fps = std.math.clamp(fps, CAPTURE_FPS_MIN, CAPTURE_FPS_MAX);
+            capture_fps_local = fps;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit() and fps > 0 and fps != current_capture_fps) {
+            try actor.dispatch(.{ .user_settings = .{
+                .set_capture_fps = @intCast(fps),
+            } });
+            capture_fps_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            // Keep the UI synced with state when not actively editing.
+            capture_fps_local = null;
+        }
     }
-    c.ImGui_SameLine();
-    imgui_util.help_marker("Capture bitrate in Kbps.");
 
-    if (actor.state.is_recording_video) {
+    // Bitrate
+    {
+        c.ImGui_Text("Bitrate");
+        c.ImGui_SameLine();
+        imgui_util.help_marker("Capture bitrate in Kbps");
+        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        const current_capture_bit_rate: i32 = @intCast(actor.state.user_settings.settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
+        var capture_bit_rate = capture_bit_rate_local orelse current_capture_bit_rate;
+        if (c.ImGui_InputIntEx(
+            "##bitrate",
+            &capture_bit_rate,
+            1_000,
+            5_000,
+            c.ImGuiInputTextFlags_None,
+        )) {
+            capture_bit_rate = std.math.clamp(capture_bit_rate, CAPTURE_BIT_RATE_KBPS_MIN, CAPTURE_BIT_RATE_KBPS_MAX);
+            capture_bit_rate_local = capture_bit_rate;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit() and capture_bit_rate != current_capture_bit_rate) {
+            try actor.dispatch(.{ .user_settings = .{
+                .set_capture_bit_rate = @as(u64, @intCast(capture_bit_rate)) * CAPTURE_BIT_RATE_BPS_PER_KBPS,
+            } });
+            capture_bit_rate_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            // Keep the UI synced with state when not actively editing.
+            capture_bit_rate_local = null;
+        }
+
+        if (actor.state.is_recording_video) {
+            c.ImGui_PushTextWrapPos(0);
+            c.ImGui_TextDisabled(" Recording in progress. Bitrate changes take effect after restarting recording.");
+            c.ImGui_PopTextWrapPos();
+        }
+    }
+
+    // Replay buffer length
+    {
+        c.ImGui_Text("Replay buffer length");
+        c.ImGui_SameLine();
+        imgui_util.help_marker("Length of video and audio stored in memory (seconds)");
+        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        const current_replay_seconds: i32 = @intCast(actor.state.user_settings.settings.replay_seconds);
+        var replay_seconds = replay_seconds_local orelse current_replay_seconds;
+        if (c.ImGui_InputIntEx(
+            "##replay_buffer_length",
+            &replay_seconds,
+            5,
+            10,
+            c.ImGuiInputTextFlags_None,
+        )) {
+            replay_seconds = std.math.clamp(replay_seconds, REPLAY_SECONDS_MIN, REPLAY_SECONDS_MAX);
+            replay_seconds_local = replay_seconds;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit() and replay_seconds != current_replay_seconds) {
+            try actor.dispatch(.{ .user_settings = .{
+                .set_replay_seconds = @intCast(replay_seconds),
+            } });
+            replay_seconds_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            replay_seconds_local = null;
+        }
+
+        const replay_duration_label = try util.format_duration_label(allocator, @intCast(replay_seconds));
+        defer allocator.free(replay_duration_label);
         c.ImGui_PushTextWrapPos(0);
-        c.ImGui_TextUnformatted("Recording in progress. bit_rate changes take effect after restarting recording.");
+        c.ImGui_TextDisabled("Duration: %s", replay_duration_label.ptr);
         c.ImGui_PopTextWrapPos();
     }
 }

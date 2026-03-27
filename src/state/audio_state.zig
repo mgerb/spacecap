@@ -10,6 +10,7 @@ const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
 const AudioReplayBuffer = @import("../capture/audio/audio_replay_buffer.zig");
+const Actions = @import("../actor.zig").Actions;
 
 const log = std.log.scoped(.audio_state);
 
@@ -73,86 +74,103 @@ pub const AudioState = struct {
         self.devices.deinit(self.allocator);
     }
 
-    pub fn handle_actions(self: *Self, actor: *Actor, action: AudioActions) !void {
+    pub fn handle_action(self: *Self, actor: *Actor, action: Actions) !void {
         switch (action) {
-            .start_capture_thread => {
-                // This should only ever get called once, so the capture_thread must always be null.
-                assert(self.capture_thread == null);
-                self.capture_thread = try std.Thread.spawn(.{}, capture_thread_handler, .{ self, actor });
-            },
-            .get_available_audio_devices => {
-                var available_devices = try self.audio_capture.get_available_devices(self.allocator);
-                defer available_devices.deinit();
+            .audio => |audio_action| {
+                switch (audio_action) {
+                    .start_capture_thread => {
+                        // This should only ever get called once, so the capture_thread must always be null.
+                        assert(self.capture_thread == null);
+                        self.capture_thread = try std.Thread.spawn(.{}, capture_thread_handler, .{ self, actor });
+                    },
+                    .get_available_audio_devices => {
+                        var available_devices = try self.audio_capture.get_available_devices(self.allocator);
+                        defer available_devices.deinit();
 
-                actor.ui_mutex.lock();
-                defer actor.ui_mutex.unlock();
-                self.clear_devices();
-                errdefer self.clear_devices();
+                        actor.ui_mutex.lock();
+                        defer actor.ui_mutex.unlock();
+                        self.clear_devices();
+                        errdefer self.clear_devices();
 
-                for (available_devices.devices.items) |device| {
-                    const persisted_settings = actor.state.user_settings.settings.audio_devices.map.get(device.id);
-                    const device_copy = try AudioDeviceViewModel.init(self.allocator, .{
-                        .id = device.id,
-                        .name = device.name,
-                        .device_type = device.device_type,
-                        .is_default = device.is_default,
-                        .selected = if (persisted_settings) |settings| settings.selected else device.is_default,
-                        .gain = if (persisted_settings) |settings| settings.gain else 1.0,
-                    });
-                    errdefer device_copy.deinit();
-                    try self.devices.append(self.allocator, device_copy);
-                }
+                        for (available_devices.devices.items) |device| {
+                            const persisted_settings = actor.state.user_settings.settings.audio_devices.map.get(device.id);
+                            const device_copy = try AudioDeviceViewModel.init(self.allocator, .{
+                                .id = device.id,
+                                .name = device.name,
+                                .device_type = device.device_type,
+                                .is_default = device.is_default,
+                                .selected = if (persisted_settings) |settings| settings.selected else device.is_default,
+                                .gain = if (persisted_settings) |settings| settings.gain else 1.0,
+                            });
+                            errdefer device_copy.deinit();
+                            try self.devices.append(self.allocator, device_copy);
+                        }
 
-                try self.update_selected_devices();
-            },
-            .toggle_audio_device => |device_id| {
-                defer self.allocator.free(device_id);
-
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-
-                    for (self.devices.items) |*device| {
-                        if (!std.mem.eql(u8, device.id, device_id)) continue;
-                        device.selected = !device.selected;
                         try self.update_selected_devices();
+                    },
+                    .toggle_audio_device => |device_id| {
+                        defer self.allocator.free(device_id);
 
-                        try actor.dispatch(.{
-                            .user_settings = .{
-                                .set_audio_device_settings = try .init(self.allocator, .{
-                                    .device_id = device.id,
-                                    .selected = device.selected,
-                                    .gain = device.gain,
-                                }),
-                            },
-                        });
-                        break;
-                    }
+                        {
+                            actor.ui_mutex.lock();
+                            defer actor.ui_mutex.unlock();
+
+                            for (self.devices.items) |*device| {
+                                if (!std.mem.eql(u8, device.id, device_id)) continue;
+                                device.selected = !device.selected;
+                                try self.update_selected_devices();
+
+                                try actor.dispatch(.{
+                                    .user_settings = .{
+                                        .set_audio_device_settings = try .init(self.allocator, .{
+                                            .device_id = device.id,
+                                            .selected = device.selected,
+                                            .gain = device.gain,
+                                        }),
+                                    },
+                                });
+                                break;
+                            }
+                        }
+                    },
+                    .set_audio_device_gain => |_action| {
+                        const payload = _action.payload;
+                        defer _action.deinit();
+                        {
+                            actor.ui_mutex.lock();
+                            defer actor.ui_mutex.unlock();
+
+                            for (self.devices.items) |*device| {
+                                if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
+                                device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
+                                try actor.dispatch(.{
+                                    .user_settings = .{
+                                        .set_audio_device_settings = try .init(self.allocator, .{
+                                            .device_id = device.id,
+                                            .selected = device.selected,
+                                            .gain = device.gain,
+                                        }),
+                                    },
+                                });
+                                break;
+                            }
+                        }
+                    },
                 }
             },
-            .set_audio_device_gain => |_action| {
-                const payload = _action.payload;
-                defer _action.deinit();
-                {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-
-                    for (self.devices.items) |*device| {
-                        if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
-                        device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
-                        try actor.dispatch(.{
-                            .user_settings = .{
-                                .set_audio_device_settings = try .init(self.allocator, .{
-                                    .device_id = device.id,
-                                    .selected = device.selected,
-                                    .gain = device.gain,
-                                }),
-                            },
-                        });
-                        break;
-                    }
+            .user_settings => |user_settings_action| {
+                switch (user_settings_action) {
+                    .set_replay_seconds => |replay_seconds| {
+                        var replay_buffer_locked = self.replay_buffer.lock();
+                        defer replay_buffer_locked.unlock();
+                        if (replay_buffer_locked.unwrap()) |replay_buffer| {
+                            replay_buffer.set_replay_seconds(replay_seconds);
+                        }
+                    },
+                    else => {},
                 }
             },
+            else => {},
         }
     }
 
@@ -201,12 +219,18 @@ pub const AudioState = struct {
     }
 
     fn capture_thread_handler(self: *Self, actor: *Actor) !void {
+        const replay_seconds = blk: {
+            actor.ui_mutex.lock();
+            defer actor.ui_mutex.unlock();
+            break :blk actor.state.user_settings.settings.replay_seconds;
+        };
+
         {
             var replay_buffer_locked = self.replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             const ptr = replay_buffer_locked.unwrap_ptr();
-            std.debug.assert(ptr.* == null);
-            ptr.* = try AudioReplayBuffer.init(self.allocator, actor.state.replay_seconds);
+            assert(ptr.* == null);
+            ptr.* = try AudioReplayBuffer.init(self.allocator, replay_seconds);
         }
 
         while (true) {
