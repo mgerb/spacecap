@@ -1,12 +1,14 @@
 const std = @import("std");
 const clap = @import("clap");
+const build_options = @import("build_options");
 const Util = @import("./util.zig");
 
 const log = std.log.scoped(.cli_args);
 
 /// Params for all platforms should go here. Platform specific args should be added below.
 const shared_params =
-    "-h, --help             Display this help and exit.\n";
+    "-h, --help             Display this help and exit.\n" ++
+    "-v, --version          Display the Spacecap version and exit.\n";
 
 const linux_params =
     "-s, --send <command>   Send a command to a running Spacecap instance. Commands: save-replay\n";
@@ -40,6 +42,11 @@ pub fn parse(allocator: std.mem.Allocator) ?Args {
     }
 }
 
+fn print_version() void {
+    var stdout = std.fs.File.stdout().writer(&.{});
+    stdout.interface.print("spacecap {s}\n", .{build_options.version}) catch unreachable;
+}
+
 fn parse_linux(allocator: std.mem.Allocator) ?Args {
     const parsers = comptime .{
         .command = clap.parsers.enumeration(SendCommand),
@@ -55,7 +62,13 @@ fn parse_linux(allocator: std.mem.Allocator) ?Args {
     defer res.deinit();
 
     if (res.args.help > 0) {
-        clap.helpToFile(.stderr(), clap.Help, &linux_params_parsed, .{}) catch {};
+        print_version();
+        clap.helpToFile(.stdout(), clap.Help, &linux_params_parsed, .{}) catch {};
+        std.process.exit(0);
+    }
+
+    if (res.args.version > 0) {
+        print_version();
         std.process.exit(0);
     }
 
@@ -75,7 +88,13 @@ fn parse_windows(allocator: std.mem.Allocator) ?Args {
     defer res.deinit();
 
     if (res.args.help > 0) {
-        clap.helpToFile(.stderr(), clap.Help, &windows_params_parsed, .{}) catch {};
+        print_version();
+        clap.helpToFile(.stdout(), clap.Help, &windows_params_parsed, .{}) catch {};
+        std.process.exit(0);
+    }
+
+    if (res.args.version > 0) {
+        print_version();
         std.process.exit(0);
     }
 
