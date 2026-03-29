@@ -160,7 +160,7 @@ fn get_nightly_version(
         ,
             .{ semantic_version, ancestor_ver },
         );
-        return error.version_mismatch;
+        return error.VersionMismatch;
     }
 
     if (commit_short_hash.len < 2 or commit_short_hash[0] != 'g') {

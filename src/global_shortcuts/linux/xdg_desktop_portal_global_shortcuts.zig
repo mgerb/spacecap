@@ -48,11 +48,11 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         errdefer allocator.destroy(self);
 
         const g_error: ?*?*glib.Error = null;
-        const dbus = gio.busGetSync(.session, null, g_error) orelse return error.dbus;
+        const dbus = gio.busGetSync(.session, null, g_error) orelse return error.Dbus;
 
         if (g_error) |err| {
             log.err("{s}\n", .{err.*.?.f_message});
-            return error.busGetSync;
+            return error.BusGetSync;
         }
 
         self.* = .{

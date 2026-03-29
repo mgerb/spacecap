@@ -161,7 +161,7 @@ pub const VulkanImageBuffer = struct {
         const result = try self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64));
 
         if (result != .success) {
-            return error.waitForFences;
+            return error.WaitForFences;
         }
 
         var signal_semaphores = if (args.use_signal_semaphore) [_]vk.Semaphore{self.signal_semaphore} else null;

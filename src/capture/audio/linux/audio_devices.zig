@@ -85,16 +85,16 @@ const ListData = struct {
 };
 
 pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
-    const list_loop = pw.pw_main_loop_new(null) orelse return error.pw_main_loop_new;
+    const list_loop = pw.pw_main_loop_new(null) orelse return error.PwMainLoopNew;
     defer pw.pw_main_loop_destroy(list_loop);
 
-    const context = pw.pw_context_new(pw.pw_main_loop_get_loop(list_loop), null, 0) orelse return error.pw_context_new;
+    const context = pw.pw_context_new(pw.pw_main_loop_get_loop(list_loop), null, 0) orelse return error.PwContextNew;
     defer pw.pw_context_destroy(context);
 
-    const core = pw.pw_context_connect(context, null, 0) orelse return error.pw_context_connect;
+    const core = pw.pw_context_connect(context, null, 0) orelse return error.PwContextConnect;
     defer _ = pw.pw_core_disconnect(core);
 
-    const registry = pw.pw_core_get_registry(core, pw.PW_VERSION_REGISTRY, 0) orelse return error.pw_registry_new;
+    const registry = pw.pw_core_get_registry(core, pw.PW_VERSION_REGISTRY, 0) orelse return error.PwRegistryNew;
     var list_data = try ListData.init(allocator, registry);
     defer list_data.deinit();
 

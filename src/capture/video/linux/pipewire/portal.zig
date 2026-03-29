@@ -24,10 +24,10 @@ fn free_error_maybe(err: ?*c.GError) void {
 fn map_g_error(err: *c.GError) ?VideoCaptureError {
     // When the portal service is missing or the user cancels, match the old portal.zig errors.
     if (err.code == c.G_IO_ERROR_INVAL) {
-        return VideoCaptureError.portal_service_not_found;
+        return VideoCaptureError.PortalServiceNotFound;
     }
     if (err.code == c.G_IO_ERROR_CANCELLED) {
-        return VideoCaptureError.source_picker_cancelled;
+        return VideoCaptureError.SourcePickerCancelled;
     }
     return null;
 }
@@ -53,7 +53,7 @@ pub const Portal = struct {
     restore_token: ?[]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
-        const portal = c.xdp_portal_new() orelse return error.xdp_portal_new_failed;
+        const portal = c.xdp_portal_new() orelse return error.XdpPortalNewFailed;
 
         const restore_token = TokenStorage.load_token(allocator, "restore_token") catch null;
 
@@ -78,13 +78,13 @@ pub const Portal = struct {
 
     pub fn open_pipewire_remote(self: *const Self) !i32 {
         if (self.session == null) {
-            return error.session_not_started;
+            return error.SessionNotStarted;
         }
 
         const fd = c.xdp_session_open_pipewire_remote(self.session.?);
 
         if (fd < 0) {
-            return error.open_pipewire_remote_failed;
+            return error.OpenPipewireRemoteFailed;
         }
 
         return fd;
@@ -127,10 +127,10 @@ pub const Portal = struct {
 
     fn create_session(self: *Self, selection: VideoCaptureSelection) !void {
         if (self.session != null) {
-            return error.session_already_exists;
+            return error.SessionAlreadyExists;
         }
 
-        const loop = c.g_main_loop_new(null, 0) orelse return error.g_main_loop_new_failed;
+        const loop = c.g_main_loop_new(null, 0) orelse return error.GMainLoopNewFailed;
         var ctx = CreateSessionContext{ .loop = loop };
 
         const outputs: c.XdpOutputType = switch (selection) {
@@ -161,11 +161,11 @@ pub const Portal = struct {
             if (map_g_error(err)) |cerr| {
                 return cerr;
             }
-            return error.create_screencast_session_failed;
+            return error.CreateScreencastSessionFailed;
         }
 
         if (ctx.session == null) {
-            return error.create_screencast_session_failed;
+            return error.CreateScreencastSessionFailed;
         }
 
         self.session = ctx.session;
@@ -221,7 +221,7 @@ pub const Portal = struct {
     }
 
     fn start_session(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
-        const loop = c.g_main_loop_new(null, 0) orelse return error.g_main_loop_new_failed;
+        const loop = c.g_main_loop_new(null, 0) orelse return error.GMainLoopNewFailed;
         const ctx = try self.allocator.create(StartSessionContext);
         defer self.allocator.destroy(ctx);
         ctx.* = .{
@@ -264,7 +264,7 @@ pub const Portal = struct {
             // The restore attempt likely fell through to the interactive picker.
             // Return immediately and let a late callback free the detached context.
             ctx.detached = true;
-            return VideoCaptureError.source_picker_cancelled;
+            return VideoCaptureError.SourcePickerCancelled;
         }
 
         if (ctx.g_error) |err| {
@@ -272,11 +272,11 @@ pub const Portal = struct {
             if (map_g_error(err)) |cerr| {
                 return cerr;
             }
-            return error.start_session_failed;
+            return error.StartSessionFailed;
         }
 
         if (!ctx.success) {
-            return error.start_session_failed;
+            return error.StartSessionFailed;
         }
 
         try self.update_restore_token(selection == .source_type);
@@ -320,7 +320,7 @@ pub const Portal = struct {
     fn process_streams(self: *Self) !u32 {
         const streams = c.xdp_session_get_streams(self.session.?);
         if (streams == null) {
-            return error.no_streams;
+            return error.NoStreams;
         }
         defer c.g_variant_unref(streams);
 
@@ -332,7 +332,7 @@ pub const Portal = struct {
 
         const has_stream = c.g_variant_iter_loop(&iter, "(u@a{sv})", &node_id, &props) != 0;
         if (!has_stream) {
-            return error.no_streams;
+            return error.NoStreams;
         }
         defer {
             if (props != null) {

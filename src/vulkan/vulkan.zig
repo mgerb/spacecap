@@ -264,7 +264,7 @@ pub const Vulkan = struct {
         bit_rate: u64,
     ) !void {
         if (self.video_encode_queue == null) {
-            return error.video_not_supported;
+            return error.VideoNotSupported;
         }
 
         self.video_encoder = try Encoder.init(
