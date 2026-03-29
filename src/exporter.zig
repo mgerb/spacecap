@@ -11,18 +11,14 @@ const Muxer = @import("./video/muxer.zig").Muxer;
 const log = std.log.scoped(.exporter);
 
 /// Export audio/video to a file.
-/// NOTE: This takes ownership of audio_replay_buffer/video_replay_buffer.
 pub fn export_replay_buffers(
     allocator: std.mem.Allocator,
     width: u32,
     height: u32,
     fps: u32,
     video_replay_buffer: *VideoReplayBuffer,
-    audio_replay_buffer: *AudioReplayBuffer,
+    audio_replay_buffer: ?*AudioReplayBuffer,
 ) !void {
-    defer audio_replay_buffer.deinit();
-    defer video_replay_buffer.deinit();
-
     if (video_replay_buffer.len <= 0) {
         log.warn("[export_replay_buffers] video replay buffer is empty", .{});
         return;
@@ -35,9 +31,6 @@ pub fn export_replay_buffers(
         log.warn("[export_replay_buffers] replay window is not valid", .{});
         return;
     };
-    // Capture-time encoding can still leave one partial AAC frame buffered.
-    // Finalize drains that tail before the muxer starts consuming packets.
-    try audio_replay_buffer.finalize();
 
     var muxer = try Muxer.init(
         allocator,

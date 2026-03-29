@@ -46,7 +46,7 @@ pub const AudioState = struct {
     // TODO: Convert devices to a ArrayHashMap.
     /// This is a list of all currently available audio devices.
     devices: std.ArrayList(AudioDeviceViewModel),
-    replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
+    audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
     capture_thread: ?std.Thread = null,
 
     pub fn init(allocator: Allocator, audio_capture: *AudioCapture) !Self {
@@ -62,7 +62,7 @@ pub const AudioState = struct {
         assert(self.capture_thread == null);
 
         {
-            var replay_buffer_locked = self.replay_buffer.lock();
+            var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
                 replay_buffer.deinit();
@@ -161,7 +161,7 @@ pub const AudioState = struct {
             .user_settings => |user_settings_action| {
                 switch (user_settings_action) {
                     .set_replay_seconds => |replay_seconds| {
-                        var replay_buffer_locked = self.replay_buffer.lock();
+                        var replay_buffer_locked = self.audio_replay_buffer.lock();
                         defer replay_buffer_locked.unlock();
                         if (replay_buffer_locked.unwrap()) |replay_buffer| {
                             replay_buffer.set_replay_seconds(replay_seconds);
@@ -184,13 +184,18 @@ pub const AudioState = struct {
         }
     }
 
-    /// Return the current replay buffer to owned. Create a new replay buffer.
-    pub fn swap_replay_buffer(self: *Self, allocator: Allocator, replay_seconds: u32) !?*AudioReplayBuffer {
-        var replay_buffer_locked = self.replay_buffer.lock();
+    /// Finalize the current replay buffer, take ownership, and create a new replay buffer.
+    pub fn take_and_swap_replay_buffer(self: *Self, allocator: Allocator, replay_seconds: u32) !?*AudioReplayBuffer {
+        var replay_buffer_locked = self.audio_replay_buffer.lock();
         defer replay_buffer_locked.unlock();
 
         const replay_buffer = replay_buffer_locked.unwrap();
+        // Capture-time encoding can still leave one partial AAC frame buffered.
+        // Finalize drains that tail before the muxer starts consuming packets.
+        if (replay_buffer) |_replay_buffer| try _replay_buffer.finalize();
+
         replay_buffer_locked.set(try AudioReplayBuffer.init(allocator, replay_seconds));
+
         return replay_buffer;
     }
 
@@ -226,7 +231,7 @@ pub const AudioState = struct {
         };
 
         {
-            var replay_buffer_locked = self.replay_buffer.lock();
+            var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             const ptr = replay_buffer_locked.unwrap_ptr();
             assert(ptr.* == null);
@@ -271,7 +276,7 @@ pub const AudioState = struct {
                 continue;
             }
 
-            var replay_buffer_locked = self.replay_buffer.lock();
+            var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
                 replay_buffer.add_data(data) catch |err| {

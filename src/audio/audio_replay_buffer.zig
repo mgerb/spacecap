@@ -65,6 +65,7 @@ pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
     self.trim_packets();
 }
 
+/// Flush any remaining packets in the timeline.
 pub fn finalize(self: *Self) !void {
     try self.timeline.finalize();
 

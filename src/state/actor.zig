@@ -86,9 +86,7 @@ pub const Actor = struct {
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
-        try self.dispatch(.{ .audio = .get_available_audio_devices });
-        try self.dispatch(.{ .audio = .start_capture_thread });
-        try self.dispatch(.restore_capture_session);
+        try self.capture_startup();
 
         return self;
     }
@@ -105,6 +103,59 @@ pub const Actor = struct {
         self.state.deinit();
         self.action_chan.deinit();
         self.allocator.destroy(self);
+    }
+
+    /// The capture startup process is not very intuitive and requires an explanation. We
+    /// aren't dispatching actions here because we rely on execution order (dispatched
+    /// actions are handled in parallel).
+    ///
+    /// This is the flow:
+    ///
+    /// - Thread 1
+    ///   - Start audio capture thread.
+    ///   - Get available audio devices. This can be slow and that's why we run it in parallel.
+    /// - Thread 2
+    ///   - Restore the capture session. This must not be blocked by getting audio devices,
+    ///     otherwise there will be a delay when the video shows up on the UI. Functionally
+    ///     it's fine, but it feels bad.
+    /// - Thread 3
+    ///   - Wait for all threads 1 and 2 to complete, then start recording (if setting enables it).
+    ///   - We don't wait for this thread, because it is important that this function does not block,
+    ///     otherwise it blocked the UI from starting.
+    fn capture_startup(self: *Self) !void {
+        const thread_1 = try std.Thread.spawn(.{}, struct {
+            fn run(_self: *Self) void {
+                _self.handle_action(.{ .audio = .start_capture_thread }) catch |err| {
+                    log.err("[capture_startup] audio.start_capture_thread error: {}\n", .{err});
+                };
+                _self.handle_action(.{ .audio = .get_available_audio_devices }) catch |err| {
+                    log.err("[capture_startup] audio.get_available_audio_devices error: {}\n", .{err});
+                };
+            }
+        }.run, .{self});
+        errdefer thread_1.join();
+
+        const thread_2 = try std.Thread.spawn(.{}, struct {
+            fn run(_self: *Self) void {
+                _self.handle_action(.restore_capture_session) catch |err| {
+                    log.err("[capture_startup] restore_capture_session error: {}\n", .{err});
+                };
+            }
+        }.run, .{self});
+        errdefer thread_2.join();
+
+        // thread_3 - We can use the thread pool, because we don't have to wait for completion.
+        try self.thread_pool.spawn(struct {
+            fn run(_self: *Self, t1: std.Thread, t2: std.Thread) void {
+                t1.join();
+                t2.join();
+                if (_self.state.user_settings.settings.start_replay_buffer_on_startup) {
+                    _self.start_record() catch |err| {
+                        log.err("[capture_startup] start_record error: {}", .{err});
+                    };
+                }
+            }
+        }.run, .{ self, thread_1, thread_2 });
     }
 
     /// Does not return an error because this should always run.
@@ -132,6 +183,11 @@ pub const Actor = struct {
             // actions require long running tasks (e.g. IO) then they should
             // handle threads themselves. If we handle every action in a thread,
             // then we could potentially run into out of order issues.
+            //
+            // Followup thought on this: maybe we just handle actions in the
+            // thread pool by default, but allow an additional field on an action
+            // to run an action synchronously. It may be necessary to handle
+            // some actions synchronously in the future.
             const ActionThread = struct {
                 fn run(_self: *Self, _action: Actions) void {
                     _self.handle_action(_action) catch |err| {
@@ -174,11 +230,11 @@ pub const Actor = struct {
                 assert(self.video_capture.size() != null);
                 const size = self.video_capture.size().?;
 
-                const audio_replay_buffer = (try self.state.audio.swap_replay_buffer(
+                const audio_replay_buffer = (try self.state.audio.take_and_swap_replay_buffer(
                     self.allocator,
                     replay_seconds,
-                )).?;
-                errdefer audio_replay_buffer.deinit();
+                ));
+                defer if (audio_replay_buffer) |_audio_replay_buffer| _audio_replay_buffer.deinit();
 
                 // TODO: create swapReplayBuffer method when this is moved to video state.
                 var video_replay_buffer: ?*VideoReplayBuffer = null;
@@ -204,6 +260,7 @@ pub const Actor = struct {
                         video_encoder.bit_stream_header.items,
                     ));
                 }
+                defer if (video_replay_buffer) |_video_replay_buffer| _video_replay_buffer.deinit();
 
                 try exporter.export_replay_buffers(
                     self.allocator,
@@ -215,15 +272,14 @@ pub const Actor = struct {
                 );
             },
             .select_video_source => |source_type| {
-                try self.select_video_source(.{ .source_type = source_type });
+                _ = try self.select_video_source(.{ .source_type = source_type });
             },
             .restore_capture_session => {
                 if (!try self.video_capture.should_restore_capture_session()) {
                     return;
                 }
-
                 log.debug("Restoring capture session.", .{});
-                try self.select_video_source(.restore_session);
+                _ = try self.select_video_source(.restore_session);
             },
             .show_demo => {
                 self.ui_mutex.lock();
@@ -255,7 +311,8 @@ pub const Actor = struct {
         }
     }
 
-    fn select_video_source(self: *Self, selection: VideoCaptureSelection) !void {
+    /// Returns true/false if a video source was successfully selected.
+    fn select_video_source(self: *Self, selection: VideoCaptureSelection) !bool {
         try self.stop_capture();
 
         const fps = blk: {
@@ -271,10 +328,11 @@ pub const Actor = struct {
             } else {
                 log.info("source_picker_cancelled\n", .{});
             }
-            return;
+            return false;
         };
 
         try self.start_capture();
+        return true;
     }
 
     pub fn global_shortcuts_handler(context: *anyopaque, shortcut: GlobalShortcuts.Shortcut) void {
