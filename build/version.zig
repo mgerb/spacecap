@@ -33,7 +33,7 @@ const BuildZonFile = struct {
     version: []const u8,
 };
 
-pub fn get_package_version(b: *std.Build, allocator: Allocator) !PackageVersion {
+pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version: bool) !PackageVersion {
     const manifest_source = try std.fs.cwd().readFileAllocOptions(
         allocator,
         "build.zig.zon",
@@ -54,7 +54,13 @@ pub fn get_package_version(b: *std.Build, allocator: Allocator) !PackageVersion 
 
     const semantic_version = try std.SemanticVersion.parse(release_version);
 
-    const nightly_version = try get_nightly_version(b, allocator, release_version, semantic_version);
+    const nightly_version = try get_nightly_version(
+        b,
+        allocator,
+        release_version,
+        semantic_version,
+        ignore_version,
+    );
     errdefer allocator.free(nightly_version);
 
     return .init(
@@ -76,6 +82,7 @@ fn get_nightly_version(
     allocator: Allocator,
     release_version: []const u8,
     semantic_version: std.SemanticVersion,
+    ignore_version: bool,
 ) ![]const u8 {
     if (!std.process.can_spawn) {
         return allocator.dupe(u8, release_version);
@@ -144,9 +151,16 @@ fn get_nightly_version(
         log.warn("Failed to parse tagged ancestor from `git describe` output '{s}': {}", .{ git_describe, err });
         return allocator.dupe(u8, release_version);
     };
-    if (semantic_version.order(ancestor_ver) == .lt) {
-        log.warn("Spacecap version '{f}' must be greater than or equal to tagged ancestor '{f}'", .{ semantic_version, ancestor_ver });
-        return allocator.dupe(u8, release_version);
+
+    if (!ignore_version and semantic_version.order(ancestor_ver) != .gt) {
+        log.err(
+            \\Spacecap version '{f}' must be greater than the latest tag '{f}'.
+            \\You probably need to bump the version in build.zig.zon.
+            \\Use '-Dignore-version' to suppress this error.
+        ,
+            .{ semantic_version, ancestor_ver },
+        );
+        return error.version_mismatch;
     }
 
     if (commit_short_hash.len < 2 or commit_short_hash[0] != 'g') {

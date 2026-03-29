@@ -343,8 +343,9 @@ pub fn build(b: *std.Build) !void {
     const nix_option = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
     const appimage_option = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
     const release_version_option = b.option(bool, "release-version", "Build the stable Spacecap version from build.zig.zon instead of a git-derived dev version.") orelse false;
+    const ignore_version = b.option(bool, "ignore-version", "Ignore version constraints based on git tags.") orelse false;
 
-    var package_version = try version.get_package_version(b, allocator);
+    var package_version = try version.get_package_version(b, allocator, ignore_version);
     defer package_version.deinit();
 
     const resolved_version = if (release_version_option)
