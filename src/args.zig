@@ -44,7 +44,7 @@ pub fn parse(allocator: std.mem.Allocator) ?Args {
 
 fn print_version() void {
     var stdout = std.fs.File.stdout().writer(&.{});
-    stdout.interface.print("spacecap {s}\n", .{build_options.version}) catch unreachable;
+    stdout.interface.print("{s}\n", .{build_options.version}) catch unreachable;
 }
 
 fn parse_linux(allocator: std.mem.Allocator) ?Args {
