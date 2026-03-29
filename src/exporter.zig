@@ -2,11 +2,11 @@
 //// e.g. Export from replay buffers.
 
 const std = @import("std");
-const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
-const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
+const VideoReplayBuffer = @import("./video/video_replay_buffer.zig").VideoReplayBuffer;
+const AudioReplayBuffer = @import("./audio/audio_replay_buffer.zig");
 const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
 const checkErr = @import("./ffmpeg.zig").check_err;
-const Muxer = @import("./muxer.zig").Muxer;
+const Muxer = @import("./video/muxer.zig").Muxer;
 
 const log = std.log.scoped(.exporter);
 

@@ -2,15 +2,15 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
-const AudioReplayBuffer = @import("./capture/audio/audio_replay_buffer.zig");
-const SampleWindow = @import("./capture/audio/audio_timeline.zig").SampleWindow;
-const EncodedAudioPacketNode = @import("./audio_encoder.zig").EncodedAudioPacketNode;
-const LinkedListIterator = @import("./util.zig").LinkedListIterator;
-const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
-const VideoReplayBufferNode = @import("./vulkan/video_replay_buffer.zig").VideoReplayBufferNode;
-const ReplayWindow = @import("./types.zig").ReplayWindow;
-const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
-const checkErr = @import("./ffmpeg.zig").check_err;
+const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
+const SampleWindow = @import("../audio/audio_timeline.zig").SampleWindow;
+const EncodedAudioPacketNode = @import("../audio/audio_encoder.zig").EncodedAudioPacketNode;
+const LinkedListIterator = @import("../util.zig").LinkedListIterator;
+const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
+const VideoReplayBufferNode = @import("./video_replay_buffer.zig").VideoReplayBufferNode;
+const ReplayWindow = @import("../types.zig").ReplayWindow;
+const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
+const checkErr = @import("../ffmpeg.zig").check_err;
 
 pub const Muxer = struct {
     const Self = @This();

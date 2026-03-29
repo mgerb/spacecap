@@ -1,5 +1,5 @@
 const std = @import("std");
-const Actor = @import("../../actor.zig").Actor;
+const Actor = @import("../../state/actor.zig").Actor;
 const Ipc = @import("../ipc.zig").Ipc;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 

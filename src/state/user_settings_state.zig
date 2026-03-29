@@ -1,9 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Actor = @import("../actor.zig").Actor;
-const ActionPayload = @import("../actor.zig").ActionPayload;
+const Actor = @import("./actor.zig").Actor;
+const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const util = @import("../util.zig");
-const Actions = @import("../actor.zig").Actions;
+const Actions = @import("./actor.zig").Actions;
 
 const log = std.log.scoped(.user_settings_state);
 

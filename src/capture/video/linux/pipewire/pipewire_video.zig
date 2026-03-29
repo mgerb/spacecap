@@ -17,8 +17,8 @@ const Portal = @import("./portal.zig").Portal;
 const PipewireFrameBufferManager = @import("./pipewire_frame_buffer_manager.zig").PipewireFrameBufferManager;
 const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 
-pub const Pipewire = struct {
-    const log = std.log.scoped(.Pipewire);
+pub const PipewireVideo = struct {
+    const log = std.log.scoped(.PipewireVideo);
     const Self = @This();
 
     portal: *Portal,

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AudioCaptureData = @import("./audio_capture_data.zig");
+const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const PendingChunkNode = @import("./audio_timeline.zig").PendingChunkNode;
 const DeviceState = @import("./audio_timeline.zig").DeviceState;
 

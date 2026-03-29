@@ -1,12 +1,12 @@
 const c = @import("imguiz").imguiz;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
+const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const COLUMN_WIDTH = @import("./draw_left_column.zig").COLUMN_WIDTH;
 
 pub fn draw_video_preview(args: union(enum) {
     vulkan_video_not_supported,
     capture_preview: struct {
-        capture_preview_buffer: *CapturePreviewTexture,
+        capture_preview_buffer: *VulkanCapturePreviewTexture,
         width: u32,
         height: u32,
     },
