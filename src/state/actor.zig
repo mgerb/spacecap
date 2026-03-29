@@ -132,6 +132,11 @@ pub const Actor = struct {
             // actions require long running tasks (e.g. IO) then they should
             // handle threads themselves. If we handle every action in a thread,
             // then we could potentially run into out of order issues.
+            //
+            // Followup thought on this: maybe we just handle actions in the
+            // thread pool by default, but allow an additional field on an action
+            // to run an action synchronously. It may be necessary to handle
+            // some actions synchronously in the future.
             const ActionThread = struct {
                 fn run(_self: *Self, _action: Actions) void {
                     _self.handle_action(_action) catch |err| {
@@ -174,11 +179,11 @@ pub const Actor = struct {
                 assert(self.video_capture.size() != null);
                 const size = self.video_capture.size().?;
 
-                const audio_replay_buffer = (try self.state.audio.swap_replay_buffer(
+                const audio_replay_buffer = (try self.state.audio.take_and_swap_replay_buffer(
                     self.allocator,
                     replay_seconds,
-                )).?;
-                errdefer audio_replay_buffer.deinit();
+                ));
+                defer if (audio_replay_buffer) |_audio_replay_buffer| _audio_replay_buffer.deinit();
 
                 // TODO: create swapReplayBuffer method when this is moved to video state.
                 var video_replay_buffer: ?*VideoReplayBuffer = null;
@@ -204,6 +209,7 @@ pub const Actor = struct {
                         video_encoder.bit_stream_header.items,
                     ));
                 }
+                defer if (video_replay_buffer) |_video_replay_buffer| _video_replay_buffer.deinit();
 
                 try exporter.export_replay_buffers(
                     self.allocator,
@@ -215,15 +221,16 @@ pub const Actor = struct {
                 );
             },
             .select_video_source => |source_type| {
-                try self.select_video_source(.{ .source_type = source_type });
+                _ = try self.select_video_source(.{ .source_type = source_type });
             },
             .restore_capture_session => {
                 if (!try self.video_capture.should_restore_capture_session()) {
                     return;
                 }
 
-                log.debug("Restoring capture session.", .{});
-                try self.select_video_source(.restore_session);
+                if (try self.select_video_source(.restore_session) and self.state.user_settings.settings.start_replay_buffer_on_startup) {
+                    try self.start_record();
+                }
             },
             .show_demo => {
                 self.ui_mutex.lock();
@@ -255,7 +262,8 @@ pub const Actor = struct {
         }
     }
 
-    fn select_video_source(self: *Self, selection: VideoCaptureSelection) !void {
+    /// Returns true/false if a video source was successfully selected.
+    fn select_video_source(self: *Self, selection: VideoCaptureSelection) !bool {
         try self.stop_capture();
 
         const fps = blk: {
@@ -271,10 +279,11 @@ pub const Actor = struct {
             } else {
                 log.info("source_picker_cancelled\n", .{});
             }
-            return;
+            return false;
         };
 
         try self.start_capture();
+        return true;
     }
 
     pub fn global_shortcuts_handler(context: *anyopaque, shortcut: GlobalShortcuts.Shortcut) void {
