@@ -348,7 +348,7 @@ pub const Actor = struct {
         };
 
         self.video_capture.select_source(selection, fps) catch |err| {
-            if (err != VideoCaptureError.source_picker_cancelled) {
+            if (err != VideoCaptureError.SourcePickerCancelled) {
                 log.err("selectSource error: {}\n", .{err});
                 return err;
             } else {
@@ -488,7 +488,7 @@ pub const Actor = struct {
 
     fn start_capture(self: *Self) !void {
         const size = self.video_capture.size() orelse {
-            return error.video_capture_size_not_found;
+            return error.VideoCaptureSizeNotFound;
         };
 
         try self.vulkan.init_capture_preview_ring_buffer(size.width, size.height);
@@ -543,7 +543,7 @@ pub const Actor = struct {
         }
 
         const size = self.video_capture.size() orelse {
-            return error.video_capture_size_not_found;
+            return error.VideoCaptureSizeNotFound;
         };
 
         try self.vulkan.init_video_encoder(

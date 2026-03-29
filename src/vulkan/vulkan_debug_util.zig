@@ -17,7 +17,7 @@ pub fn debug_write_image_to_file(
     if (fence != null) {
         const result = try vulkan.device.waitForFences(1, @ptrCast(&fence), vk.TRUE, std.math.maxInt(u64));
         if (result != .success) {
-            return error.waitForFences;
+            return error.WaitForFences;
         }
     }
 
@@ -142,7 +142,7 @@ pub fn debug_copy_write_image_to_file(
     if (fence != null) {
         const result = try vulkan.device.waitForFences(1, @ptrCast(&fence), vk.TRUE, std.math.maxInt(u64));
         if (result != .success) {
-            return error.waitForFences;
+            return error.WaitForFences;
         }
     }
     const linear_image_create_info = vk.ImageCreateInfo{
@@ -337,7 +337,7 @@ pub fn debug_blit_write_image_to_file(
     if (fence != null) {
         const result = try vulkan.device.waitForFences(1, @ptrCast(&fence), vk.TRUE, std.math.maxInt(u64));
         if (result != .success) {
-            return error.waitForFences;
+            return error.WaitForFences;
         }
     }
 

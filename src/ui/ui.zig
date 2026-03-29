@@ -101,7 +101,7 @@ pub const UI = struct {
 
     fn init_vulkan(self: *Self) !void {
         self.window = c.SDL_CreateWindow("Spacecap", WIDTH, HEIGHT, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY);
-        if (self.window == null) return error.SDL_CreateWindowFailure;
+        if (self.window == null) return error.SDLCreateWindowFailure;
         errdefer {
             if (self.window) |window| {
                 c.SDL_DestroyWindow(window);
@@ -111,7 +111,7 @@ pub const UI = struct {
         var surface: c.VkSurfaceKHR = undefined;
 
         if (!c.SDL_Vulkan_CreateSurface(self.window, self.vk_instance(), null, &surface)) {
-            return error.SDL_Vulkan_CreateSurfaceFailure;
+            return error.SDLVulkanCreateSurfaceFailure;
         }
         self.surface = surface;
 
@@ -133,10 +133,10 @@ pub const UI = struct {
         //     c.SDL_WINDOWPOS_CENTERED,
         //     c.SDL_WINDOWPOS_CENTERED,
         // )) {
-        //     return error.SDL_SetWindowPositionFailure;
+        //     return error.SDLSetWindowPositionFailure;
         // }
         if (!c.SDL_ShowWindow(self.window.?)) {
-            return error.SDL_ShowWindowFailure;
+            return error.SDLShowWindowFailure;
         }
 
         // Setup Dear ImGui context
@@ -159,7 +159,7 @@ pub const UI = struct {
 
         // Setup Platform/Renderer backends
         if (!c.cImGui_ImplSDL3_InitForVulkan(self.window.?)) {
-            return error.cImGui_ImplSDL3_InitForVulkanFailure;
+            return error.SDLInitForVulkanFailure;
         }
         errdefer c.cImGui_ImplSDL3_Shutdown();
 
@@ -280,7 +280,7 @@ pub const UI = struct {
             var fb_width: i32 = undefined;
             var fb_height: i32 = undefined;
             if (!c.SDL_GetWindowSizeInPixels(self.window.?, &fb_width, &fb_height)) {
-                return error.SDL_GetWindowSizeInPixelsFailure;
+                return error.SDLGetWindowSizeInPixelsFailure;
             }
             if (fb_width > 0 and fb_height > 0 and
                 (self.swapchain_rebuild or
@@ -549,7 +549,7 @@ pub const UI = struct {
         var fb_width: i32 = undefined;
         var fb_height: i32 = undefined;
         if (!c.SDL_GetWindowSizeInPixels(self.window.?, &fb_width, &fb_height)) {
-            return error.SDL_GetWindowSizeInPixelsFailure;
+            return error.SDLGetWindowSizeInPixelsFailure;
         }
 
         c.cImGui_ImplVulkanH_CreateOrResizeWindow(

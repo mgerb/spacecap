@@ -28,7 +28,7 @@ pub fn dmabuf_export_sync_file(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Se
             .INTR, .AGAIN => continue,
             else => |err| {
                 std.log.err("ioctl DMA_BUF_IOCTL_EXPORT_SYNC_FILE failed: {}", .{err});
-                return error.ioctl;
+                return error.Ioctl;
             },
         }
     }

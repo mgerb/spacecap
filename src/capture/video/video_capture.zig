@@ -14,8 +14,8 @@ pub const VideoCaptureSelection = union(enum) {
 };
 
 pub const VideoCaptureError = error{
-    portal_service_not_found,
-    source_picker_cancelled,
+    PortalServiceNotFound,
+    SourcePickerCancelled,
 };
 
 /// VideoCapture interface.

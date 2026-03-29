@@ -27,7 +27,7 @@ pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensi
     var extensions_count: u32 = 0;
     const sdl_extensions = imguiz.SDL_Vulkan_GetInstanceExtensions(&extensions_count);
     if (sdl_extensions == null) {
-        return error.SDL_Vulkan_GetInstanceExtensionsFailure;
+        return error.SDLVulkanGetInstanceExtensionsFailure;
     }
     errdefer {
         for (extensions.items) |extension| allocator.free(std.mem.span(extension));
@@ -55,11 +55,11 @@ pub fn init() !void {
             log.info("[sdl_init] using x11", .{});
             return;
         }
-        return error.SDL_initFailure;
+        return error.SDLInitFailure;
     }
 
     if (!imguiz.SDL_Init(SDL_INIT_FLAGS)) {
-        return error.SDL_initFailure;
+        return error.SDLInitFailure;
     }
 }
 

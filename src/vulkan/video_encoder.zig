@@ -220,7 +220,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_waitForFencesError;
+            return error.WaitForFencesError;
         }
         return self;
     }
@@ -309,7 +309,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResultError;
+            return error.GetPhysicalDeviceVideoFormatPropertiesKHRResultError;
         }
 
         var video_format_properties = try std.ArrayList(vk.VideoFormatPropertiesKHR).initCapacity(self.allocator, 0);
@@ -327,7 +327,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResult2Error;
+            return error.GetPhysicalDeviceVideoFormatPropertiesKHRResult2Error;
         }
 
         self.chosen_src_image_format = .undefined;
@@ -340,7 +340,7 @@ pub const VideoEncoder = struct {
         }
 
         if (self.chosen_src_image_format.? == .undefined) {
-            return error.Spacecap_InvalidChosenVideoFormat;
+            return error.InvalidChosenVideoFormat;
         }
 
         video_format_info.image_usage = std.mem.zeroes(vk.ImageUsageFlags);
@@ -354,7 +354,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResult3Error;
+            return error.GetPhysicalDeviceVideoFormatPropertiesKHRResult3Error;
         }
 
         var dpb_video_format_properties = try std.ArrayList(vk.VideoFormatPropertiesKHR).initCapacity(self.allocator, 0);
@@ -372,11 +372,11 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetPhysicalDeviceVideoFormatPropertiesKHRResult4Error;
+            return error.GetPhysicalDeviceVideoFormatPropertiesKHRResult4Error;
         }
 
         if (dpb_video_format_properties.items.len < 1) {
-            return error.Spacecap_InvalidDpbVideoFormatPropertiesLength;
+            return error.InvalidDpbVideoFormatPropertiesLength;
         }
 
         self.chosen_dpb_image_format = dpb_video_format_properties.items[0].format;
@@ -413,7 +413,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetVideoSessionMemoryRequirementsKHRError;
+            return error.GetVideoSessionMemoryRequirementsKHRError;
         }
 
         var encode_session_memory_requirements = try std.ArrayList(vk.VideoSessionMemoryRequirementsKHR).initCapacity(
@@ -437,11 +437,11 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetVideoSessionMemoryRequirementsKHRError;
+            return error.GetVideoSessionMemoryRequirementsKHRError;
         }
 
         if (video_session_memory_requirement_count == 0) {
-            return error.Spacecap_VideoSessionMemoryRequirementCount0;
+            return error.VideoSessionMemoryRequirementCount0;
         }
 
         for (0..video_session_memory_requirement_count) |memIdx| {
@@ -513,7 +513,7 @@ pub const VideoEncoder = struct {
         var result = try self.vulkan.device.getEncodedVideoSessionParametersKHR(&get_info, null, &datalen, null);
 
         if (result != .success) {
-            return error.Spacecap_GetEncodedVideoSessionParametersKHRError;
+            return error.GetEncodedVideoSessionParametersKHRError;
         }
 
         try self.bit_stream_header.resize(self.allocator, datalen);
@@ -526,7 +526,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_GetEncodedVideoSessionParametersKHRError;
+            return error.GetEncodedVideoSessionParametersKHRError;
         }
     }
 
@@ -746,7 +746,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_createComputePipelinesError;
+            return error.CreateComputePipelinesError;
         }
 
         self.compute_pipeline = compute_pipeline[0];
@@ -1273,7 +1273,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_waitForFencesError;
+            return error.SpacecapWaitForFencesError;
         }
 
         const VideoEncodeStatus = extern struct {
@@ -1295,7 +1295,7 @@ pub const VideoEncoder = struct {
         );
 
         if (result != .success) {
-            return error.Spacecap_getQueryPoolResultsError;
+            return error.GetQueryPoolResultsError;
         }
 
         const props = self.vulkan.instance.getPhysicalDeviceProperties(self.vulkan.physical_device);

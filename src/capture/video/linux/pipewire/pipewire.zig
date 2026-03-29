@@ -138,7 +138,7 @@ pub const Pipewire = struct {
         self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-video",
             null,
-        ) orelse return error.pw_thread_loop_new;
+        ) orelse return error.PwThreadLoopNew;
         errdefer pw.pw_thread_loop_destroy(self.thread_loop);
 
         self.context = pw.pw_context_new(
@@ -148,11 +148,11 @@ pub const Pipewire = struct {
         );
 
         if (self.context == null) {
-            return error.pw_context_new;
+            return error.PwContextNew;
         }
 
         if (pw.pw_thread_loop_start(self.thread_loop) < 0) {
-            return error.pw_thread_loop_start;
+            return error.PwThreadLoopStart;
         }
 
         pw.pw_thread_loop_lock(self.thread_loop);
@@ -162,7 +162,7 @@ pub const Pipewire = struct {
             pipewire_fd,
             null,
             0,
-        ) orelse return error.pw_context_connect_fd;
+        ) orelse return error.PwContextConnectFd;
 
         _ = pw.pw_core_add_listener(self.core, &self.core_listener, &core_events, null);
 
@@ -174,7 +174,7 @@ pub const Pipewire = struct {
             pw.PW_KEY_MEDIA_ROLE,
             "Screen",
             pw.NULL,
-        )) orelse return error.pw_stream_new;
+        )) orelse return error.PwStreamNew;
 
         self.pipewire_frame_buffer_manager = try .init(self.allocator, self.vulkan);
 
@@ -273,7 +273,7 @@ pub const Pipewire = struct {
         );
 
         if (status < 0) {
-            return error.pw_stream_connect;
+            return error.PwStreamConnect;
         }
     }
 
@@ -285,7 +285,7 @@ pub const Pipewire = struct {
         defer params.deinit(self.allocator);
 
         if (params.items.len == 0) {
-            return error.pw_stream_update_params_no_formats;
+            return error.PwStreamUpdateParamsNoFormats;
         }
 
         pw.pw_thread_loop_lock(thread_loop);
@@ -293,7 +293,7 @@ pub const Pipewire = struct {
 
         const status = pw.pw_stream_update_params(stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
         if (status < 0) {
-            return error.pw_stream_update_params;
+            return error.PwStreamUpdateParams;
         }
     }
 

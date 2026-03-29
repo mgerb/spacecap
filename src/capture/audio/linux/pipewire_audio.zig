@@ -76,16 +76,16 @@ pub const PipewireAudio = struct {
         self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-audio",
             null,
-        ) orelse return error.pw_main_loop_new;
+        ) orelse return error.PwMainLoopNew;
         errdefer pw.pw_thread_loop_destroy(self.thread_loop);
 
         if (pw.pw_thread_loop_start(self.thread_loop) < 0) {
-            return error.pw_thread_loop_start;
+            return error.PwThreadLoopStart;
         }
     }
 
     pub fn update_selected_devices(self: *Self, selected_devices: []const SelectedAudioDevice) !void {
-        const thread_loop = self.thread_loop orelse return error.pw_thread_loop_not_initialized;
+        const thread_loop = self.thread_loop orelse return error.PwThreadLoopNotInitialized;
 
         pw.pw_thread_loop_lock(thread_loop);
         defer pw.pw_thread_loop_unlock(thread_loop);
@@ -129,7 +129,7 @@ pub const PipewireAudio = struct {
             pw.PW_KEY_MEDIA_ROLE,
             "Music",
             pw.NULL,
-        ) orelse return error.pw_properties_new;
+        ) orelse return error.PwPropertiesNew;
         if (selected_device.device_type == .sink) {
             _ = pw.pw_properties_set(props, pw.PW_KEY_STREAM_CAPTURE_SINK, "true");
         }
@@ -153,7 +153,7 @@ pub const PipewireAudio = struct {
             props,
             &stream_events,
             stream_data,
-        ) orelse return error.pw_stream_new;
+        ) orelse return error.PwStreamNew;
         errdefer {
             if (stream_data.stream) |stream| {
                 _ = pw.pw_stream_disconnect(stream);
@@ -349,7 +349,7 @@ pub const PipewireAudio = struct {
                 "i",
                 @as(i32, CHANNELS),
             },
-        ) orelse return error.pw_format_build;
+        ) orelse return error.PwFormatBuild;
 
         // Metadata is required to get the buffer timestamp.
         var meta_buffer = std.mem.zeroes([512]u8);
@@ -369,7 +369,7 @@ pub const PipewireAudio = struct {
                 "i",
                 @as(i32, @intCast(@sizeOf(pw.spa_meta_header))),
             },
-        ) orelse return error.pw_meta_build;
+        ) orelse return error.PwMetaBuild;
 
         var params = [_]*pw.struct_spa_pod{
             @ptrCast(@alignCast(format)),
@@ -387,7 +387,7 @@ pub const PipewireAudio = struct {
             @intCast(params.len),
         );
         if (status < 0) {
-            return error.pw_stream_connect;
+            return error.PwStreamConnect;
         }
     }
 };
