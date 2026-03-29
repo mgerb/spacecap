@@ -2,15 +2,15 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const Actor = @import("../actor.zig").Actor;
-const ActionPayload = @import("../actor.zig").ActionPayload;
+const Actor = @import("./actor.zig").Actor;
+const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
-const AudioReplayBuffer = @import("../capture/audio/audio_replay_buffer.zig");
-const Actions = @import("../actor.zig").Actions;
+const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
+const Actions = @import("./actor.zig").Actions;
 
 const log = std.log.scoped(.audio_state);
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 const c = @import("imguiz").imguiz;
-const Actor = @import("../actor.zig").Actor;
+const Actor = @import("../state/actor.zig").Actor;
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;

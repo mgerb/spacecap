@@ -1,8 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
-const checkErr = @import("./ffmpeg.zig").check_err;
+const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
+const checkErr = @import("../ffmpeg.zig").check_err;
 
 pub const EncodedAudioPacketNode = struct {
     data: [*c]const ffmpeg.AVPacket,

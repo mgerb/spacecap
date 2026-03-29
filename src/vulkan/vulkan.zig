@@ -4,11 +4,11 @@ const assert = std.debug.assert;
 const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const util = @import("../util.zig");
-const Encoder = @import("./video_encoder.zig").VideoEncoder;
-const EncodeResult = @import("./video_encoder.zig").EncodeResult;
+const VulkanVideoEncoder = @import("../video/vulkan_video_encoder.zig").VulkanVideoEncoder;
+const EncodeResult = @import("../video/vulkan_video_encoder.zig").EncodeResult;
 const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
-const CapturePreviewTexture = @import("./capture_preview_texture.zig").CapturePreviewTexture;
+const VulkanCapturePreviewTexture = @import("./vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const rc = @import("zigrc");
 const Mutex = @import("../mutex.zig").Mutex;
 
@@ -102,13 +102,13 @@ pub const Vulkan = struct {
     props: vk.PhysicalDeviceProperties,
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
-    video_encoder: ?*Encoder = null,
+    video_encoder: ?*VulkanVideoEncoder = null,
     /// Ring buffer that holds the preview images that are rendered on the UI.
     capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
     /// We need to create textures to render the capture preview.
     /// They will be stored here so that we don't couple the UI
     /// to the vulkan image ring buffer.
-    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, rc.Arc(CapturePreviewTexture)),
+    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, rc.Arc(VulkanCapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
     /// in which the encoded can grab from.
     capture_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
@@ -267,7 +267,7 @@ pub const Vulkan = struct {
             return error.VideoNotSupported;
         }
 
-        self.video_encoder = try Encoder.init(
+        self.video_encoder = try VulkanVideoEncoder.init(
             self.allocator,
             self,
             width,
@@ -284,13 +284,13 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(CapturePreviewTexture) {
+    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(VulkanCapturePreviewTexture) {
         if (self.capture_preview_textures.get(vulkan_image_buffer)) |capture_preview_texture| {
             return capture_preview_texture.retain();
         } else {
-            const capture_preview_texture = try rc.Arc(CapturePreviewTexture).init(
+            const capture_preview_texture = try rc.Arc(VulkanCapturePreviewTexture).init(
                 self.allocator,
-                try CapturePreviewTexture.init(self, vulkan_image_buffer.image_view),
+                try VulkanCapturePreviewTexture.init(self, vulkan_image_buffer.image_view),
             );
             errdefer if (capture_preview_texture.releaseUnwrap()) |*val| {
                 @constCast(val).deinit();

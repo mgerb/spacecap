@@ -2,10 +2,10 @@ const std = @import("std");
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
-const UserSettingsState = @import("./state/user_settings_state.zig").UserSettingsState;
-const AudioDeviceType = @import("./capture/audio/audio_capture.zig").AudioDeviceType;
-const AudioState = @import("./state/audio_state.zig").AudioState;
+const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
+const UserSettingsState = @import("./user_settings_state.zig").UserSettingsState;
+const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
+const AudioState = @import("./audio_state.zig").AudioState;
 
 // TODO: add audio size
 const ReplayBufferViewModel = struct {

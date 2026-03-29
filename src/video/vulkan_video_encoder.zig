@@ -1,11 +1,11 @@
 const vk = @import("vulkan");
 const std = @import("std");
-const Device = @import("./vulkan.zig").Device;
-const Instance = @import("./vulkan.zig").Instance;
-const Vulkan = @import("./vulkan.zig").Vulkan;
-const Queue = @import("./vulkan.zig").Queue;
+const Device = @import("../vulkan/vulkan.zig").Device;
+const Instance = @import("../vulkan/vulkan.zig").Instance;
+const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
+const Queue = @import("../vulkan/vulkan.zig").Queue;
 const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
-const h264_parameters = @import("./h264_parameters.zig");
+const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
 const types = @import("../types.zig");
 
 const Display = u32;
@@ -15,17 +15,12 @@ pub const EncodeResult = struct {
     idr: bool,
 };
 
-const EncodeData = struct {
-    data: [*]u8,
-    size: usize,
-};
-
 const PushConstants = extern struct {
     input_width: u32,
     input_height: u32,
 };
 
-pub const VideoEncoder = struct {
+pub const VulkanVideoEncoder = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -461,9 +456,9 @@ pub const VideoEncoder = struct {
     }
 
     fn create_video_session_parameters(self: *Self) !void {
-        self.vui = h264_parameters.get_std_video_h264_sequence_parameter_set_vui(self.fps);
-        self.sps = h264_parameters.get_std_video_h264_sequence_parameter_set(self.width, self.height, &self.vui.?);
-        self.pps = h264_parameters.get_std_video_h264_picture_parameter_set();
+        self.vui = vulkan_h264_parameters.get_std_video_h264_sequence_parameter_set_vui(self.fps);
+        self.sps = vulkan_h264_parameters.get_std_video_h264_sequence_parameter_set(self.width, self.height, &self.vui.?);
+        self.pps = vulkan_h264_parameters.get_std_video_h264_picture_parameter_set();
 
         var encode_h264_session_parameters_add_info = std.mem.zeroes(vk.VideoEncodeH264SessionParametersAddInfoKHR);
         encode_h264_session_parameters_add_info.s_type = .video_encode_h264_session_parameters_add_info_khr;
@@ -1186,8 +1181,8 @@ pub const VideoEncoder = struct {
             .base_array_layer = 0,
         };
 
-        var frame_info = h264_parameters.FrameInfo{};
-        h264_parameters.FrameInfo.init(
+        var frame_info = vulkan_h264_parameters.FrameInfo{};
+        vulkan_h264_parameters.FrameInfo.init(
             &frame_info,
             gop_frame_count,
             self.sps.?,
@@ -1249,10 +1244,10 @@ pub const VideoEncoder = struct {
         frame_time_ns: i128,
     ) !void {
         const data = try self.get_output_video_packet();
-        try video_replay_buffer.add_frame(data.data[0..data.size], frame_time_ns, encode_result.idr);
+        try video_replay_buffer.add_frame(data, frame_time_ns, encode_result.idr);
     }
 
-    fn get_output_video_packet(self: *Self) !EncodeData {
+    fn get_output_video_packet(self: *Self) ![]const u8 {
         defer {
             if (self.compute_command_buffer) |compute_command_buffer| {
                 self.vulkan.device.freeCommandBuffers(self.graphics_command_pool.?, 1, @ptrCast(&compute_command_buffer));
@@ -1315,10 +1310,7 @@ pub const VideoEncoder = struct {
             @ptrFromInt(@intFromPtr(self.bit_stream_data.?) + encode_result.bitstream_start_offset),
         );
 
-        return .{
-            .data = @ptrCast(data),
-            .size = encode_result.bitstream_size,
-        };
+        return data[0..encode_result.bitstream_size];
     }
 
     fn destroy_encode_finished_fence(self: *Self) void {

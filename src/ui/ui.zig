@@ -6,8 +6,8 @@ const rc = @import("zigrc");
 const util = @import("../util.zig");
 const sdl = @import("./sdl.zig");
 
-const CapturePreviewTexture = @import("../vulkan/capture_preview_texture.zig").CapturePreviewTexture;
-const Actor = @import("../actor.zig").Actor;
+const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
+const Actor = @import("../state/actor.zig").Actor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
@@ -314,7 +314,7 @@ pub const UI = struct {
 
             {
                 var capture_preview_buffer: ?rc.Arc(*VulkanImageBuffer) = null;
-                var capture_preview_texture: ?rc.Arc(CapturePreviewTexture) = null;
+                var capture_preview_texture: ?rc.Arc(VulkanCapturePreviewTexture) = null;
                 // Hold onto the buffer until draw/render/present is done.
                 defer {
                     if (capture_preview_buffer) |buffer| {

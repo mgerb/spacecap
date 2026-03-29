@@ -4,7 +4,7 @@ const imguiz = @import("imguiz").imguiz;
 
 /// Stores the texture required for rendering the capture preview
 /// on the IMGUI UI.
-pub const CapturePreviewTexture = struct {
+pub const VulkanCapturePreviewTexture = struct {
     const Self = @This();
     vulkan: *Vulkan,
     sampler: vk.Sampler,

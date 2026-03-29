@@ -3,22 +3,22 @@ const assert = std.debug.assert;
 
 const vk = @import("vulkan");
 
-const Util = @import("./util.zig");
-const VideoCapture = @import("./capture/video/video_capture.zig").VideoCapture;
-const VideoCaptureError = @import("./capture/video/video_capture.zig").VideoCaptureError;
-const VideoCaptureSelection = @import("./capture/video/video_capture.zig").VideoCaptureSelection;
-const VideoCaptureSourceType = @import("./capture/video/video_capture.zig").VideoCaptureSourceType;
-const AudioCapture = @import("./capture/audio/audio_capture.zig").AudioCapture;
-const GlobalShortcuts = @import("./global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
-const BufferedChan = @import("./channel.zig").BufferedChan;
-const ChanError = @import("./channel.zig").ChanError;
-const Mutex = @import("./mutex.zig").Mutex;
+const Util = @import("../util.zig");
+const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
+const VideoCaptureError = @import("../capture/video/video_capture.zig").VideoCaptureError;
+const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
+const VideoCaptureSourceType = @import("../capture/video/video_capture.zig").VideoCaptureSourceType;
+const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
+const GlobalShortcuts = @import("../global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
+const BufferedChan = @import("../channel.zig").BufferedChan;
+const ChanError = @import("../channel.zig").ChanError;
+const Mutex = @import("../mutex.zig").Mutex;
 const State = @import("./state.zig");
-const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
-const VideoReplayBuffer = @import("./vulkan/video_replay_buffer.zig").VideoReplayBuffer;
-const exporter = @import("./exporter.zig");
-const AudioActions = @import("./state/audio_state.zig").AudioActions;
-const UserSettingsActions = @import("./state/user_settings_state.zig").UserSettingsActions;
+const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
+const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
+const exporter = @import("../exporter.zig");
+const AudioActions = @import("./audio_state.zig").AudioActions;
+const UserSettingsActions = @import("./user_settings_state.zig").UserSettingsActions;
 
 const log = std.log.scoped(.actor);
 
@@ -37,93 +37,6 @@ pub const Actions = union(enum) {
 };
 
 const ActionChan = BufferedChan(Actions, 100);
-
-const UpdateDeviceAction = ActionPayload(struct {
-    device_id: []u8,
-
-    pub fn init(
-        arena: *std.heap.ArenaAllocator,
-        args: struct { device_id: []u8 },
-    ) !@This() {
-        return .{
-            .device_id = try arena.allocator().dupe(u8, args.device_id),
-        };
-    }
-});
-
-/// A helper type for actions that require heap allocations.
-/// T must define an 'init' function with (arena, args) parameters.
-/// All allocations in the underlying struct are cleaned up by the
-/// arena in the ActionPayload parent struct.
-///
-/// e.g.
-///
-/// ```zig
-/// const UpdateDeviceAction = *ActionPayload(struct {
-///     device_id: []u8,
-///
-///    pub fn init(
-///        arena: *std.heap.ArenaAllocator,
-///        args: struct { device_id: []u8 },
-///     ) !@This() {
-///         return .{
-///             .device_id = try arena.allocator().dupe(u8, args.device_id),
-///         };
-///     }
-/// });
-///
-/// // Usage looks like this.
-/// const action: *UpdateDeviceAction = try .init(allocator, .{ .device_id = &.{} });
-/// defer action.deinit();
-/// const id = action.payload.device_id;
-/// ...
-/// ```
-pub fn ActionPayload(T: anytype) type {
-    const init_fn_type_info = @typeInfo(@TypeOf(@field(T, "init")));
-    const init_fn = init_fn_type_info.@"fn";
-
-    const compiler_error = "ActionPayload requires T.init(arena: *std.heap.ArenaAllocator, args: <anystruct>) with exactly 2 parameters where args is of type struct.";
-
-    if (!@hasDecl(T, "init") or init_fn_type_info != .@"fn") {
-        @compileError(@typeName(T) ++ " must contain an 'init' function.");
-    }
-
-    if (init_fn.params.len != 2 or @typeInfo(init_fn.params[1].type.?) != .@"struct") {
-        @compileError(compiler_error);
-    }
-
-    const first_param = @typeInfo(init_fn.params[0].type.?);
-    if (first_param != .pointer or first_param.pointer.child != std.heap.ArenaAllocator) {
-        @compileError(compiler_error);
-    }
-
-    const InitArgs = init_fn.params[1].type.?;
-
-    return struct {
-        arena: *std.heap.ArenaAllocator,
-        payload: T,
-
-        pub fn init(allocator: std.mem.Allocator, args: InitArgs) !*@This() {
-            const arena = try allocator.create(std.heap.ArenaAllocator);
-            arena.* = .init(allocator);
-
-            const self = try arena.allocator().create(@This());
-            self.* = .{
-                .arena = arena,
-                .payload = try T.init(arena, args),
-            };
-
-            return self;
-        }
-
-        pub fn deinit(self: *@This()) void {
-            const arena = self.arena;
-            const allocator = self.arena.child_allocator;
-            self.arena.deinit();
-            allocator.destroy(arena);
-        }
-    };
-}
 
 /// The main application state based on the actor model.
 pub const Actor = struct {
@@ -215,6 +128,10 @@ pub const Actor = struct {
                 break;
             }
 
+            // TODO: This should probably be changed to run synchronously. If any
+            // actions require long running tasks (e.g. IO) then they should
+            // handle threads themselves. If we handle every action in a thread,
+            // then we could potentially run into out of order issues.
             const ActionThread = struct {
                 fn run(_self: *Self, _action: Actions) void {
                     _self.handle_action(_action) catch |err| {

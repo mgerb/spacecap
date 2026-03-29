@@ -6,7 +6,7 @@ const types = @import("../../../types.zig");
 const util = @import("../../../util.zig");
 const TokenStorage = @import("../../../common/linux/token_storage.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
-const Pipewire = @import("./pipewire/pipewire.zig").Pipewire;
+const PipewireVideo = @import("./pipewire/pipewire_video.zig").PipewireVideo;
 const Chan = @import("../../../channel.zig").Chan;
 const ChanError = @import("../../../channel.zig").ChanError;
 const VideoCaptureSelection = @import("../video_capture.zig").VideoCaptureSelection;
@@ -21,7 +21,7 @@ pub const LinuxPipewireDmaCapture = struct {
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
-    pipewire: ?*Pipewire = null,
+    pipewire: ?*PipewireVideo = null,
 
     pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan) !*Self {
         const self = try allocator.create(Self);
@@ -42,7 +42,7 @@ pub const LinuxPipewireDmaCapture = struct {
             self.pipewire = null;
         }
 
-        self.pipewire = try Pipewire.init(
+        self.pipewire = try PipewireVideo.init(
             self.allocator,
             self.vulkan,
         );

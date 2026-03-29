@@ -1,12 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const AudioCaptureData = @import("./audio_capture_data.zig");
+const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioMixer = @import("./audio_mixer.zig").AudioMixer;
-const AudioEncoder = @import("../../audio_encoder.zig").AudioEncoder;
-const EncodedAudioPacketNode = @import("../../audio_encoder.zig").EncodedAudioPacketNode;
-const deinitPacketList = @import("../../audio_encoder.zig").deinit_packet_list;
-const ffmpeg = @import("../../ffmpeg.zig").ffmpeg;
+const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
+const EncodedAudioPacketNode = @import("./audio_encoder.zig").EncodedAudioPacketNode;
+const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
+const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
 
 /// Pending per-device PCM chunk that has not yet been fully mixed into the
 /// finalized audio timeline.
