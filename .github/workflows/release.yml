@@ -75,7 +75,7 @@ jobs:
       - name: Resolve Built Version
         id: built_version
         run: |
-          release_version="$(./zig-out/linux/spacecap --version | sed 's/^spacecap //')"
+          release_version="$(./zig-out/linux/spacecap --version)"
           if [ -z "$release_version" ]; then
             echo "Failed to read version from built binary" >&2
             exit 1
