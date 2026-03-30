@@ -86,9 +86,35 @@ pub const Actor = struct {
 
         try self.thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
-        try self.dispatch(.{ .audio = .get_available_audio_devices });
-        try self.dispatch(.{ .audio = .start_capture_thread });
-        try self.dispatch(.restore_capture_session);
+        const audio_device_thread = try std.Thread.spawn(.{}, struct {
+            fn run(_self: *Self) void {
+                _self.handle_action(.{ .audio = .get_available_audio_devices }) catch |err| {
+                    log.err("audio_device_thread audio.get_available_audio_devices error: {}\n", .{err});
+                };
+            }
+        }.run, .{self});
+        const capture_init_thread = try std.Thread.spawn(.{}, struct {
+            fn run(_self: *Self) void {
+                _self.handle_action(.{ .audio = .start_capture_thread }) catch |err| {
+                    log.err("capture_init_thread audio.start_capture_thread error: {}\n", .{err});
+                };
+                _self.handle_action(.restore_capture_session) catch |err| {
+                    log.err("capture_init_thread restore_capture_session error: {}\n", .{err});
+                };
+            }
+        }.run, .{self});
+
+        _ = try std.Thread.spawn(.{}, struct {
+            fn run(_self: *Self, t1: std.Thread, t2: std.Thread) void {
+                t1.join();
+                t2.join();
+                if (_self.state.user_settings.settings.start_replay_buffer_on_startup) {
+                    _self.start_record() catch |err| {
+                        log.err("{}", .{err});
+                    };
+                }
+            }
+        }.run, .{ self, audio_device_thread, capture_init_thread });
 
         return self;
     }
@@ -227,10 +253,8 @@ pub const Actor = struct {
                 if (!try self.video_capture.should_restore_capture_session()) {
                     return;
                 }
-
-                if (try self.select_video_source(.restore_session) and self.state.user_settings.settings.start_replay_buffer_on_startup) {
-                    try self.start_record();
-                }
+                log.debug("Restoring capture session.", .{});
+                _ = try self.select_video_source(.restore_session);
             },
             .show_demo => {
                 self.ui_mutex.lock();
