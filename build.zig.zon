@@ -103,8 +103,8 @@
             .hash = "sdl-0.0.0-i4QD0WN-qQB1RKdRC9-6iZyTco2jIIr3y2DFrAz-D9CH",
         },
         .pipewire = .{
-            .url = "git+https://github.com/mgerb/pipewire#4f0f337aca61b127d0c7f800110b8513fbe85dd5",
-            .hash = "pipewire-1.5.81-tKslQ3HyEgAxlVc9B_fwqHtJBsNMrQxQ1zQYZ_vMlBUt",
+            .url = "https://github.com/mgerb/pipewire/archive/refs/heads/dev.tar.gz",
+            .hash = "pipewire-1.6.2-tKslQ3LyEgC050NwrrKyjJjEXbO-M_CvmyVMu3FLLoJd",
         },
         .clap = .{
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
