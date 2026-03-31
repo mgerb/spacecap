@@ -13,6 +13,7 @@ pub const UserSettingsActions = union(enum) {
     set_replay_seconds: u32,
     set_gui_foreground_fps: u32,
     set_gui_background_fps: u32,
+    set_start_replay_buffer_on_startup: bool,
     set_audio_device_settings: *ActionPayload(struct {
         device_id: []u8,
         selected: bool,
@@ -70,6 +71,9 @@ pub const UserSettingsState = struct {
                     },
                     .set_gui_background_fps => |gui_background_fps| {
                         try self.set_state(actor, "gui_background_fps", gui_background_fps);
+                    },
+                    .set_start_replay_buffer_on_startup => |start_replay_buffer_on_startup| {
+                        try self.set_state(actor, "start_replay_buffer_on_startup", start_replay_buffer_on_startup);
                     },
                     .set_audio_device_settings => |_action| {
                         defer _action.deinit();
@@ -145,13 +149,8 @@ pub const UserSettingsState = struct {
         });
         defer parsed.deinit();
 
-        var loaded: UserSettings = .{
-            .capture_fps = parsed.value.capture_fps,
-            .capture_bit_rate = parsed.value.capture_bit_rate,
-            .replay_seconds = parsed.value.replay_seconds,
-            .gui_foreground_fps = parsed.value.gui_foreground_fps,
-            .gui_background_fps = parsed.value.gui_background_fps,
-        };
+        var loaded = parsed.value;
+        loaded.audio_devices = .{};
         errdefer loaded.deinit(self.allocator);
 
         var iter = parsed.value.audio_devices.map.iterator();
@@ -202,6 +201,7 @@ const UserSettings = struct {
     /// In bits per second (bps).
     capture_bit_rate: u64 = 10_000_000,
     replay_seconds: u32 = 30,
+    start_replay_buffer_on_startup: bool = false,
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     fn deinit(self: *@This(), allocator: Allocator) void {
@@ -244,13 +244,8 @@ const UserSettings = struct {
 
     /// Deep copy user settings.
     fn clone(self: @This(), allocator: Allocator) !@This() {
-        var settings_copy: @This() = .{
-            .capture_fps = self.capture_fps,
-            .capture_bit_rate = self.capture_bit_rate,
-            .replay_seconds = self.replay_seconds,
-            .gui_foreground_fps = self.gui_foreground_fps,
-            .gui_background_fps = self.gui_background_fps,
-        };
+        var settings_copy = self;
+        settings_copy.audio_devices = .{};
         errdefer settings_copy.deinit(allocator);
 
         var iter = self.audio_devices.map.iterator();

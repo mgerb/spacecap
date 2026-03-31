@@ -191,6 +191,18 @@ pub const AudioTimeline = struct {
         };
     }
 
+    /// Export alignment sometimes needs a window that begins before the first
+    /// captured audio sample. Keep that offset negative so muxing preserves the
+    /// initial gap instead of shifting audio earlier to time zero. This can occur
+    /// if audio capture starts late upon app startup.
+    pub fn get_unclamped_sample_window(self: *Self, start_time_ns: i128, end_time_ns: i128) ?SampleWindow {
+        if (self.timeline_origin_ns == null) return null;
+        return .{
+            .start_sample = self.timestamp_to_sample_floor_unclamped(start_time_ns),
+            .end_sample = self.timestamp_to_sample_ceil_unclamped(end_time_ns),
+        };
+    }
+
     fn process_ready_timeline(self: *Self, flush_all: bool) !void {
         assert(self.timeline_origin_ns != null);
 
@@ -269,22 +281,26 @@ pub const AudioTimeline = struct {
 
     /// Floor is used for starts so a chunk never begins after its true time.
     fn timestamp_to_sample_floor(self: *Self, timestamp_ns: i128) i64 {
+        return @max(self.timestamp_to_sample_floor_unclamped(timestamp_ns), 0);
+    }
+
+    fn timestamp_to_sample_floor_unclamped(self: *Self, timestamp_ns: i128) i64 {
         assert(self.timeline_origin_ns != null);
         const delta_ns = timestamp_ns - self.timeline_origin_ns.?;
-        const sample: i64 = @intCast(@divFloor(delta_ns * self.sample_rate, std.time.ns_per_s));
-        return @max(sample, 0);
+        return @intCast(@divFloor(delta_ns * self.sample_rate, std.time.ns_per_s));
     }
 
     /// Ceil is used for ends so the requested window fully covers the desired
     /// duration even when timestamps fall between exact sample boundaries.
     fn timestamp_to_sample_ceil(self: *Self, timestamp_ns: i128) i64 {
+        return @max(self.timestamp_to_sample_ceil_unclamped(timestamp_ns), 0);
+    }
+
+    fn timestamp_to_sample_ceil_unclamped(self: *Self, timestamp_ns: i128) i64 {
         assert(self.timeline_origin_ns != null);
         const delta_ns = timestamp_ns - self.timeline_origin_ns.?;
-        if (delta_ns <= 0) {
-            return 0;
-        }
         const numerator = delta_ns * self.sample_rate;
-        const sample = @divFloor(numerator + std.time.ns_per_s - 1, std.time.ns_per_s);
+        const sample = -@divFloor(-numerator, std.time.ns_per_s);
         return @intCast(sample);
     }
 };
@@ -318,6 +334,23 @@ test "timestampToSampleCeil" {
     try std.testing.expectEqual(48_000, timeline.timestamp_to_sample_ceil(start_ns + std.time.ns_per_s - 1));
     try std.testing.expectEqual(1, timeline.timestamp_to_sample_ceil(start_ns + 20_833));
     try std.testing.expectEqual(2, timeline.timestamp_to_sample_ceil(start_ns + 20_834));
+}
+
+test "getUnclampedSampleWindow preserves leading offset before first audio sample" {
+    const allocator = std.testing.allocator;
+    var timeline = try AudioTimeline.init(allocator, 48_000, 2);
+    defer timeline.deinit();
+
+    const origin_ns: i128 = 2 * std.time.ns_per_s;
+    timeline.timeline_origin_ns = origin_ns;
+
+    const window = timeline.get_unclamped_sample_window(
+        origin_ns - std.time.ns_per_s,
+        origin_ns + std.time.ns_per_s,
+    ) orelse return error.ExpectedSampleWindow;
+
+    try std.testing.expectEqual(-48_000, window.start_sample);
+    try std.testing.expectEqual(48_000, window.end_sample);
 }
 
 test "addData smooths small timestamp jitter between chunks" {

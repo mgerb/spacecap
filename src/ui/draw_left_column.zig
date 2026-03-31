@@ -455,4 +455,12 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_TextDisabled("Duration: %s", replay_duration_label.ptr);
         c.ImGui_PopTextWrapPos();
     }
+
+    c.ImGui_Text("Start replay buffer on startup");
+    var start_replay_buffer_on_startup = actor.state.user_settings.settings.start_replay_buffer_on_startup;
+    if (c.ImGui_Checkbox("##start_replay_buffer_on_startup", &start_replay_buffer_on_startup)) {
+        try actor.dispatch(.{ .user_settings = .{
+            .set_start_replay_buffer_on_startup = start_replay_buffer_on_startup,
+        } });
+    }
 }
