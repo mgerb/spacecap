@@ -193,7 +193,6 @@ pub const PipewireAudio = struct {
             raw_metadata_pts_ns = @intCast(metadata.pts);
         }
 
-        const raw_pwb_time_ns: i128 = @intCast(pwb.*.time);
         const raw_stream_nsec_ns: i128 = @intCast(pw.pw_stream_get_nsec(stream));
 
         const data_ptr = buffer.*.datas[0].data orelse {
@@ -228,7 +227,6 @@ pub const PipewireAudio = struct {
         const timestamp_ns = select_best_timestamp(
             stream_data,
             raw_metadata_pts_ns,
-            raw_pwb_time_ns,
             raw_stream_nsec_ns,
         );
 
@@ -262,7 +260,6 @@ pub const PipewireAudio = struct {
     fn select_best_timestamp(
         stream_data: *AudioStream,
         raw_metadata_pts_ns: i128,
-        raw_pwb_time_ns: i128,
         raw_stream_nsec_ns: i128,
     ) i128 {
         var timestamp_ns: i128 = std.time.nanoTimestamp();
@@ -270,10 +267,6 @@ pub const PipewireAudio = struct {
         if (raw_metadata_pts_ns > 0) {
             timestamp_ns = raw_metadata_pts_ns;
             source = .meta_pts;
-        }
-        if (raw_pwb_time_ns > 0) {
-            timestamp_ns = raw_pwb_time_ns;
-            source = .pwb_time;
         }
         if (raw_stream_nsec_ns > 0) {
             timestamp_ns = raw_stream_nsec_ns;
