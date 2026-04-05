@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const DEBUG = @import("builtin").mode == .Debug;
+
 pub fn is_windows() bool {
     return @import("builtin").os.tag == .windows;
 }

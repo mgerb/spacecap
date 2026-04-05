@@ -137,9 +137,11 @@ pub const Actor = struct {
 
         const thread_2 = try std.Thread.spawn(.{}, struct {
             fn run(_self: *Self) void {
-                _self.handle_action(.restore_capture_session) catch |err| {
-                    log.err("[capture_startup] restore_capture_session error: {}\n", .{err});
-                };
+                if (_self.state.user_settings.settings.restore_capture_source_on_startup) {
+                    _self.handle_action(.restore_capture_session) catch |err| {
+                        log.err("[capture_startup] restore_capture_session error: {}\n", .{err});
+                    };
+                }
             }
         }.run, .{self});
         errdefer thread_2.join();
@@ -149,7 +151,9 @@ pub const Actor = struct {
             fn run(_self: *Self, t1: std.Thread, t2: std.Thread) void {
                 t1.join();
                 t2.join();
-                if (_self.state.user_settings.settings.start_replay_buffer_on_startup) {
+                if (_self.state.user_settings.settings.restore_capture_source_on_startup and
+                    _self.state.user_settings.settings.start_replay_buffer_on_startup)
+                {
                     _self.start_record() catch |err| {
                         log.err("[capture_startup] start_record error: {}", .{err});
                     };

@@ -346,10 +346,12 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
             // c.ImGui_SameLineEx(0, spacing);
             // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
 
-            c.ImGui_SeparatorText("IMGUI Debug");
+            if (util.DEBUG) {
+                c.ImGui_SeparatorText("IMGUI Debug");
 
-            if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                try actor.dispatch(.show_demo);
+                if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                    try actor.dispatch(.show_demo);
+                }
             }
         }
     }
@@ -456,11 +458,27 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_PopTextWrapPos();
     }
 
-    c.ImGui_Text("Start replay buffer on startup");
-    var start_replay_buffer_on_startup = actor.state.user_settings.settings.start_replay_buffer_on_startup;
-    if (c.ImGui_Checkbox("##start_replay_buffer_on_startup", &start_replay_buffer_on_startup)) {
+    c.ImGui_Text("Restore capture source on startup");
+    c.ImGui_SameLine();
+    imgui_util.help_marker("Try to restore the last capture source when Spacecap starts.");
+    var restore_capture_source_on_startup = actor.state.user_settings.settings.restore_capture_source_on_startup;
+    if (c.ImGui_Checkbox("##restore_capture_source_on_startup", &restore_capture_source_on_startup)) {
         try actor.dispatch(.{ .user_settings = .{
-            .set_start_replay_buffer_on_startup = start_replay_buffer_on_startup,
+            .set_restore_capture_source_on_startup = restore_capture_source_on_startup,
         } });
+    }
+
+    {
+        c.ImGui_Text("Start replay buffer on startup");
+        c.ImGui_SameLine();
+        imgui_util.help_marker("Start the replay buffer when Spacecap starts. Requires 'Restore capture source on startup'.");
+        c.ImGui_BeginDisabled(!actor.state.user_settings.settings.restore_capture_source_on_startup);
+        defer c.ImGui_EndDisabled();
+        var start_replay_buffer_on_startup = actor.state.user_settings.settings.start_replay_buffer_on_startup;
+        if (c.ImGui_Checkbox("##start_replay_buffer_on_startup", &start_replay_buffer_on_startup)) {
+            try actor.dispatch(.{ .user_settings = .{
+                .set_start_replay_buffer_on_startup = start_replay_buffer_on_startup,
+            } });
+        }
     }
 }
