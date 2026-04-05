@@ -458,8 +458,11 @@ pub const UI = struct {
             self.vulkan.device.cmdBeginRenderPass(@enumFromInt(@intFromPtr(fd.CommandBuffer)), @ptrCast(&info), .@"inline");
         }
 
-        // Record dear imgui primitives into command buffer
-        c.cImGui_ImplVulkan_RenderDrawData(draw_data, fd.CommandBuffer);
+        {
+            self.vulkan.graphics_queue.mutex.lock();
+            defer self.vulkan.graphics_queue.mutex.unlock();
+            c.cImGui_ImplVulkan_RenderDrawData(draw_data, fd.CommandBuffer);
+        }
 
         // Submit command buffer
         self.vulkan.device.cmdEndRenderPass(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
@@ -552,17 +555,21 @@ pub const UI = struct {
             return error.SDLGetWindowSizeInPixelsFailure;
         }
 
-        c.cImGui_ImplVulkanH_CreateOrResizeWindow(
-            self.vk_instance(),
-            self.vk_physical_device(),
-            self.vk_device(),
-            &self.vulkan.window.?,
-            self.vulkan.graphics_queue.family,
-            null,
-            fb_width,
-            fb_height,
-            MIN_IMAGE_COUNT,
-        );
+        {
+            self.vulkan.graphics_queue.mutex.lock();
+            defer self.vulkan.graphics_queue.mutex.unlock();
+            c.cImGui_ImplVulkanH_CreateOrResizeWindow(
+                self.vk_instance(),
+                self.vk_physical_device(),
+                self.vk_device(),
+                &self.vulkan.window.?,
+                self.vulkan.graphics_queue.family,
+                null,
+                fb_width,
+                fb_height,
+                MIN_IMAGE_COUNT,
+            );
+        }
     }
 
     fn loader(name: [*c]const u8, instance: ?*anyopaque) callconv(.c) ?*const fn () callconv(.c) void {
