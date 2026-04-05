@@ -1013,15 +1013,23 @@ pub const VulkanVideoEncoder = struct {
 
         try self.vulkan.device.endCommandBuffer(self.compute_command_buffer.?);
 
-        const dst_stage_masks: [2]vk.PipelineStageFlags = .{ .{ .all_commands_bit = true }, .{ .all_commands_bit = true } };
         const signal_semaphores: [1]vk.Semaphore = .{self.inter_queue_semaphore1};
+        var wait_semaphores: [2]vk.Semaphore = undefined;
+        var wait_stage_masks: [2]vk.PipelineStageFlags = undefined;
+        var wait_count: usize = 0;
 
-        var wait_semaphores = try std.ArrayList(vk.Semaphore).initCapacity(self.allocator, 0);
-        defer wait_semaphores.deinit(self.allocator);
-        try wait_semaphores.append(self.allocator, self.inter_queue_semaphore2);
+        if (self.frame_count != 0) {
+            wait_semaphores[wait_count] = self.inter_queue_semaphore2;
+            wait_stage_masks[wait_count] = .{ .all_commands_bit = true };
+            wait_count += 1;
+        }
 
+        // Make sure we wait on any external wait semaphores even when the
+        // frame_count is 0.
         if (self.external_wait_semaphore) |external_wait_semaphore| {
-            try wait_semaphores.append(self.allocator, external_wait_semaphore);
+            wait_semaphores[wait_count] = external_wait_semaphore;
+            wait_stage_masks[wait_count] = .{ .all_commands_bit = true };
+            wait_count += 1;
         }
 
         var submit_info = vk.SubmitInfo{
@@ -1031,10 +1039,10 @@ pub const VulkanVideoEncoder = struct {
             .p_signal_semaphores = &signal_semaphores,
         };
 
-        if (self.frame_count != 0) {
-            submit_info.wait_semaphore_count = @intCast(wait_semaphores.items.len);
-            submit_info.p_wait_semaphores = wait_semaphores.items.ptr;
-            submit_info.p_wait_dst_stage_mask = &dst_stage_masks;
+        if (wait_count > 0) {
+            submit_info.wait_semaphore_count = @intCast(wait_count);
+            submit_info.p_wait_semaphores = wait_semaphores[0..wait_count].ptr;
+            submit_info.p_wait_dst_stage_mask = wait_stage_masks[0..wait_count].ptr;
         }
 
         try self.vulkan.queue_submit(.graphics, &.{submit_info}, .{ .fence = self.compute_finished_fence });
@@ -1052,9 +1060,7 @@ pub const VulkanVideoEncoder = struct {
             .width = sanitized_width,
             .height = sanitized_height,
         };
-        if (opts.external_wait_semaphore) |external_wait_semaphore| {
-            self.update_external_wait_semaphores(external_wait_semaphore);
-        }
+        self.update_external_wait_semaphores(opts.external_wait_semaphore);
         try self.update_images(
             opts.image,
             opts.image_view,
