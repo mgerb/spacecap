@@ -154,7 +154,7 @@ pub const Actor = struct {
                 if (_self.state.user_settings.settings.restore_capture_source_on_startup and
                     _self.state.user_settings.settings.start_replay_buffer_on_startup)
                 {
-                    _self.start_record() catch |err| {
+                    _self.handle_action(.start_record) catch |err| {
                         log.err("[capture_startup] start_record error: {}", .{err});
                     };
                 }
@@ -460,7 +460,7 @@ pub const Actor = struct {
             );
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            self.state.replay_buffer.size = video_replay_buffer.size;
+            self.state.replay_buffer.video_size = video_replay_buffer.size;
             self.state.replay_buffer.seconds = video_replay_buffer.get_seconds();
         }
     }

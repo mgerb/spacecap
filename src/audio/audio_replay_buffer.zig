@@ -120,6 +120,28 @@ fn replay_retention_samples(self: *Self) i64 {
     return self.replay_seconds * SAMPLE_RATE;
 }
 
+const TestUtil = struct {
+    fn create_audio_capture_data(
+        allocator: Allocator,
+        timestamp_ns: i128,
+        samples_per_channel: usize,
+        value: f32,
+    ) !*AudioCaptureData {
+        const pcm = try allocator.alloc(f32, samples_per_channel * CHANNELS);
+        defer allocator.free(pcm);
+        @memset(pcm, value);
+
+        return AudioCaptureData.init(
+            allocator,
+            "speaker",
+            pcm,
+            timestamp_ns,
+            SAMPLE_RATE,
+            CHANNELS,
+        );
+    }
+};
+
 test "addData - encodes audio before export and exposes packet timing" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 48_000;
@@ -186,4 +208,29 @@ test "trimPackets - drops encoded packets outside replay window" {
     var iter = replay_buffer.packet_iterator();
     const first_packet = iter.next() orelse return error.ExpectedEncodedPacket;
     try std.testing.expect(first_packet.data.*.pts + first_packet.data.*.duration > expected_min_start);
+}
+
+test "size tracks encoded packet bytes as audio is added and trimmed" {
+    const allocator = std.testing.allocator;
+    const samples_per_chunk: usize = 48_000;
+    const base_ns: i128 = 3 * std.time.ns_per_s;
+    const trimmed_replay_seconds: u32 = 1;
+
+    var replay_buffer = try Self.init(allocator, 10);
+    defer replay_buffer.deinit();
+
+    const first_chunk = try TestUtil.create_audio_capture_data(allocator, base_ns, samples_per_chunk, 0.1);
+    try replay_buffer.add_data(first_chunk);
+    try std.testing.expectEqual(18_222, replay_buffer.size);
+    try std.testing.expectEqual(45, replay_buffer.len);
+
+    const second_chunk = try TestUtil.create_audio_capture_data(allocator, base_ns + std.time.ns_per_s, samples_per_chunk, 0.2);
+    try replay_buffer.add_data(second_chunk);
+    try replay_buffer.finalize();
+    try std.testing.expectEqual(49_401, replay_buffer.size);
+    try std.testing.expectEqual(98, replay_buffer.len);
+
+    replay_buffer.set_replay_seconds(trimmed_replay_seconds);
+    try std.testing.expectEqual(28_779, replay_buffer.size);
+    try std.testing.expectEqual(48, replay_buffer.len);
 }

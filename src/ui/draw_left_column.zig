@@ -39,7 +39,11 @@ fn device_type_label(device_type: AudioDeviceType) []const u8 {
 fn draw_audio_device_selector(allocator: std.mem.Allocator, actor: *Actor) !void {
     var selected_count: usize = 0;
     var first_selected_name: ?[]const u8 = null;
-    for (actor.state.audio.devices.items) |device| {
+    var locked_devices = actor.state.audio.devices.lock();
+    defer locked_devices.unlock();
+    const devices = locked_devices.unwrap();
+
+    for (devices.items) |device| {
         if (!device.selected) continue;
         selected_count += 1;
         if (first_selected_name == null) {
@@ -66,12 +70,12 @@ fn draw_audio_device_selector(allocator: std.mem.Allocator, actor: *Actor) !void
     if (c.ImGui_BeginCombo("##Audio Sources", preview_text.ptr, 0)) {
         defer c.ImGui_EndCombo();
 
-        if (actor.state.audio.devices.items.len == 0) {
+        if (devices.items.len == 0) {
             c.ImGui_Text("No audio devices found");
             return;
         }
 
-        for (actor.state.audio.devices.items) |device| {
+        for (devices.items) |device| {
             const item_label = try std.fmt.allocPrintSentinel(allocator, "[{s}] {s}{s}##audio-device-{s}", .{
                 device_type_label(device.device_type),
                 device.name,
@@ -95,13 +99,16 @@ fn draw_audio_device_selector(allocator: std.mem.Allocator, actor: *Actor) !void
 }
 
 fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: *Actor) !void {
+    var locked_devices = actor.state.audio.devices.lock();
+    defer locked_devices.unlock();
+    const devices = locked_devices.unwrap();
     var selected_total: usize = 0;
-    for (actor.state.audio.devices.items) |device| {
+    for (devices.items) |device| {
         if (device.selected) selected_total += 1;
     }
 
     var rendered_count: usize = 0;
-    for (actor.state.audio.devices.items) |device| {
+    for (devices.items) |device| {
         if (!device.selected) continue;
         rendered_count += 1;
 
@@ -261,12 +268,22 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
             c.ImGui_EndDisabled();
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
-            const replay_text = try std.fmt.allocPrintSentinel(allocator, "Time: {}s", .{actor.state.replay_buffer.seconds}, 0);
-            defer allocator.free(replay_text);
-            const size_text = try std.fmt.allocPrintSentinel(allocator, "Size: {d:.2}MB", .{actor.state.replay_buffer.size_in_mb()}, 0);
-            defer allocator.free(size_text);
-            c.ImGui_Text(replay_text);
-            c.ImGui_Text(size_text);
+            c.ImGui_Text(
+                "%ds / %.2fMB",
+                actor.state.replay_buffer.seconds,
+                actor.state.replay_buffer.size_in_mb(.total),
+            );
+            if (c.ImGui_BeginItemTooltip()) {
+                c.ImGui_Text(
+                    "Audio: %.2fMB",
+                    actor.state.replay_buffer.size_in_mb(.audio),
+                );
+                c.ImGui_Text(
+                    "Video: %.2fMB",
+                    actor.state.replay_buffer.size_in_mb(.video),
+                );
+                c.ImGui_EndTooltip();
+            }
         }
 
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {

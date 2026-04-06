@@ -38,6 +38,7 @@ pub const UserSettingsState = struct {
     const Self = @This();
 
     allocator: Allocator,
+    // TODO: Use mutex here instead of ui_mutex.
     settings: UserSettings = .{},
 
     pub fn init(allocator: Allocator) !Self {
