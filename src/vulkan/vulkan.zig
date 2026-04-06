@@ -20,8 +20,6 @@ pub const Device = vk.DeviceProxy;
 pub const CommandBuffer = vk.CommandBufferProxy;
 pub const API_VERSION = vk.API_VERSION_1_4;
 
-const DEBUG = @import("builtin").mode == .Debug;
-
 const INSTANCE_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_get_physical_device_properties_2.name,
 };
@@ -149,7 +147,7 @@ pub const Vulkan = struct {
         // enable with vkEnumerateInstanceExtensionProperties.
         // See imgui example_sdl3_vulkan for reference.
 
-        if (DEBUG) {
+        if (util.DEBUG) {
             try extension_names.append(allocator, vk.extensions.ext_debug_utils.name);
             // TODO: check if this extension is enabled
             //try extension_names.append(vk.extensions.ext_device_address_binding_report.name);
@@ -157,7 +155,7 @@ pub const Vulkan = struct {
         }
 
         const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
-        const enabled_layers: []const [*:0]const u8 = if (DEBUG) &validation_layers else &.{};
+        const enabled_layers: []const [*:0]const u8 = if (util.DEBUG) &validation_layers else &.{};
 
         const instance_def = try vkbd.createInstance(&.{
             .p_application_info = &app_info,
@@ -177,7 +175,7 @@ pub const Vulkan = struct {
 
         var debug_messenger: ?vk.DebugUtilsMessengerEXT = null;
 
-        if (DEBUG) {
+        if (util.DEBUG) {
             debug_messenger = try instance.createDebugUtilsMessengerEXT(&.{
                 .message_severity = .{
                     .error_bit_ext = true,
