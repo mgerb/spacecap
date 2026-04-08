@@ -7,13 +7,21 @@ const UserSettingsState = @import("./user_settings_state.zig").UserSettingsState
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const AudioState = @import("./audio_state.zig").AudioState;
 
-// TODO: add audio size
 const ReplayBufferViewModel = struct {
-    size: u64 = 0,
+    video_size: u64 = 0,
+    audio_size: u64 = 0,
     seconds: u64 = 0,
 
-    pub fn size_in_mb(self: *const @This()) f64 {
-        const mb = @as(f64, @floatFromInt(self.size)) / (1024.0 * 1024.0);
+    pub fn size_in_mb(self: *const @This(), size_type: enum { total, audio, video }) f64 {
+        return switch (size_type) {
+            .total => _size_in_mb(self.audio_size + self.video_size),
+            .audio => _size_in_mb(self.audio_size),
+            .video => _size_in_mb(self.video_size),
+        };
+    }
+
+    fn _size_in_mb(size: u64) f64 {
+        const mb = @as(f64, @floatFromInt(size)) / (1024.0 * 1024.0);
         return mb;
     }
 };

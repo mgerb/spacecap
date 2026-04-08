@@ -45,7 +45,7 @@ pub const AudioState = struct {
     audio_capture: *AudioCapture,
     // TODO: Convert devices to a ArrayHashMap.
     /// This is a list of all currently available audio devices.
-    devices: std.ArrayList(AudioDeviceViewModel),
+    devices: Mutex(std.ArrayList(AudioDeviceViewModel)),
     audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
     capture_thread: ?std.Thread = null,
 
@@ -53,7 +53,7 @@ pub const AudioState = struct {
         return .{
             .allocator = allocator,
             .audio_capture = audio_capture,
-            .devices = try .initCapacity(allocator, 0),
+            .devices = .init(try .initCapacity(allocator, 0)),
         };
     }
 
@@ -70,8 +70,11 @@ pub const AudioState = struct {
             }
         }
 
-        self.clear_devices();
-        self.devices.deinit(self.allocator);
+        var locked_devices = self.devices.lock();
+        defer locked_devices.unlock();
+        const devices = locked_devices.unwrap_ptr();
+        clear_devices(devices);
+        devices.deinit(self.allocator);
     }
 
     pub fn handle_action(self: *Self, actor: *Actor, action: Actions) !void {
@@ -87,13 +90,21 @@ pub const AudioState = struct {
                         var available_devices = try self.audio_capture.get_available_devices(self.allocator);
                         defer available_devices.deinit();
 
-                        actor.ui_mutex.lock();
-                        defer actor.ui_mutex.unlock();
-                        self.clear_devices();
-                        errdefer self.clear_devices();
+                        var user_settings = blk: {
+                            actor.ui_mutex.lock();
+                            defer actor.ui_mutex.unlock();
+                            break :blk try actor.state.user_settings.settings.clone(self.allocator);
+                        };
+                        defer user_settings.deinit(self.allocator);
+
+                        var locked_devices = self.devices.lock();
+                        defer locked_devices.unlock();
+                        const devices = locked_devices.unwrap_ptr();
+                        clear_devices(devices);
+                        errdefer clear_devices(devices);
 
                         for (available_devices.devices.items) |device| {
-                            const persisted_settings = actor.state.user_settings.settings.audio_devices.map.get(device.id);
+                            const persisted_settings = user_settings.audio_devices.map.get(device.id);
                             const device_copy = try AudioDeviceViewModel.init(self.allocator, .{
                                 .id = device.id,
                                 .name = device.name,
@@ -103,22 +114,23 @@ pub const AudioState = struct {
                                 .gain = if (persisted_settings) |settings| settings.gain else 1.0,
                             });
                             errdefer device_copy.deinit();
-                            try self.devices.append(self.allocator, device_copy);
+                            try devices.append(self.allocator, device_copy);
                         }
 
-                        try self.update_selected_devices();
+                        try self.update_selected_devices(devices);
                     },
                     .toggle_audio_device => |device_id| {
                         defer self.allocator.free(device_id);
 
                         {
-                            actor.ui_mutex.lock();
-                            defer actor.ui_mutex.unlock();
+                            var locked_devices = self.devices.lock();
+                            defer locked_devices.unlock();
+                            const devices = locked_devices.unwrap_ptr();
 
-                            for (self.devices.items) |*device| {
+                            for (devices.items) |*device| {
                                 if (!std.mem.eql(u8, device.id, device_id)) continue;
                                 device.selected = !device.selected;
-                                try self.update_selected_devices();
+                                try self.update_selected_devices(devices);
 
                                 try actor.dispatch(.{
                                     .user_settings = .{
@@ -137,10 +149,11 @@ pub const AudioState = struct {
                         const payload = _action.payload;
                         defer _action.deinit();
                         {
-                            actor.ui_mutex.lock();
-                            defer actor.ui_mutex.unlock();
+                            var locked_devices = self.devices.lock();
+                            defer locked_devices.unlock();
+                            const devices = locked_devices.unwrap_ptr();
 
-                            for (self.devices.items) |*device| {
+                            for (devices.items) |*device| {
                                 if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
                                 device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
                                 try actor.dispatch(.{
@@ -168,6 +181,30 @@ pub const AudioState = struct {
                         }
                     },
                     else => {},
+                }
+            },
+            .start_record => {
+                const replay_seconds = blk: {
+                    actor.ui_mutex.lock();
+                    defer actor.ui_mutex.unlock();
+                    break :blk actor.state.user_settings.settings.replay_seconds;
+                };
+                var replay_buffer_locked = self.audio_replay_buffer.lock();
+                defer replay_buffer_locked.unlock();
+                const ptr = replay_buffer_locked.unwrap_ptr();
+                if (ptr.* != null) {
+                    log.warn("[handle_action] start_record - previous buffer was not destroyed", .{});
+                    ptr.*.?.deinit();
+                }
+                ptr.* = try AudioReplayBuffer.init(self.allocator, replay_seconds);
+            },
+            .stop_record => {
+                var locked = self.audio_replay_buffer.lock();
+                defer locked.unlock();
+
+                if (locked.unwrap()) |audio_replay_buffer| {
+                    audio_replay_buffer.deinit();
+                    locked.set(null);
                 }
             },
             else => {},
@@ -201,11 +238,11 @@ pub const AudioState = struct {
 
     /// Communicates with the audio capture interface and tells it which audio devices
     /// were selected.
-    fn update_selected_devices(self: *Self) !void {
+    fn update_selected_devices(self: *Self, devices: *std.ArrayList(AudioDeviceViewModel)) !void {
         var selected_devices = try std.ArrayList(SelectedAudioDevice).initCapacity(self.allocator, 0);
         defer selected_devices.deinit(self.allocator);
 
-        for (self.devices.items) |device| {
+        for (devices.items) |device| {
             if (!device.selected) continue;
             try selected_devices.append(self.allocator, .{
                 .id = device.id,
@@ -216,28 +253,14 @@ pub const AudioState = struct {
         try self.audio_capture.update_selected_devices(selected_devices.items);
     }
 
-    pub fn clear_devices(self: *Self) void {
-        for (self.devices.items) |device| {
+    pub fn clear_devices(devices: *std.ArrayList(AudioDeviceViewModel)) void {
+        for (devices.items) |device| {
             device.deinit();
         }
-        self.devices.clearRetainingCapacity();
+        devices.clearRetainingCapacity();
     }
 
     fn capture_thread_handler(self: *Self, actor: *Actor) !void {
-        const replay_seconds = blk: {
-            actor.ui_mutex.lock();
-            defer actor.ui_mutex.unlock();
-            break :blk actor.state.user_settings.settings.replay_seconds;
-        };
-
-        {
-            var replay_buffer_locked = self.audio_replay_buffer.lock();
-            defer replay_buffer_locked.unlock();
-            const ptr = replay_buffer_locked.unwrap_ptr();
-            assert(ptr.* == null);
-            ptr.* = try AudioReplayBuffer.init(self.allocator, replay_seconds);
-        }
-
         while (true) {
             const data = self.audio_capture.receive_data() catch |err| {
                 if (err == ChanError.Closed) {
@@ -248,15 +271,12 @@ pub const AudioState = struct {
                 return err;
             };
 
-            const gain = blk: {
-                actor.ui_mutex.lock();
-                defer actor.ui_mutex.unlock();
+            data.gain = blk: {
+                var locked_devices = self.devices.lock();
+                defer locked_devices.unlock();
+                const devices = locked_devices.unwrap_ptr();
 
-                if (!actor.state.is_recording_video) {
-                    break :blk null;
-                }
-
-                for (self.devices.items) |device| {
+                for (devices.items) |device| {
                     if (std.mem.eql(u8, device.id, data.id)) {
                         break :blk device.gain;
                     }
@@ -269,13 +289,6 @@ pub const AudioState = struct {
                 break :blk 1.0;
             };
 
-            if (gain) |device_gain| {
-                data.gain = device_gain;
-            } else {
-                data.deinit();
-                continue;
-            }
-
             var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
@@ -283,6 +296,9 @@ pub const AudioState = struct {
                     data.deinit();
                     return err;
                 };
+                actor.ui_mutex.lock();
+                defer actor.ui_mutex.unlock();
+                actor.state.replay_buffer.audio_size = replay_buffer.size;
             } else {
                 data.deinit();
             }
