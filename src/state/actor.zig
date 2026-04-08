@@ -137,7 +137,13 @@ pub const Actor = struct {
 
         const thread_2 = try std.Thread.spawn(.{}, struct {
             fn run(_self: *Self) void {
-                if (_self.state.user_settings.settings.restore_capture_source_on_startup) {
+                const restore_capture_source_on_startup = blk: {
+                    const settings_locked = _self.state.user_settings.settings.lock();
+                    defer settings_locked.unlock();
+                    const settings = settings_locked.unwrap_ptr();
+                    break :blk settings.restore_capture_source_on_startup;
+                };
+                if (restore_capture_source_on_startup) {
                     _self.handle_action(.restore_capture_session) catch |err| {
                         log.err("[capture_startup] restore_capture_session error: {}\n", .{err});
                     };
@@ -151,9 +157,13 @@ pub const Actor = struct {
             fn run(_self: *Self, t1: std.Thread, t2: std.Thread) void {
                 t1.join();
                 t2.join();
-                if (_self.state.user_settings.settings.restore_capture_source_on_startup and
-                    _self.state.user_settings.settings.start_replay_buffer_on_startup)
-                {
+                const should_handle_action: bool = blk: {
+                    const settings_locked = _self.state.user_settings.settings.lock();
+                    defer settings_locked.unlock();
+                    const settings = settings_locked.unwrap_ptr();
+                    break :blk settings.restore_capture_source_on_startup and settings.start_replay_buffer_on_startup;
+                };
+                if (should_handle_action) {
                     _self.handle_action(.start_record) catch |err| {
                         log.err("[capture_startup] start_record error: {}", .{err});
                     };
@@ -226,8 +236,14 @@ pub const Actor = struct {
                         log.debug("[handle_action] save_replay - not recording, skipping capture", .{});
                         return;
                     }
-                    fps = self.state.user_settings.settings.capture_fps;
-                    replay_seconds = self.state.user_settings.settings.replay_seconds;
+                }
+
+                {
+                    const settings_locked = self.state.user_settings.settings.lock();
+                    defer settings_locked.unlock();
+                    const settings = settings_locked.unwrap_ptr();
+                    fps = settings.capture_fps;
+                    replay_seconds = settings.replay_seconds;
                 }
 
                 // We should always have a size if the state is recording.
@@ -320,9 +336,9 @@ pub const Actor = struct {
         try self.stop_capture();
 
         const fps = blk: {
-            self.ui_mutex.lock();
-            defer self.ui_mutex.unlock();
-            break :blk self.state.user_settings.settings.capture_fps;
+            const settings_locked = self.state.user_settings.settings.lock();
+            defer settings_locked.unlock();
+            break :blk settings_locked.unwrap_ptr().capture_fps;
         };
 
         self.video_capture.select_source(selection, fps) catch |err| {
@@ -355,9 +371,9 @@ pub const Actor = struct {
 
         while (true) {
             const fps = blk: {
-                self.ui_mutex.lock();
-                defer self.ui_mutex.unlock();
-                break :blk self.state.user_settings.settings.capture_fps;
+                const settings_locked = self.state.user_settings.settings.lock();
+                defer settings_locked.unlock();
+                break :blk settings_locked.unwrap_ptr().capture_fps;
             };
 
             // Here we wait until the next projected frame time. This will happen if we are
@@ -515,10 +531,18 @@ pub const Actor = struct {
         {
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            if (!self.state.is_capturing_video or self.state.is_recording_video) return;
-            fps = self.state.user_settings.settings.capture_fps;
-            capture_bit_rate = self.state.user_settings.settings.capture_bit_rate;
-            replay_seconds = self.state.user_settings.settings.replay_seconds;
+            if (!self.state.is_capturing_video or self.state.is_recording_video) {
+                return;
+            }
+        }
+
+        {
+            const settings_locked = self.state.user_settings.settings.lock();
+            defer settings_locked.unlock();
+            const settings = settings_locked.unwrap_ptr();
+            fps = settings.capture_fps;
+            capture_bit_rate = settings.capture_bit_rate;
+            replay_seconds = settings.replay_seconds;
         }
 
         const size = self.video_capture.size() orelse {

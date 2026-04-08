@@ -5,6 +5,7 @@ const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const util = @import("../util.zig");
 const Actions = @import("./actor.zig").Actions;
 const UserSettings = @import("./user_settings.zig").UserSettings;
+const Mutex = @import("../mutex.zig").Mutex;
 
 const log = std.log.scoped(.user_settings_state);
 
@@ -12,8 +13,6 @@ pub const UserSettingsActions = union(enum) {
     set_capture_fps: u32,
     set_capture_bit_rate: u64,
     set_replay_seconds: u32,
-    set_gui_foreground_fps: u32,
-    set_gui_background_fps: u32,
     set_restore_capture_source_on_startup: bool,
     set_start_replay_buffer_on_startup: bool,
     set_audio_device_settings: *ActionPayload(struct {
@@ -38,8 +37,7 @@ pub const UserSettingsState = struct {
     const Self = @This();
 
     allocator: Allocator,
-    // TODO: Use mutex here instead of ui_mutex.
-    settings: UserSettings = .{},
+    settings: Mutex(UserSettings) = .init(.{}),
 
     pub fn init(allocator: Allocator) !Self {
         var self: Self = .{
@@ -52,7 +50,10 @@ pub const UserSettingsState = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.settings.deinit(self.allocator);
+        var settings_locked = self.settings.lock();
+        defer settings_locked.unlock();
+        const settings = settings_locked.unwrap_ptr();
+        settings.deinit(self.allocator);
     }
 
     pub fn handle_action(self: *Self, actor: *Actor, action: Actions) !void {
@@ -69,12 +70,6 @@ pub const UserSettingsState = struct {
                     .set_replay_seconds => |replay_seconds| {
                         try self.set_state(actor, "replay_seconds", replay_seconds);
                     },
-                    .set_gui_foreground_fps => |gui_foreground_fps| {
-                        try self.set_state(actor, "gui_foreground_fps", gui_foreground_fps);
-                    },
-                    .set_gui_background_fps => |gui_background_fps| {
-                        try self.set_state(actor, "gui_background_fps", gui_background_fps);
-                    },
                     .set_start_replay_buffer_on_startup => |start_replay_buffer_on_startup| {
                         try self.set_state(actor, "start_replay_buffer_on_startup", start_replay_buffer_on_startup);
                     },
@@ -86,15 +81,16 @@ pub const UserSettingsState = struct {
                         const payload = _action.payload;
                         var settings_snapshot: UserSettings = undefined;
                         {
-                            actor.ui_mutex.lock();
-                            defer actor.ui_mutex.unlock();
-                            try self.settings.update_audio_device_settings(
+                            const settings_locked = actor.state.user_settings.settings.lock();
+                            defer settings_locked.unlock();
+                            const settings = settings_locked.unwrap_ptr();
+                            try settings.update_audio_device_settings(
                                 self.allocator,
                                 payload.device_id,
                                 payload.selected,
                                 payload.gain,
                             );
-                            settings_snapshot = try self.settings.clone(self.allocator);
+                            settings_snapshot = try settings.clone(self.allocator);
                         }
                         defer settings_snapshot.deinit(self.allocator);
                         try self.save(&settings_snapshot);
@@ -120,10 +116,11 @@ pub const UserSettingsState = struct {
         value: anytype,
     ) !void {
         var settings_snapshot: UserSettings = blk: {
-            actor.ui_mutex.lock();
-            defer actor.ui_mutex.unlock();
-            @field(self.settings, field_name) = value;
-            break :blk try self.settings.clone(self.allocator);
+            const settings_locked = actor.state.user_settings.settings.lock();
+            defer settings_locked.unlock();
+            const settings = settings_locked.unwrap_ptr();
+            @field(settings, field_name) = value;
+            break :blk try settings.clone(self.allocator);
         };
         defer settings_snapshot.deinit(self.allocator);
         try self.save(&settings_snapshot);
@@ -171,8 +168,11 @@ pub const UserSettingsState = struct {
             );
         }
 
-        self.settings.deinit(self.allocator);
-        self.settings = loaded;
+        var settings_locked = self.settings.lock();
+        defer settings_locked.unlock();
+        const settings = settings_locked.unwrap_ptr();
+        settings.deinit(self.allocator);
+        settings_locked.set(loaded);
     }
 
     /// Save a copy of settings to disk.

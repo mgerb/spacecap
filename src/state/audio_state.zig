@@ -91,9 +91,10 @@ pub const AudioState = struct {
                         defer available_devices.deinit();
 
                         var user_settings = blk: {
-                            actor.ui_mutex.lock();
-                            defer actor.ui_mutex.unlock();
-                            break :blk try actor.state.user_settings.settings.clone(self.allocator);
+                            const settings_locked = actor.state.user_settings.settings.lock();
+                            defer settings_locked.unlock();
+                            const settings = settings_locked.unwrap_ptr();
+                            break :blk try settings.clone(self.allocator);
                         };
                         defer user_settings.deinit(self.allocator);
 
@@ -185,9 +186,10 @@ pub const AudioState = struct {
             },
             .start_record => {
                 const replay_seconds = blk: {
-                    actor.ui_mutex.lock();
-                    defer actor.ui_mutex.unlock();
-                    break :blk actor.state.user_settings.settings.replay_seconds;
+                    const settings_locked = actor.state.user_settings.settings.lock();
+                    defer settings_locked.unlock();
+                    const settings = settings_locked.unwrap_ptr();
+                    break :blk settings.replay_seconds;
                 };
                 var replay_buffer_locked = self.audio_replay_buffer.lock();
                 defer replay_buffer_locked.unlock();
