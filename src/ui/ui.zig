@@ -387,21 +387,6 @@ pub const UI = struct {
                     try self.frame_present();
                 }
             }
-
-            // Delay until the next frame to maintain desired FPS.
-            // We use mailbox present mode so unlimited FPS can get
-            // pretty high e.g. 2k+
-            self.actor.ui_mutex.lock();
-            const fg_fps = self.actor.state.user_settings.settings.gui_foreground_fps;
-            const bg_fps = self.actor.state.user_settings.settings.gui_background_fps;
-            self.actor.ui_mutex.unlock();
-
-            const frame_duration_ns = if (window_has_focus) (1_000_000_000 / fg_fps) else (1_000_000_000 / bg_fps);
-            const elapsed_ns = timer.read();
-            if (elapsed_ns < frame_duration_ns) {
-                const sleep_duration_ns = frame_duration_ns - elapsed_ns;
-                c.SDL_DelayNS(sleep_duration_ns);
-            }
         }
 
         try self.actor.dispatch(.exit);
@@ -535,11 +520,11 @@ pub const UI = struct {
 
         // Select Present Mode
         const present_modes = [_]c.VkPresentModeKHR{
-            // NOTE: Had some deadlocks with fifo, use mailbox instead
-            // and limit fps manually.
-            // c.VK_PRESENT_MODE_FIFO_KHR,
             // c.VK_PRESENT_MODE_IMMEDIATE_KHR,
-            c.VK_PRESENT_MODE_MAILBOX_KHR,
+            // c.VK_PRESENT_MODE_MAILBOX_KHR,
+            // NOTE: FIFO seems to be the best for a desktop application. Had some deadlock issues
+            // in the past with this, but it should be resolved now.
+            c.VK_PRESENT_MODE_FIFO_KHR,
         };
         self.vulkan.window.?.PresentMode = c.cImGui_ImplVulkanH_SelectPresentMode(
             self.vk_physical_device(),

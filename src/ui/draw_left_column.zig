@@ -188,8 +188,6 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGuiWindowFlags_NoCollapse);
     defer c.ImGui_End();
 
-    // c.ImGui_SeparatorText("Spacecap");
-
     if (c.ImGui_BeginTabBar("MainTabBar", 0)) {
         defer c.ImGui_EndTabBar();
 
@@ -291,64 +289,6 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
 
             try draw_capture_settings(allocator, actor);
 
-            c.ImGui_SeparatorText("GUI Settings");
-
-            c.ImGui_Text("FG FPS");
-            c.ImGui_SameLine();
-            imgui_util.help_marker("Forground FPS. This is the max frame rate Spacecap will render while focused. Drag or double click to change.");
-            c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-            const current_fg_fps: i32 = @intCast(actor.state.user_settings.settings.gui_foreground_fps);
-            var fg_fps = fg_fps_local orelse current_fg_fps;
-            if (c.ImGui_InputIntEx(
-                "##fg_fps",
-                &fg_fps,
-                5,
-                10,
-                c.ImGuiInputTextFlags_None,
-            )) {
-                fg_fps = std.math.clamp(fg_fps, GUI_FPS_MIN, GUI_FPS_MAX);
-                fg_fps_local = fg_fps;
-            }
-            if (c.ImGui_IsItemDeactivatedAfterEdit() and fg_fps != current_fg_fps) {
-                try actor.dispatch(.{ .user_settings = .{
-                    .set_gui_foreground_fps = @intCast(fg_fps),
-                } });
-                fg_fps_local = null;
-            } else if (!c.ImGui_IsItemActive()) {
-                // Keep the UI synced with state when not actively editing.
-                fg_fps_local = null;
-            }
-
-            c.ImGui_Text("BG FPS");
-            c.ImGui_SameLine();
-            imgui_util.help_marker("Background FPS. This is the max frame rate Spacecap will render while NOT focused. Drag or double click to change.");
-            c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-            const current_bg_fps: i32 = @intCast(actor.state.user_settings.settings.gui_background_fps);
-            var bg_fps = bg_fps_local orelse current_bg_fps;
-            if (c.ImGui_InputIntEx(
-                "##bg_fps",
-                &bg_fps,
-                5,
-                10,
-                c.ImGuiInputTextFlags_None,
-            )) {
-                bg_fps = std.math.clamp(bg_fps, GUI_FPS_MIN, GUI_FPS_MAX);
-                bg_fps_local = bg_fps;
-            }
-            if (c.ImGui_IsItemDeactivatedAfterEdit() and bg_fps != current_bg_fps) {
-                try actor.dispatch(.{ .user_settings = .{
-                    .set_gui_background_fps = @intCast(bg_fps),
-                } });
-                bg_fps_local = null;
-            } else if (!c.ImGui_IsItemActive()) {
-                // Keep the UI synced with state when not actively editing.
-                bg_fps_local = null;
-            }
-
-            const io = c.ImGui_GetIO();
-            c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
-            c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
-
             // NOTE: Hiding this for now. Linux shortcuts can be configured at the
             // desktop environment level. See comments regarding `Method.configure_shortcuts`
             // in `xdg_desktop_portal_global_shortcuts.zig` for more info.
@@ -369,6 +309,11 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
                     try actor.dispatch(.show_demo);
                 }
+
+                c.ImGui_Spacing();
+                const io = c.ImGui_GetIO();
+                c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
+                c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
             }
         }
     }
@@ -377,9 +322,19 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
 fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     c.ImGui_SeparatorText("Capture Settings");
 
+    const settings_locked = actor.state.user_settings.settings.lock();
+    const settings = settings_locked.unwrap_ptr();
+
+    const current_capture_fps: i32 = @intCast(settings.capture_fps);
+    const current_capture_bit_rate: i32 = @intCast(settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
+    const current_replay_seconds: i32 = @intCast(settings.replay_seconds);
+    var restore_capture_source_on_startup = settings.restore_capture_source_on_startup;
+    var start_replay_buffer_on_startup = settings.start_replay_buffer_on_startup;
+
+    settings_locked.unlock();
+
     // FPS
     {
-        const current_capture_fps: i32 = @intCast(actor.state.user_settings.settings.capture_fps);
         var fps = capture_fps_local orelse current_capture_fps;
         c.ImGui_Text("Max FPS");
         c.ImGui_SameLine();
@@ -412,7 +367,6 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_SameLine();
         imgui_util.help_marker("Capture bitrate in Kbps");
         c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-        const current_capture_bit_rate: i32 = @intCast(actor.state.user_settings.settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
         var capture_bit_rate = capture_bit_rate_local orelse current_capture_bit_rate;
         if (c.ImGui_InputIntEx(
             "##bitrate",
@@ -447,7 +401,6 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_SameLine();
         imgui_util.help_marker("Length of video and audio stored in memory (seconds)");
         c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-        const current_replay_seconds: i32 = @intCast(actor.state.user_settings.settings.replay_seconds);
         var replay_seconds = replay_seconds_local orelse current_replay_seconds;
         if (c.ImGui_InputIntEx(
             "##replay_buffer_length",
@@ -478,7 +431,6 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     c.ImGui_Text("Restore capture source on startup");
     c.ImGui_SameLine();
     imgui_util.help_marker("Try to restore the last capture source when Spacecap starts.");
-    var restore_capture_source_on_startup = actor.state.user_settings.settings.restore_capture_source_on_startup;
     if (c.ImGui_Checkbox("##restore_capture_source_on_startup", &restore_capture_source_on_startup)) {
         try actor.dispatch(.{ .user_settings = .{
             .set_restore_capture_source_on_startup = restore_capture_source_on_startup,
@@ -489,9 +441,8 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_Text("Start replay buffer on startup");
         c.ImGui_SameLine();
         imgui_util.help_marker("Start the replay buffer when Spacecap starts. Requires 'Restore capture source on startup'.");
-        c.ImGui_BeginDisabled(!actor.state.user_settings.settings.restore_capture_source_on_startup);
+        c.ImGui_BeginDisabled(!restore_capture_source_on_startup);
         defer c.ImGui_EndDisabled();
-        var start_replay_buffer_on_startup = actor.state.user_settings.settings.start_replay_buffer_on_startup;
         if (c.ImGui_Checkbox("##start_replay_buffer_on_startup", &start_replay_buffer_on_startup)) {
             try actor.dispatch(.{ .user_settings = .{
                 .set_start_replay_buffer_on_startup = start_replay_buffer_on_startup,

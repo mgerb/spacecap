@@ -9,9 +9,6 @@ pub const UserSettings = struct {
         gain: f32 = 1.0,
     };
 
-    // NOTE: Default values here are default user settings.
-    gui_foreground_fps: u32 = 120,
-    gui_background_fps: u32 = 30,
     capture_fps: u32 = 60,
     /// In bits per second (bps).
     capture_bit_rate: u64 = 10_000_000,
