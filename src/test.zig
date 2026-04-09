@@ -14,4 +14,5 @@ test {
     _ = @import("./video/muxer.zig");
     _ = @import("./common/linux/token_manager.zig");
     _ = @import("./mutex.zig");
+    _ = @import("./string.zig");
 }

@@ -20,14 +20,19 @@ const CAPTURE_BIT_RATE_KBPS_MIN: i32 = 100;
 const CAPTURE_BIT_RATE_KBPS_MAX: i32 = 1_000_000;
 const REPLAY_SECONDS_MIN: i32 = 1;
 const REPLAY_SECONDS_MAX: i32 = 60 * 60 * 24;
+const VIDEO_OUTPUT_DIRECTORY_MAX_BYTES = std.fs.max_path_bytes;
+const VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH: f32 = 34;
 
-/// This is bound to a drag input. We keep a locally bound value
-/// because we only want to update the global state when not dragging.
+// These local values are temporary to hold the value
+// of an input as it's being edited. We do this so that
+// we don't update the state on every little change
+// (e.g. dragging a slider).
 var capture_fps_local: ?i32 = null;
 var capture_bit_rate_local: ?i32 = null;
 var replay_seconds_local: ?i32 = null;
 var fg_fps_local: ?i32 = null;
 var bg_fps_local: ?i32 = null;
+var video_output_directory_local: ?[VIDEO_OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
 
 fn device_type_label(device_type: AudioDeviceType) []const u8 {
     return switch (device_type) {
@@ -143,7 +148,7 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: 
             c.ImGui_Text("Gain");
 
             _ = c.ImGui_TableNextColumn();
-            c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+            imgui_util.set_next_item_width_fill();
             if (c.ImGui_SliderFloatEx(gain_slider_id, &gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX, "%.2fx", 0)) {
                 try actor.dispatch(.{ .audio = .{
                     .set_audio_device_gain = try .init(allocator, .{
@@ -227,7 +232,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.329, .y = 0.706, .z = 0.247, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.173, .y = 0.471, .z = 0.129, .w = 1.0 });
                 c.ImGui_BeginDisabled(!video_capture_supported or actor.state.is_recording_video or !actor.state.is_capturing_video);
-                if (c.ImGui_ButtonEx("Start", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
+                if (c.ImGui_ButtonEx("Start", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
                     try actor.dispatch(.start_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
@@ -239,7 +244,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.75, .y = 0.1, .z = 0.1, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.5, .y = 0.0, .z = 0.0, .w = 1.0 });
                 c.ImGui_BeginDisabled(!video_capture_supported or !actor.state.is_recording_video);
-                if (c.ImGui_ButtonEx("Stop", .{ .x = -std.math.floatMin(f32), .y = CONTROL_HEIGHT })) {
+                if (c.ImGui_ButtonEx("Stop", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
                     try actor.dispatch(.stop_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
@@ -289,6 +294,10 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
 
             try draw_capture_settings(allocator, actor);
 
+            c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+
+            try draw_output_settings(allocator, actor);
+
             // NOTE: Hiding this for now. Linux shortcuts can be configured at the
             // desktop environment level. See comments regarding `Method.configure_shortcuts`
             // in `xdg_desktop_portal_global_shortcuts.zig` for more info.
@@ -304,6 +313,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
             // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
 
             if (util.DEBUG) {
+                c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
                 c.ImGui_SeparatorText("IMGUI Debug");
 
                 if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
@@ -315,6 +325,70 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
                 c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
             }
+        }
+    }
+}
+
+fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
+    c.ImGui_SeparatorText("Output");
+
+    const video_output_directory = blk: {
+        const settings_locked = actor.state.user_settings.settings.lock();
+        defer settings_locked.unlock();
+        const settings = settings_locked.unwrap_ptr();
+        break :blk settings.video_output_directory.?.bytes;
+    };
+
+    c.ImGui_Text("Video");
+
+    var _video_output_directory_local = video_output_directory_local orelse blk: {
+        var buffer = std.mem.zeroes([VIDEO_OUTPUT_DIRECTORY_MAX_BYTES:0]u8);
+        const copy_len = @min(video_output_directory.len, buffer.len - 1);
+        @memmove(buffer[0..copy_len], video_output_directory[0..copy_len]);
+        break :blk buffer;
+    };
+
+    if (c.ImGui_BeginTable("video_output_directory_row", 2, c.ImGuiTableFlags_SizingStretchProp)) {
+        defer c.ImGui_EndTable();
+
+        c.ImGui_TableSetupColumnEx("input", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
+        c.ImGui_TableSetupColumnEx("button", c.ImGuiTableColumnFlags_WidthFixed, VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH, 0);
+
+        _ = c.ImGui_TableNextColumn();
+        imgui_util.set_next_item_width_fill();
+        _ = c.ImGui_InputText(
+            "##video_output_directory",
+            &_video_output_directory_local,
+            _video_output_directory_local.len,
+            c.ImGuiInputTextFlags_None,
+        );
+        if (c.ImGui_IsItemEdited()) {
+            video_output_directory_local = _video_output_directory_local;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit()) {
+            const updated_directory = std.mem.sliceTo(_video_output_directory_local[0..], 0);
+            if (updated_directory.len > 0 and !std.mem.eql(u8, updated_directory, video_output_directory)) {
+                try actor.dispatch(.{ .user_settings = .{
+                    .set_video_output_directory = try .init(allocator, .{
+                        .video_output_directory = updated_directory,
+                    }),
+                } });
+            }
+            video_output_directory_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            video_output_directory_local = null;
+        }
+
+        _ = c.ImGui_TableNextColumn();
+        if (c.ImGui_ButtonEx("...##video_output_directory_picker", .{
+            .x = imgui_util.WIDTH_FILL,
+            .y = 0,
+        })) {
+            try actor.dispatch(.{ .user_settings = .select_output_directory });
+        }
+        if (c.ImGui_BeginItemTooltip()) {
+            c.ImGui_TextUnformatted("Choose directory");
+            c.ImGui_EndTooltip();
         }
     }
 }
@@ -339,7 +413,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_Text("Max FPS");
         c.ImGui_SameLine();
         imgui_util.help_marker("The maximum capture rate (frames per second). If your system can't keep up, it may be slower than the desired FPS.");
-        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        imgui_util.set_next_item_width_fill();
         if (c.ImGui_InputIntEx(
             "##capture_fps",
             &fps,
@@ -366,7 +440,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_Text("Bitrate");
         c.ImGui_SameLine();
         imgui_util.help_marker("Capture bitrate in Kbps");
-        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        imgui_util.set_next_item_width_fill();
         var capture_bit_rate = capture_bit_rate_local orelse current_capture_bit_rate;
         if (c.ImGui_InputIntEx(
             "##bitrate",
@@ -400,7 +474,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_Text("Replay buffer length");
         c.ImGui_SameLine();
         imgui_util.help_marker("Length of video and audio stored in memory (seconds)");
-        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+        imgui_util.set_next_item_width_fill();
         var replay_seconds = replay_seconds_local orelse current_replay_seconds;
         if (c.ImGui_InputIntEx(
             "##replay_buffer_length",

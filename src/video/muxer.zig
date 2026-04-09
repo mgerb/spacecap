@@ -37,11 +37,11 @@ pub const Muxer = struct {
         width: u32,
         height: u32,
         fps: u32,
-        file_name_prefix: []const u8,
+        output_directory: []const u8,
     ) !Self {
         var format_context: *ffmpeg.AVFormatContext = undefined;
-        // TODO: File name.
-        const file_name = try std.fmt.allocPrintSentinel(allocator, "{s}_{}.mp4", .{ file_name_prefix, std.time.nanoTimestamp() }, 0);
+        try std.fs.cwd().makePath(output_directory);
+        const file_name = try get_output_file_name(allocator, "replay", output_directory);
         errdefer allocator.free(file_name);
 
         var ret = ffmpeg.avformat_alloc_output_context2(@ptrCast(&format_context), null, "mp4", file_name);
@@ -319,6 +319,19 @@ pub const Muxer = struct {
         return current_pts;
     }
 };
+
+fn get_output_file_name(
+    allocator: Allocator,
+    file_name_prefix: []const u8,
+    output_directory: []const u8,
+) ![:0]u8 {
+    const base_name = try std.fmt.allocPrint(allocator, "{s}_{}.mp4", .{ file_name_prefix, std.time.nanoTimestamp() });
+    defer allocator.free(base_name);
+
+    const path = try std.fs.path.join(allocator, &.{ output_directory, base_name });
+    defer allocator.free(path);
+    return allocator.dupeZ(u8, path);
+}
 
 test "applyJitterCorrectionToPts snaps small jitter to expected cadence" {
     const expected = 3_000;

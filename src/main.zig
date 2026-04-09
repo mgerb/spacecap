@@ -9,6 +9,7 @@ const args = @import("./args.zig");
 const PlatformIpc = @import("./ipc/platform_ipc.zig").PlatformIpc;
 const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig").PlatformAudioCapture;
 const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
+const PlatformFilePicker = @import("./file_picker/platform_file_picker.zig").PlatformFilePicker;
 const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shortcuts.zig").PlatformGlobalShortcuts;
 
 pub fn main() !void {
@@ -85,6 +86,10 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     var audio_capture_interface = _audio_capture.audio_capture();
     defer audio_capture_interface.deinit();
 
+    const platform_file_picker = try PlatformFilePicker.init(allocator);
+    var file_picker = platform_file_picker.file_picker();
+    defer file_picker.deinit();
+
     const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
     var global_shortcuts = platform_global_shortcuts.global_shortcuts();
     try global_shortcuts.run();
@@ -94,6 +99,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
         allocator,
         vulkan,
         &video_capture_interface,
+        &file_picker,
         &audio_capture_interface,
         &global_shortcuts,
     );
