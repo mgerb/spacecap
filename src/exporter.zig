@@ -18,6 +18,7 @@ pub fn export_replay_buffers(
     fps: u32,
     video_replay_buffer: *VideoReplayBuffer,
     audio_replay_buffer: ?*AudioReplayBuffer,
+    output_directory: []const u8,
 ) !void {
     if (video_replay_buffer.len <= 0) {
         log.warn("[export_replay_buffers] video replay buffer is empty", .{});
@@ -40,7 +41,7 @@ pub fn export_replay_buffers(
         width,
         height,
         fps,
-        "replay",
+        output_directory,
     );
     defer muxer.deinit();
     try muxer.mux_audio_video();

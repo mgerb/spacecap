@@ -1,4 +1,7 @@
+const std = @import("std");
 const imguiz = @import("imguiz").imguiz;
+
+pub const WIDTH_FILL = -std.math.floatMin(f32);
 
 pub fn help_marker(text: [*]const u8) void {
     imguiz.ImGui_TextDisabled("(?)");
@@ -8,4 +11,9 @@ pub fn help_marker(text: [*]const u8) void {
         imguiz.ImGui_PopTextWrapPos();
         imguiz.ImGui_EndTooltip();
     }
+}
+
+/// Helper for `ImGui_SetNextItemWidth(-std.math.floatMin(f32))`
+pub fn set_next_item_width_fill() void {
+    imguiz.ImGui_SetNextItemWidth(WIDTH_FILL);
 }

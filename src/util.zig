@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.util);
 
 pub const DEBUG = @import("builtin").mode == .Debug;
 
@@ -122,37 +123,81 @@ pub fn check_fd(fd: i64) !void {
 /// The returned path is owned by the caller and must be freed.
 /// This function will create the directory if it does not exist.
 pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
-    // TODO: test on windows
-    const base_dir: []u8 = if (@import("builtin").os.tag == .windows) blk: {
+    // TODO: Test on Windows.
+    const base_dir: []u8 = if (comptime is_windows()) blk: {
         // On Windows, use %APPDATA%
         break :blk try std.process.getEnvVarOwned(allocator, "APPDATA");
-    } else if (@import("builtin").os.tag == .linux) blk: {
+    } else if (comptime is_linux()) blk: {
         // On Linux, use $XDG_CONFIG_HOME or $HOME/.config
         if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME")) |xdg_config_home| {
-            break :blk xdg_config_home;
+            if (xdg_config_home.len > 0 and std.fs.path.isAbsolute(xdg_config_home)) {
+                break :blk xdg_config_home;
+            }
+            allocator.free(xdg_config_home);
         } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => {
-                const home = try std.process.getEnvVarOwned(allocator, "HOME");
-                defer allocator.free(home);
-                break :blk try std.fs.path.join(allocator, &.{ home, ".config" });
-            },
+            error.EnvironmentVariableNotFound => {},
             else => return err,
         }
+
+        const home = try std.process.getEnvVarOwned(allocator, "HOME");
+        defer allocator.free(home);
+        break :blk try std.fs.path.join(allocator, &.{ home, ".config" });
     } else {
         @compileError("Unsupported OS");
     };
     defer allocator.free(base_dir);
 
     const app_config_dir = try std.fs.path.join(allocator, &.{ base_dir, "spacecap" });
+    errdefer allocator.free(app_config_dir);
 
-    // Ensure the directory exists
-    std.fs.makeDirAbsolute(app_config_dir) catch |err| {
-        if (err != error.PathAlreadyExists) {
-            return err;
-        }
-    };
+    try std.fs.cwd().makePath(app_config_dir);
 
     return app_config_dir;
+}
+
+// Falls back to the current working directory when
+// the home-based output directory cannot be resolved or created.
+//
+// Caller owns the memory.
+// e.g. ~/Videos/spacecap
+pub fn get_default_video_output_dir(allocator: std.mem.Allocator) ![]u8 {
+    // TODO: Test on Windows.
+    const home_dir: ?[]u8 = if (comptime is_windows()) blk: {
+        break :blk std.process.getEnvVarOwned(allocator, "USERPROFILE") catch |err| {
+            log.err("[get_default_video_output_dir] failed to read USERPROFILE: {}", .{err});
+            break :blk std.process.getEnvVarOwned(allocator, "HOME") catch |home_err| {
+                log.err("[get_default_video_output_dir] failed to read HOME: {}", .{home_err});
+                break :blk null;
+            };
+        };
+    } else if (comptime is_linux()) blk: {
+        break :blk std.process.getEnvVarOwned(allocator, "HOME") catch |err| {
+            log.err("[get_default_video_output_dir] failed to read HOME: {}", .{err});
+            break :blk null;
+        };
+    } else {
+        @compileError("Unsupported OS");
+    };
+
+    if (home_dir) |_home_dir| {
+        defer allocator.free(_home_dir);
+
+        const output_dir = try std.fs.path.join(allocator, &.{ _home_dir, "Videos", "spacecap" });
+        errdefer allocator.free(output_dir);
+
+        if (std.fs.cwd().makePath(output_dir)) {
+            return output_dir;
+        } else |err| {
+            log.err("[get_default_video_output_dir] failed to create output directory {s}: {}", .{ output_dir, err });
+            allocator.free(output_dir);
+        }
+    }
+
+    log.warn("[get_default_video_output_dir] falling back to current working directory", .{});
+    return std.process.getCwdAlloc(allocator) catch |err| {
+        log.err("[get_default_video_output_dir] failed to get current working directory: {}", .{err});
+        return allocator.dupe(u8, ".");
+    };
 }
 
 pub fn LinkedListIterator(comptime T: type) type {

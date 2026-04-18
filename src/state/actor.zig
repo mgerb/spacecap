@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const vk = @import("vulkan");
 
 const Util = @import("../util.zig");
+const FilePicker = @import("../file_picker/file_picker.zig").FilePicker;
 const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const VideoCaptureError = @import("../capture/video/video_capture.zig").VideoCaptureError;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
@@ -19,6 +20,7 @@ const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoRepla
 const exporter = @import("../exporter.zig");
 const AudioActions = @import("./audio_state.zig").AudioActions;
 const UserSettingsActions = @import("./user_settings_state.zig").UserSettingsActions;
+const String = @import("../string.zig").String;
 
 const log = std.log.scoped(.actor);
 
@@ -46,6 +48,7 @@ pub const Actor = struct {
     vulkan: *Vulkan,
     // TODO: Create video_state and move video logic.
     video_capture: *VideoCapture,
+    file_picker: *FilePicker,
     global_shortcuts: *GlobalShortcuts,
     video_replay_buffer: Mutex(?*VideoReplayBuffer) = .init(null),
     action_chan: ActionChan,
@@ -62,6 +65,7 @@ pub const Actor = struct {
         allocator: std.mem.Allocator,
         vulkan: *Vulkan,
         video_capture: *VideoCapture,
+        file_picker: *FilePicker,
         audio_capture: *AudioCapture,
         global_shortcuts: *GlobalShortcuts,
     ) !*Self {
@@ -72,6 +76,7 @@ pub const Actor = struct {
             .allocator = allocator,
             .vulkan = vulkan,
             .video_capture = video_capture,
+            .file_picker = file_picker,
             .global_shortcuts = global_shortcuts,
             .action_chan = try ActionChan.init(allocator),
             // TODO: The state is getting a bit unwiedly and coupled.
@@ -229,6 +234,10 @@ pub const Actor = struct {
             .save_replay => {
                 var fps: u32 = 0;
                 var replay_seconds: u32 = 0;
+                var video_output_directory: ?String = null;
+                defer {
+                    if (video_output_directory) |*_video_output_directory| _video_output_directory.deinit();
+                }
                 {
                     self.ui_mutex.lock();
                     defer self.ui_mutex.unlock();
@@ -244,6 +253,10 @@ pub const Actor = struct {
                     const settings = settings_locked.unwrap_ptr();
                     fps = settings.capture_fps;
                     replay_seconds = settings.replay_seconds;
+                    // video_output_directory should never be null at this point. If so, there is
+                    // something seriously wrong.
+                    assert(settings.video_output_directory != null);
+                    video_output_directory = try settings.video_output_directory.?.clone(self.allocator);
                 }
 
                 // We should always have a size if the state is recording.
@@ -289,6 +302,7 @@ pub const Actor = struct {
                     fps,
                     video_replay_buffer.?,
                     audio_replay_buffer,
+                    video_output_directory.?.bytes,
                 );
             },
             .select_video_source => |source_type| {

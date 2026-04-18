@@ -105,6 +105,7 @@ pub const AudioState = struct {
                         errdefer clear_devices(devices);
 
                         for (available_devices.devices.items) |device| {
+                            // Show default devices if user settings aren't saved yet.
                             const persisted_settings = user_settings.audio_devices.map.get(device.id);
                             const device_copy = try AudioDeviceViewModel.init(self.allocator, .{
                                 .id = device.id,
