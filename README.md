@@ -1,7 +1,7 @@
 # Spacecap
 
 A hardware accelerated replay capture tool focused on performance. Currently
-only supports Linux.
+only supports Linux. Still in early development (see roadmap below).
 
 ![screenshot2](./screenshots/screenshot_3.png)
 
@@ -13,18 +13,33 @@ only supports Linux.
 
 ## Features
 
-- Desktop/window capture
-- Save last n seconds of video
-- Global keybinds
+- Desktop/window/region capture.
+- Save last n seconds of video (video buffered in memory).
+- Global keybinds.
 
-## Why you might want to use this?
+## Roadmap
 
-You play games on Linux and are looking for a lightweight and performant
-alternative to OBS for capturing video replays.
+- Screenshots.
+- Toggle recording (currently only replays are supported).
+- Video player/editor.
+  - Simple video editor (trim start/end).
+  - File browser to select videos to edit.
+- Additional video output formats (mp4, mov, mkv, gif, etc.).
+- Windows capture.
+
+## Why would you want to use this?
+
+You're looking for a lightweight and performant way to capture video replays.
+The goal of Spacecap is to be as fast and resource efficient as possible. To do
+this, frame buffers stay on the GPU (via dma-buff) for the entire duration of
+the encoding pipeline.
 
 ## Requirements
 
-- GPU that supports Vulkan Video
+- A GPU that supports Vulkan Video.
+
+**NOTE:** Only tested on an Nvidia GPU so far. AMD will be supported, I just
+have no way of testing at this time.
 
 ### Linux
 
@@ -34,8 +49,9 @@ alternative to OBS for capturing video replays.
 
 #### Global Keybinds
 
-If your version of Linux supports [xdg-desktop-portal global shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) then you can configure it that way.
-Otherwise, the Spacecap CLI can be used to send commands to the IPC server.
+If your version of Linux supports [xdg-desktop-portal global shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
+then they can be configured that way. Alternatively, Spacecap runs an IPC
+server, which can be communicated with via Spacecap CLI.
 
 For example, here is what a config in [niri](https://github.com/YaLTeR/niri) would look like:
 
@@ -51,7 +67,8 @@ Use `spacecap -h` to see available commands.
 
 Windows is not yet supported. This application was architected in such a way
 that it can be cross platform. For Windows support, the audio/video capture
-interfaces need to be implemented.
+interfaces need to be implemented. It's on the roadmap, but is not currently
+a priority.
 
 ## Development
 
@@ -69,16 +86,3 @@ nix develop -c zig build run -Dnix
 # Test
 nix develop -c zig build test -Dnix
 ```
-
-## Roadmap
-
-- ~~Set up pipeline to build and distribute binaries (appimage).~~
-- ~~Audio recording.~~
-- ~~Global keybinds~~
-- Screenshots.
-- ~~Show video preview on UI~~ - #9
-- Video Player.
-  - Simple video editor (trim start/end).
-- Convert video output (mp4, gif, etc.).
-- ~~Linux capture.~~
-- Windows capture.
