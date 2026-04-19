@@ -107,6 +107,7 @@ fn add_linux_dependencies(
     exe.root_module.linkSystemLibrary("gio-2.0", .{});
     exe.root_module.linkSystemLibrary("gobject-2.0", .{});
     exe.root_module.linkSystemLibrary("portal", .{});
+    exe.root_module.linkSystemLibrary("wayland-client", .{});
 
     // Vulkan is linked directly, because it is required that the
     // system has the libs installed.
