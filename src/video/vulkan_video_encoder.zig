@@ -1,14 +1,10 @@
 const vk = @import("vulkan");
 const std = @import("std");
-const Device = @import("../vulkan/vulkan.zig").Device;
-const Instance = @import("../vulkan/vulkan.zig").Instance;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const Queue = @import("../vulkan/vulkan.zig").Queue;
 const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
 const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
 const types = @import("../types.zig");
 
-const Display = u32;
 const REFERENCE_IMAGE_COUNT = 2;
 
 pub const EncodeResult = struct {
@@ -22,6 +18,7 @@ const PushConstants = extern struct {
 
 pub const VulkanVideoEncoder = struct {
     const Self = @This();
+    const log = std.log.scoped(.vulkan_video_encoder);
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
@@ -172,7 +169,7 @@ pub const VulkanVideoEncoder = struct {
 
         try self.allocate_intermediate_image();
         errdefer self.destroy_intermediate_images();
-        std.debug.print("^^^^^ nvidia validation issue here ^^^^^\n", .{});
+        log.debug("^^^^^ nvidia validation issue here ^^^^^\n", .{});
 
         try self.create_output_query_pool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);

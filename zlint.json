@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DonIsaac/zlint/refs/heads/main/zlint.schema.json",
+  "ignore": ["vendor", "zig-out"],
+  "rules": {
+    "avoid-as": "warn",
+    "case-convention": "off",
+    "allocator-first-param": "off",
+    "useless-error-return": "off",
+    "unused-decls": "warn",
+    "homeless-try": "error",
+    "no-catch-return": "warn",
+    "empty-file": "warn",
+    "line-length": "off",
+    "no-print": "warn",
+    "returned-stack-reference": "off",
+    "duplicate-case": "off",
+    "no-unresolved": "error",
+    "unsafe-undefined": "allow",
+    "suppressed-errors": "warn",
+    "no-return-try": "off",
+    "must-return-ref": "warn"
+  }
+}
