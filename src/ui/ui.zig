@@ -3,7 +3,6 @@ const std = @import("std");
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const rc = @import("zigrc");
-const util = @import("../util.zig");
 const sdl = @import("./sdl.zig");
 
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
@@ -13,6 +12,7 @@ const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
 const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -33,6 +33,7 @@ pub const UI = struct {
     surface: ?c.VkSurfaceKHR = null,
     descriptor_pool: ?vk.DescriptorPool = null,
     swapchain_rebuild: bool = false,
+    wayland_present_gate: ?WaylandPresentGate = null,
 
     /// Init SDL and return new UI instance
     pub fn init(
@@ -71,6 +72,9 @@ pub const UI = struct {
 
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
+        if (self.wayland_present_gate) |*wayland_present_gate| {
+            wayland_present_gate.deinit();
+        }
 
         if (self.descriptor_pool) |descriptor_pool| {
             self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
@@ -138,6 +142,7 @@ pub const UI = struct {
         if (!c.SDL_ShowWindow(self.window.?)) {
             return error.SDLShowWindowFailure;
         }
+        self.wayland_present_gate = WaylandPresentGate.init(self.window.?);
 
         // Setup Dear ImGui context
         if (c.ImGui_CreateContext(null) == null) return error.ImGuiCreateContextFailure;
@@ -268,12 +273,8 @@ pub const UI = struct {
                     else => {},
                 }
             }
-
-            // NOTE: SDL_WINDOW_MINIMIZED - this event does not get invoked on wayland.
-            // TODO: Test this out on windows. We may not want this at all?
-            if ((c.SDL_GetWindowFlags(self.window.?) & c.SDL_WINDOW_MINIMIZED) > 0) {
-                c.SDL_Delay(10);
-                continue;
+            if (self.wayland_present_gate) |*wayland_present_gate| {
+                wayland_present_gate.dispatch_pending();
             }
 
             // Resize swap chain?
@@ -282,6 +283,14 @@ pub const UI = struct {
             if (!c.SDL_GetWindowSizeInPixels(self.window.?, &fb_width, &fb_height)) {
                 return error.SDLGetWindowSizeInPixelsFailure;
             }
+            const framebuffer_zero_sized = fb_width <= 0 or fb_height <= 0;
+            const run_ui_frame = self.should_run_ui_frame(framebuffer_zero_sized);
+
+            if (!run_ui_frame) {
+                c.SDL_Delay(1);
+                continue;
+            }
+
             if (fb_width > 0 and fb_height > 0 and
                 (self.swapchain_rebuild or
                     self.vulkan.window.?.Width != fb_width or
@@ -369,12 +378,13 @@ pub const UI = struct {
                 // Rendering while preview locks are held.
                 c.ImGui_Render();
                 const draw_data = c.ImGui_GetDrawData();
-                const is_minimized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
+                const imgui_zero_sized = (draw_data.*.DisplaySize.x <= 0.0 or draw_data.*.DisplaySize.y <= 0.0);
+                const should_present = run_ui_frame and !imgui_zero_sized;
                 self.vulkan.window.?.ClearValue.color.float32[0] = clear_color.x * clear_color.w;
                 self.vulkan.window.?.ClearValue.color.float32[1] = clear_color.y * clear_color.w;
                 self.vulkan.window.?.ClearValue.color.float32[2] = clear_color.z * clear_color.w;
                 self.vulkan.window.?.ClearValue.color.float32[3] = clear_color.w;
-                if (!is_minimized) {
+                if (should_present) {
                     try self.frame_render(draw_data);
                 }
 
@@ -383,7 +393,7 @@ pub const UI = struct {
                     c.ImGui_RenderPlatformWindowsDefault();
                 }
 
-                if (!is_minimized) {
+                if (should_present) {
                     try self.frame_present();
                 }
             }
@@ -481,6 +491,19 @@ pub const UI = struct {
             .p_swapchains = @ptrCast(&wd.Swapchain),
             .p_image_indices = @ptrCast(&wd.FrameIndex),
         };
+        var present_completed = true;
+        if (self.wayland_present_gate) |*wayland_present_gate| {
+            present_completed = try wayland_present_gate.register_present_callback();
+            if (!present_completed) {
+                log.debug("[frame_present] skipping present because wl_surface.frame is not ready", .{});
+                return;
+            }
+            defer {
+                if (!present_completed) {
+                    wayland_present_gate.cancel_callback();
+                }
+            }
+        }
         self.vulkan.queue_present_khr(&info) catch |err| {
             switch (err) {
                 error.OutOfDateKHR => {
@@ -490,8 +513,36 @@ pub const UI = struct {
                 else => return err,
             }
         };
+        present_completed = true;
 
         wd.SemaphoreIndex = (wd.SemaphoreIndex + 1) % wd.SemaphoreCount; // Now we can use the next set of semaphores
+    }
+
+    /// Check for various window states to see if UI frames
+    /// should be rendered/presented. SDL3 does not provide
+    /// what we need for Wayland so we have to implement some
+    /// custom stuff.
+    fn should_run_ui_frame(
+        self: *Self,
+        framebuffer_zero_sized: bool,
+    ) bool {
+        const window_flags = c.SDL_GetWindowFlags(self.window.?);
+        const window_hidden = (window_flags & c.SDL_WINDOW_HIDDEN) > 0;
+        const window_minimized = (window_flags & c.SDL_WINDOW_MINIMIZED) > 0;
+        const window_occluded = (window_flags & c.SDL_WINDOW_OCCLUDED) > 0;
+        const wayland_allows_present = blk: {
+            if (self.wayland_present_gate) |wayland_present_gate| {
+                break :blk wayland_present_gate.frame_ready();
+            }
+
+            break :blk true;
+        };
+
+        return !window_hidden and
+            !window_minimized and
+            !window_occluded and
+            !framebuffer_zero_sized and
+            wayland_allows_present;
     }
 
     fn setup_vulkan_window(self: *Self) !void {
@@ -522,8 +573,10 @@ pub const UI = struct {
         const present_modes = [_]c.VkPresentModeKHR{
             // c.VK_PRESENT_MODE_IMMEDIATE_KHR,
             // c.VK_PRESENT_MODE_MAILBOX_KHR,
-            // NOTE: FIFO seems to be the best for a desktop application. Had some deadlock issues
-            // in the past with this, but it should be resolved now.
+            // NOTE: FIFO seems to be the best for a desktop application and is
+            // more widely supported. When using this method, we MUST make sure
+            // it doesn't try to render/present when the window is not visible
+            // (or is throttled by the compositor).
             c.VK_PRESENT_MODE_FIFO_KHR,
         };
         self.vulkan.window.?.PresentMode = c.cImGui_ImplVulkanH_SelectPresentMode(
