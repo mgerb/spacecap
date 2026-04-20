@@ -3,6 +3,6 @@ Type=Application
 Name=Spacecap
 Comment=Hardware accelerated replay capture tool
 Exec=spacecap
-Icon=spacecap
+Icon=logo_blue
 Categories=AudioVideo;Video;
 Terminal=false

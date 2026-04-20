@@ -4,6 +4,7 @@ const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const rc = @import("zigrc");
 const sdl = @import("./sdl.zig");
+const Tray = @import("./tray.zig").Tray;
 
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const Actor = @import("../state/actor.zig").Actor;
@@ -13,6 +14,7 @@ const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
 const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
+const AppIcon = @import("./app_icon.zig").AppIcon;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -30,12 +32,15 @@ pub const UI = struct {
     allocator: std.mem.Allocator,
 
     window: ?*c.struct_SDL_Window = null,
+    window_icon_surface: ?*c.SDL_Surface = null,
+    tray: ?Tray = null,
     surface: ?c.VkSurfaceKHR = null,
     descriptor_pool: ?vk.DescriptorPool = null,
     swapchain_rebuild: bool = false,
     wayland_present_gate: ?WaylandPresentGate = null,
+    app_icon: AppIcon,
 
-    /// Init SDL and return new UI instance
+    /// Init SDL and return new UI instance.
     pub fn init(
         allocator: std.mem.Allocator,
         actor: *Actor,
@@ -48,6 +53,7 @@ pub const UI = struct {
             .allocator = allocator,
             .actor = actor,
             .vulkan = vulkan,
+            .app_icon = .init(),
         };
 
         try sdl.init();
@@ -70,6 +76,7 @@ pub const UI = struct {
             }
         }
 
+        self.app_icon.deinit();
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
         if (self.wayland_present_gate) |*wayland_present_gate| {
@@ -90,19 +97,26 @@ pub const UI = struct {
             self.vulkan.window = null;
         }
 
-        // Seems like destroying the vulkan window destroys the surface?
-        // if (self.surface) |surface| {
-        //     c.SDL_Vulkan_DestroySurface(self.vkInstance(), surface, null);
-        // }
+        if (self.surface) |surface| {
+            c.SDL_Vulkan_DestroySurface(self.vk_instance(), surface, null);
+            self.surface = null;
+        }
 
         if (self.window) |window| {
             c.SDL_DestroyWindow(window);
+        }
+        if (self.tray) |*tray| {
+            tray.deinit();
+        }
+        if (self.window_icon_surface) |icon_surface| {
+            c.SDL_DestroySurface(icon_surface);
         }
         c.SDL_Quit();
 
         self.allocator.destroy(self);
     }
 
+    // TODO: Split off the main loop into its own method.
     fn init_vulkan(self: *Self) !void {
         self.window = c.SDL_CreateWindow("Spacecap", WIDTH, HEIGHT, c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY);
         if (self.window == null) return error.SDLCreateWindowFailure;
@@ -110,6 +124,20 @@ pub const UI = struct {
             if (self.window) |window| {
                 c.SDL_DestroyWindow(window);
             }
+        }
+
+        if (!c.SDL_SetWindowIcon(self.window.?, self.app_icon.app_icon_surface_blue)) {
+            log.warn("[init_vulkan] failed to set window icon: {s}", .{c.SDL_GetError()});
+        }
+
+        // Just log the error. Should still run without the tray.
+        self.tray = Tray.init(self.actor, &self.app_icon) catch |err| blk: {
+            log.err("[init_vulkan] unable to initialize tray: {}", .{err});
+            break :blk null;
+        };
+        errdefer {
+            if (self.tray) |*tray| tray.deinit();
+            self.tray = null;
         }
 
         var surface: c.VkSurfaceKHR = undefined;
@@ -196,13 +224,13 @@ pub const UI = struct {
         init_info.Queue = self.vk_queue();
         init_info.PipelineCache = g_PipelineCache; // TODO: maybe need?
         init_info.DescriptorPool = self.vk_descriptor_pool();
-        init_info.RenderPass = self.vulkan.window.?.RenderPass;
-        init_info.Subpass = 0;
         init_info.MinImageCount = MIN_IMAGE_COUNT;
         init_info.ImageCount = self.vulkan.window.?.ImageCount;
-        init_info.MSAASamples = c.VK_SAMPLE_COUNT_1_BIT;
         init_info.Allocator = null;
         init_info.CheckVkResultFn = check_vk_result;
+        init_info.PipelineInfoMain.RenderPass = self.vulkan.window.?.RenderPass;
+        init_info.PipelineInfoMain.Subpass = 0;
+        init_info.PipelineInfoMain.MSAASamples = c.VK_SAMPLE_COUNT_1_BIT;
         if (!c.cImGui_ImplVulkan_Init(&init_info)) {
             return error.ImGuiVulkanInitFailure;
         }
@@ -228,6 +256,7 @@ pub const UI = struct {
             .GlyphMaxAdvanceX = std.math.floatMax(f32),
             .RasterizerMultiply = 1.0,
             .RasterizerDensity = 1.0,
+            .ExtraSizeScale = 1.0,
         };
 
         const font = c.ImFontAtlas_AddFontFromMemoryTTF(
@@ -277,6 +306,15 @@ pub const UI = struct {
                 wayland_present_gate.dispatch_pending();
             }
 
+            if (self.tray) |*tray| {
+                self.actor.ui_mutex.lock();
+                defer self.actor.ui_mutex.unlock();
+                tray.set_state(.{
+                    .is_recording = self.actor.state.is_recording_video,
+                    .is_capturing = self.actor.state.is_capturing_video,
+                });
+            }
+
             // Resize swap chain?
             var fb_width: i32 = undefined;
             var fb_height: i32 = undefined;
@@ -311,6 +349,7 @@ pub const UI = struct {
                     fb_width,
                     fb_height,
                     MIN_IMAGE_COUNT,
+                    c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                 );
                 self.vulkan.window.?.FrameIndex = 0;
                 self.swapchain_rebuild = false;
@@ -548,7 +587,16 @@ pub const UI = struct {
     fn setup_vulkan_window(self: *Self) !void {
         self.vulkan.window = .{
             .Surface = self.surface.?,
-            .ClearEnable = true,
+            .AttachmentDesc = .{
+                .format = c.VK_FORMAT_UNDEFINED,
+                .samples = c.VK_SAMPLE_COUNT_1_BIT,
+                .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE,
+                .stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                .stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+                .finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            },
         };
 
         // Check for WSI support
@@ -606,6 +654,7 @@ pub const UI = struct {
                 fb_width,
                 fb_height,
                 MIN_IMAGE_COUNT,
+                c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
             );
         }
     }

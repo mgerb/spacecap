@@ -1,4 +1,3 @@
-const util = @import("src/util.zig");
 const std = @import("std");
 const ffmpeg_build_util = @import("build/ffmpeg_build.zig");
 const version = @import("build/version.zig");
@@ -40,6 +39,12 @@ fn add_shared_dependencies(
     try compile_shader(allocator, b, exe, "random.vert", "random_vert_shader");
     try compile_shader(allocator, b, exe, "bgr-ycbcr-shader-2plane.comp", "bgr-ycbcr-shader-2plane");
 
+    inline for (.{ "logo_blue.png", "logo_red.png", "logo_green.png" }) |logo_file| {
+        exe.root_module.addAnonymousImport(logo_file, .{
+            .root_source_file = b.path("packaging/" ++ logo_file),
+        });
+    }
+
     // vulkan
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const vulkan = b.dependency(
@@ -52,16 +57,11 @@ fn add_shared_dependencies(
     exe.root_module.addImport("vulkan", vulkan);
     exe.addIncludePath(vulkan_headers.path(""));
 
-    // SDL3
-    const sdl = b.dependency("sdl", .{
+    // NOTE: SDL3 is statically linked by imguiz.
+    const imguiz = b.dependency("imguiz", .{
         .target = target,
         .optimize = optimize,
-        .linkage = .static,
-    });
-    exe.linkLibrary(sdl.artifact("SDL3"));
-
-    // imguiz
-    const imguiz = b.dependency("imguiz", .{}).module("imguiz");
+    }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 
     // zigrc

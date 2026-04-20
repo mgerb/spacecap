@@ -79,8 +79,8 @@
             .hash = "vulkan-0.0.0-r7YtxztIAwBc30xIMx4tzfUcEmc7goWiFJkR13yeLfi8",
         },
         .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#7d6e1a4dfb2f31da24c9f76e0c4ba8285e89d289",
-            .hash = "imguiz-0.0.0-sI63zx-_DwQbtJX5KbwrOK_VnEkxIft96REu9HVBZ3W8",
+            .url = "git+https://github.com/mgerb/imguiz#3b56163b6f87e681856e019141f034e9966d8aa0",
+            .hash = "imguiz-0.0.0-sI63z3FwbgSB_xv3TSKRjoMhwSfup8tmCPMq1ZJyDqUs",
         },
         .ffmpeg = .{
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",
@@ -93,10 +93,6 @@
         .zigrc = .{
             .url = "git+https://github.com/Aandreba/zigrc#b1e98f1cc506e975bdb27341c27d920021e7b4d8",
             .hash = "zigrc-1.0.0-lENlWzvQAACulrbkL9PVhWjFsWSkYhi7AmfSbCM-2Xlh",
-        },
-        .sdl = .{
-            .url = "git+https://github.com/allyourcodebase/SDL3#467a4baad2acdda1bcf717065793fbbdf2569f8d",
-            .hash = "sdl-0.0.0-i4QD0WN-qQB1RKdRC9-6iZyTco2jIIr3y2DFrAz-D9CH",
         },
         .pipewire = .{
             .url = "https://github.com/mgerb/pipewire/archive/refs/heads/dev.tar.gz",
