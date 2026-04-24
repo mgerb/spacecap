@@ -50,6 +50,7 @@ pub fn deinit(self: *Self) void {
     self.allocator.destroy(self);
 }
 
+/// Takes ownership of data.
 pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
     self.timeline.add_data(data) catch |err| switch (err) {
         error.UnsupportedAudioFormat => {

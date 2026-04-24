@@ -28,6 +28,7 @@ const ReplayBufferViewModel = struct {
 
 // TODO: Move any "global" state into its own object.
 is_recording_video: bool = false,
+is_recording_to_disk: bool = false,
 is_capturing_video: bool = false,
 show_demo: bool = false,
 is_video_capture_supprted: bool,

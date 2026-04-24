@@ -2,38 +2,51 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
-const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
+const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
 const SampleWindow = @import("../audio/audio_timeline.zig").SampleWindow;
 const EncodedAudioPacketNode = @import("../audio/audio_encoder.zig").EncodedAudioPacketNode;
 const LinkedListIterator = @import("../util.zig").LinkedListIterator;
-const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
-const VideoReplayBufferNode = @import("./video_replay_buffer.zig").VideoReplayBufferNode;
-const ReplayWindow = @import("../types.zig").ReplayWindow;
 const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
 const checkErr = @import("../ffmpeg.zig").check_err;
 
 pub const Muxer = struct {
     const Self = @This();
+
+    const PendingVideoPacket = struct {
+        data: std.ArrayList(u8),
+        is_idr: bool,
+
+        fn init(allocator: Allocator, data: []const u8, is_idr: bool) !@This() {
+            var owned = try std.ArrayList(u8).initCapacity(allocator, data.len);
+            errdefer owned.deinit(allocator);
+            try owned.appendSlice(allocator, data);
+            return .{ .data = owned, .is_idr = is_idr };
+        }
+
+        fn deinit(self: *@This(), allocator: Allocator) void {
+            self.data.deinit(allocator);
+        }
+    };
+
     allocator: Allocator,
     fps: u32,
     format_context: *ffmpeg.AVFormatContext,
     file_name: [:0]u8,
-    video_replay_buffer: *VideoReplayBuffer,
     video_stream: *ffmpeg.AVStream,
-    /// Audio is optional.
-    audio_replay_buffer: ?*AudioReplayBuffer,
-    /// Audio packets are stored on the same absolute sample timeline used by the
-    /// replay buffer. Export converts the chosen video window into this range.
-    audio_sample_window: ?SampleWindow,
-    /// Audio is optional so replays can still export when no audio packets were
-    /// captured or when audio falls completely outside the final replay window.
     audio_stream: ?*ffmpeg.AVStream,
+    first_video_time_ns: ?i128 = null,
+    audio_start_sample: ?i64 = null,
+    audio_end_sample: ?i64 = null,
+    pending_video: ?PendingVideoPacket = null,
+    previous_pts: i64 = 0,
+    last_delta: i64 = 0,
+    wrote_trailer: bool = false,
 
     pub fn init(
         allocator: Allocator,
-        video_replay_buffer: *VideoReplayBuffer,
-        audio_replay_buffer: ?*AudioReplayBuffer,
-        replay_window: ReplayWindow,
+        file_name_prefix: []const u8,
+        header_frame: []const u8,
+        audio_codec_context: ?CodecContextInfo,
         width: u32,
         height: u32,
         fps: u32,
@@ -41,7 +54,7 @@ pub const Muxer = struct {
     ) !Self {
         var format_context: *ffmpeg.AVFormatContext = undefined;
         try std.fs.cwd().makePath(output_directory);
-        const file_name = try get_output_file_name(allocator, "replay", output_directory);
+        const file_name = try get_output_file_name(allocator, file_name_prefix, output_directory);
         errdefer allocator.free(file_name);
 
         var ret = ffmpeg.avformat_alloc_output_context2(@ptrCast(&format_context), null, "mp4", file_name);
@@ -63,14 +76,14 @@ pub const Muxer = struct {
         video_codecpar.*.height = @intCast(height);
 
         // ffmpeg frees this memory when it's done so we need to copy it.
-        const extradata: [*c]u8 = @ptrCast(ffmpeg.av_malloc(video_replay_buffer.header_frame.items.len));
+        const extradata: [*c]u8 = @ptrCast(ffmpeg.av_malloc(header_frame.len));
         if (extradata == null) {
             return error.OutOfMemory;
         }
-        @memcpy(extradata[0..video_replay_buffer.header_frame.items.len], video_replay_buffer.header_frame.items);
+        @memcpy(extradata[0..header_frame.len], header_frame);
 
         video_codecpar.*.extradata = extradata;
-        video_codecpar.*.extradata_size = @intCast(video_replay_buffer.header_frame.items.len);
+        video_codecpar.*.extradata_size = @intCast(header_frame.len);
 
         // Convert nanosecond capture timestamps to a muxer-friendly video time base.
         video_stream.*.time_base = ffmpeg.AVRational{ .num = 1, .den = 90_000 };
@@ -78,16 +91,11 @@ pub const Muxer = struct {
         video_stream.*.r_frame_rate = ffmpeg.AVRational{ .num = @intCast(fps), .den = 1 };
 
         var audio_stream: ?*ffmpeg.AVStream = null;
-        var audio_sample_window: ?SampleWindow = null;
-        if (audio_replay_buffer) |_audio_replay_buffer| {
-            audio_sample_window = _audio_replay_buffer.timeline.get_unclamped_sample_window(replay_window.start_ns, replay_window.end_ns);
-            if (_audio_replay_buffer.has_packets() and audio_sample_window != null) {
-                const stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
-                const codec_context = _audio_replay_buffer.timeline.get_codec_context();
-                try checkErr(ffmpeg.avcodec_parameters_from_context(stream.*.codecpar, codec_context.audio_codec_ctx));
-                stream.*.time_base = codec_context.time_base;
-                audio_stream = stream;
-            }
+        if (audio_codec_context) |codec_context| {
+            const stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
+            try checkErr(ffmpeg.avcodec_parameters_from_context(stream.*.codecpar, codec_context.audio_codec_ctx));
+            stream.*.time_base = codec_context.time_base;
+            audio_stream = stream;
         }
 
         if (format_context.oformat.*.flags & ffmpeg.AVFMT_NOFILE == 0) {
@@ -101,9 +109,6 @@ pub const Muxer = struct {
 
         return .{
             .allocator = allocator,
-            .video_replay_buffer = video_replay_buffer,
-            .audio_replay_buffer = audio_replay_buffer,
-            .audio_sample_window = audio_sample_window,
             .fps = fps,
             .format_context = format_context,
             .file_name = file_name,
@@ -112,7 +117,16 @@ pub const Muxer = struct {
         };
     }
 
+    pub fn destroy(self: *Self) void {
+        const allocator = self.allocator;
+        self.deinit();
+        allocator.destroy(self);
+    }
+
     pub fn deinit(self: *Self) void {
+        if (self.pending_video) |*pending| {
+            pending.deinit(self.allocator);
+        }
         if (self.format_context.pb != null) {
             _ = ffmpeg.avio_closep(&self.format_context.pb);
         }
@@ -120,158 +134,21 @@ pub const Muxer = struct {
         self.allocator.free(self.file_name);
     }
 
-    pub fn mux_audio_video(self: *Self) !void {
-        var video_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-        defer ffmpeg.av_packet_free(&video_pkt);
-
-        var audio_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-        defer ffmpeg.av_packet_free(&audio_pkt);
-
-        const max_mux_duration: i64 = std.math.maxInt(i32);
-        var first_frame_time_ns: ?i128 = null;
-        var pending_node: ?*VideoReplayBufferNode = null;
-        var previous_pts: i64 = 0;
-        var last_delta: i64 = 0;
-        const ns_time_base = ffmpeg.AVRational{ .num = 1, .den = 1_000_000_000 };
-        const frame_duration_pts = if (self.fps > 0)
-            @max(ffmpeg.av_rescale_q(1, .{ .num = 1, .den = @intCast(self.fps) }, self.video_stream.time_base), 1)
-        else
-            0;
-        // Snap only small capture jitter. Preserve real timeline gaps when capture/encode stalls.
-        const jitter_tolerance_pts = if (self.fps > 0)
-            @max(ffmpeg.av_rescale_q(10 * std.time.ns_per_ms, ns_time_base, self.video_stream.time_base), 1)
-        else
-            0;
-
-        var audio_iterator = if (self.audio_replay_buffer) |audio_replay_buffer|
-            audio_replay_buffer.packet_iterator()
-        else
-            null;
-        const p_audio_iterator = if (audio_iterator != null) &audio_iterator.? else null;
-        // Mutable audio packet used for all of muxing.
-        var next_audio_packet = if (audio_iterator != null)
-            self.next_audio_packet_for_window(@constCast(&audio_iterator.?))
-        else
-            null;
-
-        while (try self.video_replay_buffer.pop_first_owned()) |data| {
-            const video_frame = data.data;
-
-            if (first_frame_time_ns == null) {
-                first_frame_time_ns = video_frame.timestamp_ns;
-            }
-
-            const pts_ns = video_frame.timestamp_ns - first_frame_time_ns.?;
-            const raw_current_pts: i64 = ffmpeg.av_rescale_q(@intCast(pts_ns), ns_time_base, self.video_stream.time_base);
-            const current_pts = apply_jitter_correction_to_pts(
-                raw_current_pts,
-                if (pending_node != null) previous_pts else null,
-                frame_duration_pts,
-                jitter_tolerance_pts,
-            );
-
-            // The video packet writes rely on the previous frame PTS, so that
-            // is why we do this weird pending_node logic and then write the last
-            // packet when the loop exits.
-            if (pending_node) |pending| {
-                // We now have the next PTS, so we can set duration on the pending packet.
-                const duration = if (current_pts > previous_pts) current_pts - previous_pts else 0;
-                const safe_duration = if (duration > max_mux_duration) max_mux_duration else duration;
-                try self.write_pending_video_packet(
-                    video_pkt,
-                    audio_pkt,
-                    p_audio_iterator,
-                    &next_audio_packet,
-                    pending,
-                    previous_pts,
-                    safe_duration,
-                );
-                last_delta = safe_duration;
-            }
-
-            pending_node = data;
-            previous_pts = current_pts;
-        }
-
-        if (pending_node) |pending| {
-            try self.write_pending_video_packet(
-                video_pkt,
-                audio_pkt,
-                p_audio_iterator,
-                &next_audio_packet,
-                pending,
-                previous_pts,
-                if (last_delta > 0) last_delta else 0,
-            );
-        }
-
-        // Any remaining audio belongs after the final video packet.
-        if (audio_iterator) |_audio_iterator| {
-            while (next_audio_packet) |audio_node| {
-                try self.write_audio_packet(audio_pkt, audio_node);
-                next_audio_packet = self.next_audio_packet_for_window(@constCast(&_audio_iterator));
-            }
-        }
-
-        const ret = ffmpeg.av_write_trailer(self.format_context);
-        try checkErr(ret);
-    }
-
-    fn next_audio_packet_for_window(self: *Self, iterator: *LinkedListIterator(EncodedAudioPacketNode)) ?*EncodedAudioPacketNode {
-        const audio_sample_window = self.audio_sample_window orelse return null;
-
-        while (iterator.next()) |packet_node| {
-            const packet_start = packet_node.data.*.pts;
-            const packet_end = packet_start + packet_node.data.*.duration;
-
-            if (packet_end <= audio_sample_window.start_sample) {
-                continue;
-            }
-            if (packet_start >= audio_sample_window.end_sample) {
-                return null;
-            }
-            return packet_node;
-        }
-
-        return null;
-    }
-
-    fn should_write_audio_before_video(self: *Self, packet_node: *EncodedAudioPacketNode, video_pts: i64) bool {
-        assert(self.audio_stream != null);
-        assert(self.audio_sample_window != null);
-        const packet_pts = packet_node.data.*.pts - self.audio_sample_window.?.start_sample;
-        return ffmpeg.av_compare_ts(packet_pts, self.audio_stream.?.*.time_base, video_pts, self.video_stream.time_base) < 0;
-    }
-
-    fn write_pending_video_packet(
+    fn write_video_packet_data(
         self: *Self,
         video_pkt: [*c]ffmpeg.AVPacket,
-        audio_pkt: [*c]ffmpeg.AVPacket,
-        audio_iterator: ?*LinkedListIterator(EncodedAudioPacketNode),
-        next_audio_packet: *?*EncodedAudioPacketNode,
-        pending: *VideoReplayBufferNode,
+        data: []const u8,
+        is_idr: bool,
         pts: i64,
         duration: i64,
     ) !void {
-        // Before writing the pending video frame, flush any audio packet whose
-        // sample-time PTS belongs earlier on the mux timeline.
-        if (audio_iterator) |_audio_iterator| {
-            while (next_audio_packet.*) |audio_node| {
-                if (!self.should_write_audio_before_video(audio_node, pts)) {
-                    break;
-                }
-                try self.write_audio_packet(audio_pkt, audio_node);
-                next_audio_packet.* = self.next_audio_packet_for_window(_audio_iterator);
-            }
-        }
-
-        video_pkt.*.data = pending.data.data.items.ptr;
-        video_pkt.*.size = @intCast(pending.data.data.items.len);
+        video_pkt.*.data = @constCast(data.ptr);
+        video_pkt.*.size = @intCast(data.len);
         video_pkt.*.stream_index = self.video_stream.index;
         video_pkt.*.pts = pts;
-        video_pkt.*.dts = video_pkt.*.pts;
+        video_pkt.*.dts = pts;
         video_pkt.*.duration = duration;
-        if (pending.data.is_idr) {
+        if (is_idr) {
             video_pkt.*.flags |= ffmpeg.AV_PKT_FLAG_KEY;
         } else {
             video_pkt.*.flags &= ~ffmpeg.AV_PKT_FLAG_KEY;
@@ -280,23 +157,122 @@ pub const Muxer = struct {
         const ret = ffmpeg.av_interleaved_write_frame(self.format_context, video_pkt);
         ffmpeg.av_packet_unref(video_pkt);
         try checkErr(ret);
-
-        pending.deinit();
     }
 
-    fn write_audio_packet(self: *Self, pkt: [*c]ffmpeg.AVPacket, packet_node: *EncodedAudioPacketNode) !void {
+    fn write_audio_packet(self: *Self, pkt: [*c]ffmpeg.AVPacket, packet_node: *EncodedAudioPacketNode, start_sample: i64) !void {
         assert(self.audio_stream != null);
-        assert(self.audio_sample_window != null);
         try checkErr(ffmpeg.av_packet_ref(pkt, @constCast(packet_node.data)));
         pkt.*.stream_index = self.audio_stream.?.*.index;
-        pkt.*.pts = packet_node.data.*.pts - self.audio_sample_window.?.start_sample;
-        pkt.*.dts = packet_node.data.*.dts - self.audio_sample_window.?.start_sample;
+        pkt.*.pts = packet_node.data.*.pts - start_sample;
+        pkt.*.dts = packet_node.data.*.dts - start_sample;
         pkt.*.duration = packet_node.data.*.duration;
         pkt.*.flags = packet_node.data.*.flags;
 
         const ret = ffmpeg.av_interleaved_write_frame(self.format_context, pkt);
         ffmpeg.av_packet_unref(pkt);
         try checkErr(ret);
+    }
+
+    pub fn video_start_time_ns(self: *const Self) ?i128 {
+        return self.first_video_time_ns;
+    }
+
+    pub fn needs_audio_start_sample(self: *const Self) bool {
+        return self.audio_stream != null and self.audio_start_sample == null;
+    }
+
+    pub fn set_audio_start_sample(self: *Self, start_sample: i64) void {
+        if (self.audio_start_sample == null) {
+            self.audio_start_sample = start_sample;
+        }
+    }
+
+    pub fn set_audio_sample_window(self: *Self, sample_window: SampleWindow) void {
+        self.audio_start_sample = sample_window.start_sample;
+        self.audio_end_sample = sample_window.end_sample;
+    }
+
+    pub fn write_video_packet(self: *Self, data: []const u8, frame_time_ns: i128, is_idr: bool) !void {
+        const max_mux_duration: i64 = std.math.maxInt(i32);
+
+        if (self.first_video_time_ns == null) {
+            if (!is_idr) return;
+            self.first_video_time_ns = frame_time_ns;
+        }
+
+        const ns_time_base = ffmpeg.AVRational{ .num = 1, .den = 1_000_000_000 };
+        const frame_duration_pts = if (self.fps > 0)
+            @max(ffmpeg.av_rescale_q(1, .{ .num = 1, .den = @intCast(self.fps) }, self.video_stream.time_base), 1)
+        else
+            0;
+        const jitter_tolerance_pts = if (self.fps > 0)
+            @max(ffmpeg.av_rescale_q(10 * std.time.ns_per_ms, ns_time_base, self.video_stream.time_base), 1)
+        else
+            0;
+
+        const pts_ns = frame_time_ns - self.first_video_time_ns.?;
+        const raw_current_pts: i64 = ffmpeg.av_rescale_q(@intCast(pts_ns), ns_time_base, self.video_stream.time_base);
+        const current_pts = apply_jitter_correction_to_pts(
+            raw_current_pts,
+            if (self.pending_video != null) self.previous_pts else null,
+            frame_duration_pts,
+            jitter_tolerance_pts,
+        );
+
+        if (self.pending_video) |*pending| {
+            const duration = if (current_pts > self.previous_pts) current_pts - self.previous_pts else 0;
+            const safe_duration = if (duration > max_mux_duration) max_mux_duration else duration;
+            var video_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
+            defer ffmpeg.av_packet_free(&video_pkt);
+            try self.write_video_packet_data(video_pkt, pending.data.items, pending.is_idr, self.previous_pts, safe_duration);
+            self.last_delta = safe_duration;
+            pending.deinit(self.allocator);
+            self.pending_video = null;
+        }
+
+        self.pending_video = try PendingVideoPacket.init(self.allocator, data, is_idr);
+        self.previous_pts = current_pts;
+    }
+
+    pub fn write_audio_packets(self: *Self, packets: *std.DoublyLinkedList) !void {
+        if (self.audio_stream == null) return;
+        const start_sample = self.audio_start_sample orelse return;
+
+        var pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
+        defer ffmpeg.av_packet_free(&pkt);
+
+        var iter = LinkedListIterator(EncodedAudioPacketNode).init(packets);
+        while (iter.next()) |packet_node| {
+            const packet_start = packet_node.data.*.pts;
+            const packet_end = packet_start + packet_node.data.*.duration;
+            if (packet_end <= start_sample) continue;
+            if (self.audio_end_sample) |end_sample| {
+                if (packet_start >= end_sample) break;
+            }
+            try self.write_audio_packet(pkt, packet_node, start_sample);
+        }
+    }
+
+    pub fn flush_video(self: *Self) !void {
+        if (self.pending_video) |*pending| {
+            var video_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
+            defer ffmpeg.av_packet_free(&video_pkt);
+            try self.write_video_packet_data(video_pkt, pending.data.items, pending.is_idr, self.previous_pts, self.last_delta);
+            pending.deinit(self.allocator);
+            self.pending_video = null;
+        }
+    }
+
+    pub fn finish(self: *Self) !void {
+        try self.flush_video();
+        try self.write_trailer();
+    }
+
+    fn write_trailer(self: *Self) !void {
+        if (self.wrote_trailer) return;
+        const ret = ffmpeg.av_write_trailer(self.format_context);
+        try checkErr(ret);
+        self.wrote_trailer = true;
     }
 
     // TODO: Move video timeline processing upstream.

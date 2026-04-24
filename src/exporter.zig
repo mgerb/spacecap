@@ -4,6 +4,8 @@
 const std = @import("std");
 const VideoReplayBuffer = @import("./video/video_replay_buffer.zig").VideoReplayBuffer;
 const AudioReplayBuffer = @import("./audio/audio_replay_buffer.zig");
+const CodecContextInfo = @import("./audio/audio_timeline.zig").CodecContextInfo;
+const SampleWindow = @import("./audio/audio_timeline.zig").SampleWindow;
 const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
 const checkErr = @import("./ffmpeg.zig").check_err;
 const Muxer = @import("./video/muxer.zig").Muxer;
@@ -33,18 +35,43 @@ pub fn export_replay_buffers(
         return;
     };
 
+    var audio_codec_context: ?CodecContextInfo = null;
+    var audio_sample_window: ?SampleWindow = null;
+    if (audio_replay_buffer) |_audio_replay_buffer| {
+        audio_sample_window = _audio_replay_buffer.timeline.get_unclamped_sample_window(replay_window.start_ns, replay_window.end_ns);
+        if (_audio_replay_buffer.has_packets() and audio_sample_window != null) {
+            audio_codec_context = _audio_replay_buffer.timeline.get_codec_context();
+        }
+    }
+
     var muxer = try Muxer.init(
         allocator,
-        video_replay_buffer,
-        audio_replay_buffer,
-        replay_window,
+        "replay",
+        video_replay_buffer.header_frame.items,
+        audio_codec_context,
         width,
         height,
         fps,
         output_directory,
     );
     defer muxer.deinit();
-    try muxer.mux_audio_video();
+
+    while (try video_replay_buffer.pop_first_owned()) |node| {
+        const video_frame = node.data;
+        errdefer node.deinit();
+        try muxer.write_video_packet(video_frame.data.items, video_frame.timestamp_ns, video_frame.is_idr);
+        node.deinit();
+    }
+    try muxer.flush_video();
+
+    if (audio_replay_buffer) |_audio_replay_buffer| {
+        if (audio_sample_window) |sample_window| {
+            muxer.set_audio_sample_window(sample_window);
+            try muxer.write_audio_packets(&_audio_replay_buffer.packets);
+        }
+    }
+
+    try muxer.finish();
 }
 
 /// Export only audio to file.

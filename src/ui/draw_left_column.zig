@@ -232,7 +232,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.329, .y = 0.706, .z = 0.247, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.173, .y = 0.471, .z = 0.129, .w = 1.0 });
                 c.ImGui_BeginDisabled(!video_capture_supported or actor.state.is_recording_video or !actor.state.is_capturing_video);
-                if (c.ImGui_ButtonEx("Start", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
+                if (c.ImGui_ButtonEx("Start Replay", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
                     try actor.dispatch(.start_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
@@ -244,7 +244,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, c.ImVec4{ .x = 0.75, .y = 0.1, .z = 0.1, .w = 1.0 });
                 c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, c.ImVec4{ .x = 0.5, .y = 0.0, .z = 0.0, .w = 1.0 });
                 c.ImGui_BeginDisabled(!video_capture_supported or !actor.state.is_recording_video);
-                if (c.ImGui_ButtonEx("Stop", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
+                if (c.ImGui_ButtonEx("Stop Replay", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
                     try actor.dispatch(.stop_record);
                 }
                 c.ImGui_PopStyleColorEx(3);
@@ -269,6 +269,24 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
             }
             c.ImGui_PopStyleColorEx(3);
             c.ImGui_EndDisabled();
+            c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+
+            if (c.ImGui_BeginTable("recording_button_table", 2, c.ImGuiTableFlags_None)) {
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_BeginDisabled(!video_capture_supported or actor.state.is_recording_to_disk or !actor.state.is_capturing_video);
+                if (c.ImGui_ButtonEx("Start Recording", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
+                    try actor.dispatch(.start_disk_recording);
+                }
+                c.ImGui_EndDisabled();
+
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_BeginDisabled(!video_capture_supported or !actor.state.is_recording_to_disk);
+                if (c.ImGui_ButtonEx("Stop Recording", .{ .x = imgui_util.WIDTH_FILL, .y = CONTROL_HEIGHT })) {
+                    try actor.dispatch(.stop_disk_recording);
+                }
+                c.ImGui_EndDisabled();
+                c.ImGui_EndTable();
+            }
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
             c.ImGui_Text(

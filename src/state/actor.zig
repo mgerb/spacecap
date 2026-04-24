@@ -17,6 +17,7 @@ const Mutex = @import("../mutex.zig").Mutex;
 const State = @import("./state.zig");
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
+const Muxer = @import("../video/muxer.zig").Muxer;
 const exporter = @import("../exporter.zig");
 const AudioActions = @import("./audio_state.zig").AudioActions;
 const UserSettingsActions = @import("./user_settings_state.zig").UserSettingsActions;
@@ -27,6 +28,8 @@ const log = std.log.scoped(.actor);
 pub const Actions = union(enum) {
     start_record,
     stop_record,
+    start_disk_recording,
+    stop_disk_recording,
     select_video_source: VideoCaptureSourceType,
     /// Restore the capture session on startup.
     restore_capture_session,
@@ -51,6 +54,7 @@ pub const Actor = struct {
     file_picker: *FilePicker,
     global_shortcuts: *GlobalShortcuts,
     video_replay_buffer: Mutex(?*VideoReplayBuffer) = .init(null),
+    recording_muxer: Mutex(?*Muxer) = .init(null),
     action_chan: ActionChan,
     thread_pool: std.Thread.Pool = undefined,
     /// WARNING: This locks the UI thread. This should only be locked
@@ -103,6 +107,12 @@ pub const Actor = struct {
         defer video_locked.unlock();
         if (video_locked.unwrap()) |video_replay_buffer| {
             video_replay_buffer.deinit();
+        }
+
+        const recording_locked = self.recording_muxer.lock();
+        defer recording_locked.unlock();
+        if (recording_locked.unwrap()) |recording_muxer| {
+            recording_muxer.destroy();
         }
 
         self.state.deinit();
@@ -230,6 +240,12 @@ pub const Actor = struct {
             },
             .stop_record => {
                 try self.stop_record();
+            },
+            .start_disk_recording => {
+                try self.start_disk_recording();
+            },
+            .stop_disk_recording => {
+                try self.stop_disk_recording();
             },
             .save_replay => {
                 var fps: u32 = 0;
@@ -391,7 +407,7 @@ pub const Actor = struct {
             };
 
             // Here we wait until the next projected frame time. This will happen if we are
-            // capturing/encoding frames to quickly.
+            // capturing/encoding frames too quickly.
             const ns_per_frame = (1.0 / @as(f64, @floatFromInt(fps))) * std.time.ns_per_s;
             const now = std.time.nanoTimestamp();
             const next_projected_frame_start_time = previous_frame_start_time + @as(u64, @intFromFloat(ns_per_frame));
@@ -430,10 +446,10 @@ pub const Actor = struct {
             var image_slc = [_]vk.Image{vulkan_image_buffer.value.*.image};
             var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.value.*.image_view};
 
-            const is_recording = blk: {
+            const should_encode = blk: {
                 self.ui_mutex.lock();
                 defer self.ui_mutex.unlock();
-                break :blk self.state.is_recording_video;
+                break :blk self.state.is_recording_video or self.state.is_recording_to_disk;
             };
 
             const copy_data = blk: {
@@ -446,14 +462,14 @@ pub const Actor = struct {
                         .src_height = vulkan_image_buffer.value.*.height,
                         .wait_semaphore = null,
                         // Only signal this semaphore when encode will wait on it.
-                        .use_signal_semaphore = is_recording,
+                        .use_signal_semaphore = should_encode,
                         .timestamp_ns = vulkan_image_buffer.value.*.timestamp_ns,
                     },
                 );
                 break :blk _copy_data;
             };
 
-            if (!is_recording) {
+            if (!should_encode) {
                 // In capture-only mode no downstream work waits on the preview copy.
                 // Wait here so the capture-ring source image is not recycled while still in flight.
                 if (copy_data.fence) |fence| {
@@ -470,7 +486,9 @@ pub const Actor = struct {
             const video_encoder = self.vulkan.video_encoder orelse continue;
             const video_locked = self.video_replay_buffer.lock();
             defer video_locked.unlock();
-            const video_replay_buffer = video_locked.unwrap() orelse continue;
+            const video_replay_buffer = video_locked.unwrap();
+            const record_to_disk = self.is_recording_to_disk();
+            if (video_replay_buffer == null and !record_to_disk) continue;
 
             try video_encoder.prepare_encode(.{
                 .image = &image_slc,
@@ -483,15 +501,24 @@ pub const Actor = struct {
             });
 
             const encode_result = try video_encoder.encode(0);
-            try video_encoder.finish_encode(
+            const encoded_packet = try video_encoder.finish_encode(
                 encode_result,
                 video_replay_buffer,
                 vulkan_image_buffer.value.*.timestamp_ns,
             );
+            if (record_to_disk) {
+                try self.write_recording_video_packet(
+                    encoded_packet,
+                    vulkan_image_buffer.value.*.timestamp_ns,
+                    encode_result.idr,
+                );
+            }
             self.ui_mutex.lock();
             defer self.ui_mutex.unlock();
-            self.state.replay_buffer.video_size = video_replay_buffer.size;
-            self.state.replay_buffer.seconds = video_replay_buffer.get_seconds();
+            if (video_replay_buffer) |_video_replay_buffer| {
+                self.state.replay_buffer.video_size = _video_replay_buffer.size;
+                self.state.replay_buffer.seconds = _video_replay_buffer.get_seconds();
+            }
         }
     }
 
@@ -513,6 +540,7 @@ pub const Actor = struct {
     }
 
     fn stop_capture(self: *Self) !void {
+        try self.stop_disk_recording();
         try self.stop_record();
 
         {
@@ -563,13 +591,16 @@ pub const Actor = struct {
             return error.VideoCaptureSizeNotFound;
         };
 
-        try self.vulkan.init_video_encoder(
-            size.width,
-            size.height,
-            fps,
-            capture_bit_rate,
-        );
-        errdefer self.vulkan.destroy_video_encoder();
+        const initialized_encoder = self.vulkan.video_encoder == null;
+        if (initialized_encoder) {
+            try self.vulkan.init_video_encoder(
+                size.width,
+                size.height,
+                fps,
+                capture_bit_rate,
+            );
+            errdefer self.vulkan.destroy_video_encoder();
+        }
 
         {
             var video_locked = self.video_replay_buffer.lock();
@@ -601,7 +632,9 @@ pub const Actor = struct {
             self.state.replay_buffer = .{};
         }
 
-        self.vulkan.destroy_video_encoder();
+        if (!self.is_recording_to_disk()) {
+            self.vulkan.destroy_video_encoder();
+        }
 
         var video_locked = self.video_replay_buffer.lock();
         defer video_locked.unlock();
@@ -609,6 +642,132 @@ pub const Actor = struct {
         if (video_replay_buffer) |vrb| {
             vrb.deinit();
             video_locked.set(null);
+        }
+    }
+
+    fn start_disk_recording(self: *Self) !void {
+        self.video_record_mutex.lock();
+        defer self.video_record_mutex.unlock();
+
+        var fps: u32 = 0;
+        var capture_bit_rate: u64 = 0;
+        var video_output_directory: ?String = null;
+        defer if (video_output_directory) |*_video_output_directory| _video_output_directory.deinit();
+
+        {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            if (!self.state.is_capturing_video or self.state.is_recording_to_disk) {
+                return;
+            }
+        }
+
+        {
+            const settings_locked = self.state.user_settings.settings.lock();
+            defer settings_locked.unlock();
+            const settings = settings_locked.unwrap_ptr();
+            fps = settings.capture_fps;
+            capture_bit_rate = settings.capture_bit_rate;
+            assert(settings.video_output_directory != null);
+            video_output_directory = try settings.video_output_directory.?.clone(self.allocator);
+        }
+
+        const size = self.video_capture.size() orelse {
+            return error.VideoCaptureSizeNotFound;
+        };
+
+        const initialized_encoder = self.vulkan.video_encoder == null;
+        if (initialized_encoder) {
+            try self.vulkan.init_video_encoder(
+                size.width,
+                size.height,
+                fps,
+                capture_bit_rate,
+            );
+            errdefer self.vulkan.destroy_video_encoder();
+        }
+
+        const audio_codec_context = try self.state.audio.start_disk_recording();
+        errdefer self.state.audio.stop_disk_recording(self) catch {};
+
+        const muxer = blk: {
+            const _muxer = try self.allocator.create(Muxer);
+            errdefer self.allocator.destroy(_muxer);
+            _muxer.* = try Muxer.init(
+                self.allocator,
+                "recording",
+                self.vulkan.video_encoder.?.bit_stream_header.items,
+                audio_codec_context,
+                size.width,
+                size.height,
+                fps,
+                video_output_directory.?.bytes,
+            );
+            break :blk _muxer;
+        };
+        errdefer muxer.destroy();
+
+        {
+            var locked = self.recording_muxer.lock();
+            defer locked.unlock();
+            if (locked.unwrap()) |old_muxer| {
+                old_muxer.destroy();
+            }
+            locked.set(muxer);
+        }
+
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
+        self.state.is_recording_to_disk = true;
+    }
+
+    fn stop_disk_recording(self: *Self) !void {
+        {
+            self.ui_mutex.lock();
+            defer self.ui_mutex.unlock();
+            if (!self.state.is_recording_to_disk) {
+                return;
+            }
+            self.state.is_recording_to_disk = false;
+        }
+
+        self.video_record_mutex.lock();
+        defer self.video_record_mutex.unlock();
+        defer if (!self.is_replay_buffer_active()) self.vulkan.destroy_video_encoder();
+
+        try self.state.audio.stop_disk_recording(self);
+
+        var muxer: ?*Muxer = null;
+        {
+            var locked = self.recording_muxer.lock();
+            defer locked.unlock();
+            muxer = locked.unwrap();
+            locked.set(null);
+        }
+
+        if (muxer) |_muxer| {
+            defer _muxer.destroy();
+            try _muxer.finish();
+        }
+    }
+
+    pub fn is_recording_to_disk(self: *Self) bool {
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
+        return self.state.is_recording_to_disk;
+    }
+
+    fn is_replay_buffer_active(self: *Self) bool {
+        self.ui_mutex.lock();
+        defer self.ui_mutex.unlock();
+        return self.state.is_recording_video;
+    }
+
+    fn write_recording_video_packet(self: *Self, data: []const u8, timestamp_ns: i128, is_idr: bool) !void {
+        var locked = self.recording_muxer.lock();
+        defer locked.unlock();
+        if (locked.unwrap()) |muxer| {
+            try muxer.write_video_packet(data, timestamp_ns, is_idr);
         }
     }
 

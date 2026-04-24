@@ -6,10 +6,17 @@ const Actor = @import("./actor.zig").Actor;
 const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
-const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
+const audio_capture_mod = @import("../capture/audio/audio_capture.zig");
+const AudioCapture = audio_capture_mod.AudioCapture;
+const SAMPLE_RATE = audio_capture_mod.SAMPLE_RATE;
+const CHANNELS = audio_capture_mod.CHANNELS;
+const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
 const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
+const AudioTimeline = @import("../audio/audio_timeline.zig").AudioTimeline;
+const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
+const deinitPacketList = @import("../audio/audio_encoder.zig").deinit_packet_list;
 const Actions = @import("./actor.zig").Actions;
 
 const log = std.log.scoped(.audio_state);
@@ -47,6 +54,7 @@ pub const AudioState = struct {
     /// This is a list of all currently available audio devices.
     devices: Mutex(std.ArrayList(AudioDeviceViewModel)),
     audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
+    audio_recording_timeline: Mutex(?*AudioTimeline) = .init(null),
     capture_thread: ?std.Thread = null,
 
     pub fn init(allocator: Allocator, audio_capture: *AudioCapture) !Self {
@@ -67,6 +75,15 @@ pub const AudioState = struct {
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
                 replay_buffer.deinit();
                 replay_buffer_locked.set(null);
+            }
+        }
+        {
+            var recording_timeline_locked = self.audio_recording_timeline.lock();
+            defer recording_timeline_locked.unlock();
+            if (recording_timeline_locked.unwrap()) |timeline| {
+                timeline.deinit();
+                self.allocator.destroy(timeline);
+                recording_timeline_locked.set(null);
             }
         }
 
@@ -239,6 +256,44 @@ pub const AudioState = struct {
         return replay_buffer;
     }
 
+    pub fn start_disk_recording(self: *Self) !?CodecContextInfo {
+        const timeline = try self.allocator.create(AudioTimeline);
+        errdefer self.allocator.destroy(timeline);
+        timeline.* = try AudioTimeline.init(self.allocator, SAMPLE_RATE, CHANNELS);
+
+        var locked = self.audio_recording_timeline.lock();
+        defer locked.unlock();
+        if (locked.unwrap()) |old_timeline| {
+            log.warn("[start_disk_recording] previous recording timeline was not destroyed", .{});
+            old_timeline.deinit();
+            self.allocator.destroy(old_timeline);
+        }
+        locked.set(timeline);
+        return timeline.get_codec_context();
+    }
+
+    pub fn stop_disk_recording(self: *Self, actor: *Actor) !void {
+        var timeline: ?*AudioTimeline = null;
+        {
+            var locked = self.audio_recording_timeline.lock();
+            defer locked.unlock();
+            timeline = locked.unwrap();
+            locked.set(null);
+        }
+
+        if (timeline) |_timeline| {
+            defer {
+                _timeline.deinit();
+                self.allocator.destroy(_timeline);
+            }
+
+            try _timeline.finalize();
+            var packets = _timeline.take_ready_packets();
+            defer deinitPacketList(&packets);
+            try self.write_recording_audio_packets(actor, &packets, _timeline);
+        }
+    }
+
     /// Communicates with the audio capture interface and tells it which audio devices
     /// were selected.
     fn update_selected_devices(self: *Self, devices: *std.ArrayList(AudioDeviceViewModel)) !void {
@@ -254,6 +309,42 @@ pub const AudioState = struct {
         }
 
         try self.audio_capture.update_selected_devices(selected_devices.items);
+    }
+
+    /// Takes ownership of data.
+    fn add_recording_data(self: *Self, actor: *Actor, data: *AudioCaptureData) !void {
+        var locked = self.audio_recording_timeline.lock();
+        defer locked.unlock();
+        const timeline = locked.unwrap() orelse {
+            data.deinit();
+            return;
+        };
+
+        timeline.add_data(data) catch |err| {
+            data.deinit();
+            return err;
+        };
+
+        var packets = timeline.take_ready_packets();
+        defer deinitPacketList(&packets);
+        try self.write_recording_audio_packets(actor, &packets, timeline);
+    }
+
+    fn write_recording_audio_packets(self: *Self, actor: *Actor, packets: *std.DoublyLinkedList, timeline: *AudioTimeline) !void {
+        _ = self;
+        var locked = actor.recording_muxer.lock();
+        defer locked.unlock();
+        const muxer = locked.unwrap() orelse return;
+
+        if (muxer.needs_audio_start_sample()) {
+            if (muxer.video_start_time_ns()) |start_ns| {
+                if (timeline.get_unclamped_sample_window(start_ns, start_ns)) |window| {
+                    muxer.set_audio_start_sample(window.start_sample);
+                }
+            }
+        }
+
+        try muxer.write_audio_packets(packets);
     }
 
     pub fn clear_devices(devices: *std.ArrayList(AudioDeviceViewModel)) void {
@@ -273,6 +364,7 @@ pub const AudioState = struct {
                 log.err("[capture_thread_handler] data_chan error: {}", .{err});
                 return err;
             };
+            errdefer data.deinit();
 
             data.gain = blk: {
                 var locked_devices = self.devices.lock();
@@ -292,13 +384,14 @@ pub const AudioState = struct {
                 break :blk 1.0;
             };
 
+            if (actor.is_recording_to_disk()) {
+                try self.add_recording_data(actor, try data.clone(self.allocator));
+            }
+
             var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
-                replay_buffer.add_data(data) catch |err| {
-                    data.deinit();
-                    return err;
-                };
+                try replay_buffer.add_data(data);
                 actor.ui_mutex.lock();
                 defer actor.ui_mutex.unlock();
                 actor.state.replay_buffer.audio_size = replay_buffer.size;
