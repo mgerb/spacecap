@@ -9,7 +9,6 @@ const AudioCaptureData = @import("../audio_capture_data.zig");
 const ChanError = @import("../../../channel.zig").ChanError;
 const pipewire_include = @import("../../../common/linux/pipewire_include.zig");
 const pw = @import("pipewire").c;
-const c = pipewire_include.c;
 const c_def = pipewire_include.c_def;
 const PipewireTimestampSource = @import("../../../common/linux/pipewire_timestamp_source.zig").PipewireTimestampSource;
 

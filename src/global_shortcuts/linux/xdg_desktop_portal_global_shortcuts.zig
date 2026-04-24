@@ -12,10 +12,11 @@ const gio = @import("gio");
 
 const log = std.log.scoped(.xdg_desktop_portal_global_shortcuts);
 
-const Actions = std.StringArrayHashMapUnmanaged(struct {
+const Action = struct {
     name: []const u8,
     trigger: ?[]const u8 = null,
-});
+};
+const Actions = std.StringArrayHashMapUnmanaged(Action);
 
 pub const XdgDesktopPortalGlobalShortcuts = struct {
     const Self = @This();
@@ -58,15 +59,23 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         self.* = .{
             .allocator = allocator,
             .dbus = dbus,
-            .actions = try .init(
-                allocator,
-                // NOTE: Add default global shortcuts here.
-                &.{"save_replay"},
-                &.{.{ .name = "Save Replay" }},
-            ),
+            .actions = try init_actions(allocator),
         };
 
         return self;
+    }
+
+    fn init_actions(allocator: std.mem.Allocator) !Actions {
+        const shortcut_ids = comptime GlobalShortcuts.Shortcut.ids();
+        const shortcut_actions = comptime blk: {
+            var actions: [GlobalShortcuts.Shortcut.all.len]Action = undefined;
+            for (GlobalShortcuts.Shortcut.all, 0..) |shortcut, index| {
+                actions[index] = .{ .name = shortcut.display_name() };
+            }
+            break :blk actions;
+        };
+
+        return .init(allocator, &shortcut_ids, &shortcut_actions);
     }
 
     pub fn deinit(context: *anyopaque) void {
@@ -245,11 +254,14 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         const action = self.actions.get(shortcut_id);
         assert(action != null);
 
-        if (std.mem.eql(u8, "save_replay", shortcut_id)) {
-            log.info("save_replay shortcut activated\n", .{});
-            if (self.registeredShortcutHandler) |*handler| {
-                handler.invoke(.save_replay);
-            }
+        const shortcut = std.meta.stringToEnum(GlobalShortcuts.Shortcut, shortcut_id) orelse {
+            log.warn("unknown shortcut activated: {s}", .{shortcut_id});
+            return;
+        };
+
+        log.info("{s} shortcut activated\n", .{shortcut_id});
+        if (self.registeredShortcutHandler) |*handler| {
+            handler.invoke(shortcut);
         }
     }
 

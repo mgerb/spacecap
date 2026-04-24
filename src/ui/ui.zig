@@ -7,7 +7,6 @@ const sdl = @import("./sdl.zig");
 const Tray = @import("./tray.zig").Tray;
 
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
-const Actor = @import("../state/actor.zig").Actor;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
@@ -15,6 +14,7 @@ const draw_video_preview = @import("./draw_video_preview.zig").draw_video_previe
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 const AppIcon = @import("./app_icon.zig").AppIcon;
+const Store = @import("../state/store.zig").Store;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -27,7 +27,7 @@ pub const UI = struct {
     const log = std.log.scoped(.ui);
     const Self = @This();
 
-    actor: *Actor,
+    store: *Store,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
 
@@ -43,7 +43,7 @@ pub const UI = struct {
     /// Init SDL and return new UI instance.
     pub fn init(
         allocator: std.mem.Allocator,
-        actor: *Actor,
+        store: *Store,
         vulkan: *Vulkan,
     ) !*Self {
         const self = try allocator.create(Self);
@@ -51,7 +51,7 @@ pub const UI = struct {
 
         self.* = Self{
             .allocator = allocator,
-            .actor = actor,
+            .store = store,
             .vulkan = vulkan,
             .app_icon = .init(),
         };
@@ -131,7 +131,7 @@ pub const UI = struct {
         }
 
         // Just log the error. Should still run without the tray.
-        self.tray = Tray.init(self.actor, &self.app_icon) catch |err| blk: {
+        self.tray = Tray.init(self.store, &self.app_icon) catch |err| blk: {
             log.err("[init_vulkan] unable to initialize tray: {}", .{err});
             break :blk null;
         };
@@ -306,15 +306,6 @@ pub const UI = struct {
                 wayland_present_gate.dispatch_pending();
             }
 
-            if (self.tray) |*tray| {
-                self.actor.ui_mutex.lock();
-                defer self.actor.ui_mutex.unlock();
-                tray.set_state(.{
-                    .is_recording = self.actor.state.is_recording_video,
-                    .is_capturing = self.actor.state.is_capturing_video,
-                });
-            }
-
             // Resize swap chain?
             var fb_width: i32 = undefined;
             var fb_height: i32 = undefined;
@@ -323,6 +314,8 @@ pub const UI = struct {
             }
             const framebuffer_zero_sized = fb_width <= 0 or fb_height <= 0;
             const run_ui_frame = self.should_run_ui_frame(framebuffer_zero_sized);
+
+            self.sync_app_shell_state();
 
             if (!run_ui_frame) {
                 c.SDL_Delay(1);
@@ -380,24 +373,25 @@ pub const UI = struct {
                 }
 
                 {
-                    self.actor.ui_mutex.lock();
-                    defer self.actor.ui_mutex.unlock();
+                    const state_locked = self.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
 
                     // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-                    if (self.actor.state.show_demo) {
+                    if (state.show_demo) {
                         var show_demo_window: bool = true;
                         c.ImGui_ShowDemoWindow(&show_demo_window);
 
                         if (!show_demo_window) {
-                            try self.actor.dispatch(.show_demo);
+                            self.store.dispatch(.show_demo);
                         }
                     }
 
-                    try draw_left_column(self.allocator, self.actor);
+                    try draw_left_column(self.allocator, self.store, state);
 
-                    if (!self.actor.state.is_video_capture_supprted) {
+                    if (!state.capture.is_video_capture_supprted) {
                         try draw_video_preview(.vulkan_video_not_supported);
-                    } else if (self.actor.state.is_capturing_video) {
+                    } else if (state.capture.video_capture_active) {
                         const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
                         defer capture_preview_ring_buffer_locked.unlock();
                         if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
@@ -438,7 +432,7 @@ pub const UI = struct {
             }
         }
 
-        try self.actor.dispatch(.exit);
+        self.store.dispatch(.exit);
     }
 
     fn frame_render(self: *Self, draw_data: *c.ImDrawData) !void {
@@ -582,6 +576,31 @@ pub const UI = struct {
             !window_occluded and
             !framebuffer_zero_sized and
             wayland_allows_present;
+    }
+
+    fn sync_app_shell_state(self: *Self) void {
+        const capture_state: Tray.State = blk: {
+            const state_locked = self.store.state.lock();
+            defer state_locked.unlock();
+            const capture = state_locked.unwrap_ptr().capture;
+            break :blk .{
+                .recording_to_disk = capture.recording_to_disk,
+                .replay_buffer_active = capture.replay_buffer_active,
+                .video_capture_active = capture.video_capture_active,
+            };
+        };
+
+        if (self.tray) |*tray| {
+            if (!std.meta.eql(tray.state, capture_state) and
+                !c.SDL_SetWindowIcon(
+                    self.window.?,
+                    Tray.get_surface_for_state(capture_state, &self.app_icon),
+                ))
+            {
+                log.warn("[set_window_icon_state] failed to set window icon: {s}", .{c.SDL_GetError()});
+            }
+            tray.set_state(capture_state, &self.app_icon);
+        }
     }
 
     fn setup_vulkan_window(self: *Self) !void {

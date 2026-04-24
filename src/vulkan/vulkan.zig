@@ -238,7 +238,7 @@ pub const Vulkan = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        self.destroy_video_encoder();
+        self.deinit_video_encoder();
         self.destroy_capture_preview_ring_buffer();
         self.destroy_capture_ring_buffer();
         self.capture_preview_textures.deinit();
@@ -276,7 +276,7 @@ pub const Vulkan = struct {
         );
     }
 
-    pub fn destroy_video_encoder(self: *Self) void {
+    pub fn deinit_video_encoder(self: *Self) void {
         if (self.video_encoder) |encoder| {
             encoder.deinit();
             self.video_encoder = null;

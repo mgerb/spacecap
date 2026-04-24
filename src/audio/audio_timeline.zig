@@ -112,6 +112,7 @@ pub const AudioTimeline = struct {
         self.encoder.deinit(self.allocator);
     }
 
+    /// Takes ownership of data.
     pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
         if (data.sample_rate != self.sample_rate or data.channels != self.channels) {
             return error.UnsupportedAudioFormat;
