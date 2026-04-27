@@ -65,7 +65,7 @@ Use `spacecap -h` to see available commands.
 
 ### Windows
 
-Windows is not yet supported. This application was architected in such a way
+Windows is not yet supported. Spacecap is architected in such a way
 that it can be cross platform. For Windows support, the audio/video capture
 interfaces need to be implemented. It's on the roadmap, but is not currently
 a priority.

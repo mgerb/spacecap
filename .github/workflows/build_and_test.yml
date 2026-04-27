@@ -39,3 +39,6 @@ jobs:
 
       - name: Test
         run: nix develop -c zig build test -Dnix
+
+      - name: Build AppImage
+        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseFast

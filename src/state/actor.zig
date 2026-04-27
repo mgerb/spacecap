@@ -587,9 +587,7 @@ pub const Actor = struct {
 
         self.ui_mutex.lock();
         defer self.ui_mutex.unlock();
-        if (!self.state.is_recording_video) {
-            self.state.is_recording_video = true;
-        }
+        self.state.is_recording_video = true;
     }
 
     fn stop_record(self: *Self) !void {
@@ -614,11 +612,12 @@ pub const Actor = struct {
         }
     }
 
-    /// Dispatch an action to the actor.
+    /// Dispatch an action to the actor. This is thread safe.
     ///
     /// WARN: The actor uses a buffered channel,
     /// and it will block the caller if it fills up.
-    /// Be careful when using this from the UI thread.
+    /// Be careful when using this from the UI thread, although
+    /// if the buffer fills up then something is seriously wrong.
     pub fn dispatch(self: *Self, action: Actions) !void {
         log.debug("[dispatch] dispatching action: {}", .{action});
         try self.action_chan.send(action);

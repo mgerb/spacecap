@@ -105,6 +105,11 @@
             libportal
             zlib
             glib
+
+            # Required for linux tray icon.
+            gtk3
+            libayatana-appindicator
+
             appimage-run
 
             # For configuring ffmpeg headers
@@ -118,11 +123,18 @@
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
+          GTK3_LIB = "${pkgs.gtk3}/lib/libgtk-3.so.0";
+          APPINDICATOR_LIB = "${pkgs.libayatana-appindicator}/lib/libayatana-appindicator3.so.1";
 
           # Required for Github actions or non-NixOS machines.
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.vulkan-loader
             pkgs.glib
+
+            # Required for linux tray icon.
+            pkgs.gtk3
+            pkgs.libayatana-appindicator
+
             pkgs.libportal
             # SDL runtime backends (don't rely on ffmpeg closure for these).
             pkgs.wayland
