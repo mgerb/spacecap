@@ -85,7 +85,7 @@ pub const AudioTimeline = struct {
         channels: u32,
     ) !Self {
         var encoder = try AudioEncoder.init(allocator, sample_rate, channels);
-        errdefer encoder.deinit();
+        errdefer encoder.deinit(allocator);
 
         return .{
             .allocator = allocator,
@@ -109,7 +109,7 @@ pub const AudioTimeline = struct {
         self.device_map.deinit();
 
         deinitPacketList(&self.ready_packets);
-        self.encoder.deinit();
+        self.encoder.deinit(self.allocator);
     }
 
     pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
@@ -164,7 +164,7 @@ pub const AudioTimeline = struct {
 
         try self.process_ready_timeline(true);
 
-        var flush_result = try self.encoder.flush();
+        var flush_result = try self.encoder.flush(self.allocator);
         errdefer deinitPacketList(&flush_result);
         self.append_ready_packets(&flush_result);
     }
@@ -227,7 +227,7 @@ pub const AudioTimeline = struct {
             );
             defer mixed_pcm.deinit(self.allocator);
 
-            var packets = try self.encoder.encode_chunk(self.encoded_until_sample, mixed_pcm.items);
+            var packets = try self.encoder.encode_chunk(self.allocator, self.encoded_until_sample, mixed_pcm.items);
             if (packets) |*owned_packets| {
                 errdefer deinitPacketList(owned_packets);
                 self.append_ready_packets(owned_packets);

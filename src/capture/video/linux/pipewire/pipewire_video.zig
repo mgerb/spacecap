@@ -327,7 +327,7 @@ pub const PipewireVideo = struct {
         var params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0);
         errdefer params.deinit(allocator);
         for (formats) |format| {
-            var modifiers = try self.vulkan.query_format_modifiers(pipewire_util.spa_to_vk_format(format));
+            var modifiers = try self.vulkan.query_format_modifiers(self.allocator, pipewire_util.spa_to_vk_format(format));
             defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const imguiz = @import("imguiz").imguiz;
@@ -384,7 +385,7 @@ pub const Vulkan = struct {
     }
 
     /// Caller owns the memory - must free
-    pub fn query_format_modifiers(self: *const Self, format: vk.Format) !std.ArrayList(u64) {
+    pub fn query_format_modifiers(self: *const Self, allocator: Allocator, format: vk.Format) !std.ArrayList(u64) {
         var modifiers_list = vk.DrmFormatModifierPropertiesListEXT{};
         var props = vk.FormatProperties2{
             .p_next = @ptrCast(&modifiers_list),
@@ -393,17 +394,17 @@ pub const Vulkan = struct {
 
         self.instance.getPhysicalDeviceFormatProperties2KHR(self.physical_device, format, &props);
 
-        const format_mod_props = try self.allocator.alloc(vk.DrmFormatModifierPropertiesEXT, modifiers_list.drm_format_modifier_count);
-        defer self.allocator.free(format_mod_props);
+        const format_mod_props = try allocator.alloc(vk.DrmFormatModifierPropertiesEXT, modifiers_list.drm_format_modifier_count);
+        defer allocator.free(format_mod_props);
 
         modifiers_list.p_drm_format_modifier_properties = format_mod_props.ptr;
 
         self.instance.getPhysicalDeviceFormatProperties2KHR(self.physical_device, format, &props);
 
-        var modifiers = try std.ArrayList(u64).initCapacity(self.allocator, 0);
+        var modifiers = try std.ArrayList(u64).initCapacity(allocator, 0);
 
         for (format_mod_props) |modifier| {
-            try modifiers.append(self.allocator, modifier.drm_format_modifier);
+            try modifiers.append(allocator, modifier.drm_format_modifier);
         }
 
         return modifiers;

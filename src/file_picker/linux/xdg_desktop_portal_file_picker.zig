@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const TokenManager = @import("../../common/linux/token_manager.zig");
 const FilePicker = @import("../file_picker.zig").FilePicker;
 const FilePickerError = @import("../file_picker.zig").FilePickerError;
@@ -35,10 +36,9 @@ const OpenDirectoryPickerContext = struct {
 pub const XdgDesktopPortalFilePicker = struct {
     const Self = @This();
 
-    allocator: std.mem.Allocator,
     dbus: *gio.DBusConnection,
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init() !Self {
         var err: ?*glib.Error = null;
         defer if (err) |e| e.free();
 
@@ -51,13 +51,9 @@ pub const XdgDesktopPortalFilePicker = struct {
             return error.Dbus;
         };
 
-        const self = try allocator.create(Self);
-        errdefer allocator.destroy(self);
-        self.* = .{
-            .allocator = allocator,
+        return .{
             .dbus = dbus,
         };
-        return self;
     }
 
     fn open_directory_picker_response(
@@ -92,7 +88,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         );
     }
 
-    fn selected_directory_from_result(self: *Self, result: *glib.Variant) ![]u8 {
+    fn selected_directory_from_result(allocator: Allocator, result: *glib.Variant) ![]u8 {
         var result_dict: glib.VariantDict = undefined;
         glib.VariantDict.init(&result_dict, result);
         defer result_dict.clear();
@@ -114,24 +110,28 @@ pub const XdgDesktopPortalFilePicker = struct {
         const file_path = glib.filenameFromUri(first_uri, null, null) orelse return error.FileUriToPathFailed;
         defer glib.free(file_path);
 
-        return self.allocator.dupe(u8, std.mem.span(file_path));
+        return allocator.dupe(u8, std.mem.span(file_path));
     }
 
-    pub fn open_directory_picker(context: *anyopaque, initial_directory: ?[]const u8) ![]u8 {
+    pub fn open_directory_picker(
+        context: *anyopaque,
+        allocator: Allocator,
+        initial_directory: ?[]const u8,
+    ) ![]u8 {
         const self: *Self = @ptrCast(@alignCast(context));
 
-        const request_token = try TokenManager.generate_token(self.allocator);
-        defer self.allocator.free(request_token);
+        const request_token = try TokenManager.generate_token(allocator);
+        defer allocator.free(request_token);
 
         const initial_directory_z = if (initial_directory) |directory|
-            try self.allocator.dupeZ(u8, directory)
+            try allocator.dupeZ(u8, directory)
         else
             null;
-        defer if (initial_directory_z) |directory| self.allocator.free(directory);
+        defer if (initial_directory_z) |directory| allocator.free(directory);
 
         const unique_name = std.mem.span(self.dbus.getUniqueName().?);
-        const request_path = try TokenManager.get_request_path(self.allocator, unique_name[1..], request_token);
-        defer self.allocator.free(request_path);
+        const request_path = try TokenManager.get_request_path(allocator, unique_name[1..], request_token);
+        defer allocator.free(request_path);
 
         const loop = glib.MainLoop.new(null, 0);
         defer loop.unref();
@@ -219,13 +219,11 @@ pub const XdgDesktopPortalFilePicker = struct {
         const result = ctx.response_data orelse return error.OpenDirectoryPickerFailed;
         defer result.unref();
 
-        return self.selected_directory_from_result(result);
+        return selected_directory_from_result(allocator, result);
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
+    pub fn deinit(self: *Self) void {
         self.dbus.unref();
-        self.allocator.destroy(self);
     }
 
     pub fn file_picker(self: *Self) FilePicker {
@@ -233,7 +231,6 @@ pub const XdgDesktopPortalFilePicker = struct {
             .ptr = self,
             .vtable = &.{
                 .open_directory_picker = open_directory_picker,
-                .deinit = deinit,
             },
         };
     }

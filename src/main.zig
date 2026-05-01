@@ -86,9 +86,9 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     var audio_capture_interface = _audio_capture.audio_capture();
     defer audio_capture_interface.deinit();
 
-    const platform_file_picker = try PlatformFilePicker.init(allocator);
-    var file_picker = platform_file_picker.file_picker();
-    defer file_picker.deinit();
+    var platform_file_picker = try PlatformFilePicker.init();
+    defer platform_file_picker.deinit();
+    var file_picker_interface = platform_file_picker.file_picker();
 
     const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
     var global_shortcuts = platform_global_shortcuts.global_shortcuts();
@@ -99,7 +99,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
         allocator,
         vulkan,
         &video_capture_interface,
-        &file_picker,
+        &file_picker_interface,
         &audio_capture_interface,
         &global_shortcuts,
     );

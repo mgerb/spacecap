@@ -142,7 +142,7 @@ pub const UserSettingsState = struct {
                             }
                             break :blk null;
                         };
-                        const selected_directory = actor.file_picker.open_directory_picker(directory) catch |err| {
+                        const selected_directory = actor.file_picker.open_directory_picker(self.allocator, directory) catch |err| {
                             switch (err) {
                                 FilePickerError.PickerCancelled => {
                                     log.info("[select_output_directory] output directory selection cancelled", .{});
