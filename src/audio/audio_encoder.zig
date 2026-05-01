@@ -30,7 +30,6 @@ pub const EncodedAudioPacketNode = struct {
 pub const AudioEncoder = struct {
     const Self = @This();
 
-    allocator: Allocator,
     audio_codec_ctx: [*c]ffmpeg.AVCodecContext,
     channels: u32,
     // A rolling buffer of raw audio waiting to be encoded. We only encode
@@ -87,15 +86,14 @@ pub const AudioEncoder = struct {
         try checkErr(ret);
 
         return .{
-            .allocator = allocator,
             .audio_codec_ctx = audio_codec_ctx,
             .channels = channels,
             .pending_samples = try .initCapacity(allocator, 0),
         };
     }
 
-    pub fn deinit(self: *Self) void {
-        self.pending_samples.deinit(self.allocator);
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        self.pending_samples.deinit(allocator);
         ffmpeg.avcodec_free_context(&self.audio_codec_ctx);
     }
 
@@ -104,6 +102,7 @@ pub const AudioEncoder = struct {
     /// the encoder.
     pub fn encode_chunk(
         self: *Self,
+        allocator: Allocator,
         start_sample: i64,
         pcm: []const f32,
     ) !?std.DoublyLinkedList {
@@ -127,14 +126,14 @@ pub const AudioEncoder = struct {
             }
         }
 
-        try self.pending_samples.appendSlice(self.allocator, pcm);
+        try self.pending_samples.appendSlice(allocator, pcm);
 
-        return try self.encode_buffered_frames(false);
+        return try self.encode_buffered_frames(allocator, false);
     }
 
     /// Encode buffered samples if there are enough to fill the codec frame size.
     /// allow_partial - Set to true to ignore this check and encode anyway.
-    fn encode_buffered_frames(self: *Self, allow_partial: bool) !std.DoublyLinkedList {
+    fn encode_buffered_frames(self: *Self, allocator: Allocator, allow_partial: bool) !std.DoublyLinkedList {
         var audio_packets: std.DoublyLinkedList = .{};
         errdefer deinit_packet_list(&audio_packets);
 
@@ -162,7 +161,14 @@ pub const AudioEncoder = struct {
             // `sendFrame` reads from the front of `pending_samples`, so after it
             // returns we compact the remaining PCM to keep the rolling buffer
             // contiguous for the next capture chunk.
-            try self.send_frame(&audio_packets, frame, self.pending_start_sample.?, codec_samples_per_packet, submitted_samples);
+            try self.send_frame(
+                allocator,
+                &audio_packets,
+                frame,
+                self.pending_start_sample.?,
+                codec_samples_per_packet,
+                submitted_samples,
+            );
 
             const consumed_samples = submitted_samples * self.channels;
             const remaining_samples = self.pending_samples.items.len - consumed_samples;
@@ -171,7 +177,7 @@ pub const AudioEncoder = struct {
                 self.pending_samples.items[0..remaining_samples],
                 self.pending_samples.items[consumed_samples..],
             );
-            try self.pending_samples.resize(self.allocator, remaining_samples);
+            try self.pending_samples.resize(allocator, remaining_samples);
 
             self.pending_start_sample.? += @intCast(submitted_samples);
             if (remaining_samples == 0) {
@@ -183,21 +189,22 @@ pub const AudioEncoder = struct {
         return audio_packets;
     }
 
-    pub fn flush(self: *Self) !std.DoublyLinkedList {
+    pub fn flush(self: *Self, allocator: Allocator) !std.DoublyLinkedList {
         assert(!self.is_flushed);
 
-        var audio_packets = try self.encode_buffered_frames(true);
+        var audio_packets = try self.encode_buffered_frames(allocator, true);
         errdefer deinit_packet_list(&audio_packets);
 
         self.is_flushed = true;
         const ret = ffmpeg.avcodec_send_frame(self.audio_codec_ctx, null);
         try checkErr(ret);
-        try self.collect_ready_packets(&audio_packets);
+        try self.collect_ready_packets(allocator, &audio_packets);
         return audio_packets;
     }
 
     fn send_frame(
         self: *Self,
+        allocator: Allocator,
         audio_packets: *std.DoublyLinkedList,
         frame: [*c]ffmpeg.AVFrame,
         start_sample: i64,
@@ -240,11 +247,12 @@ pub const AudioEncoder = struct {
         try checkErr(ret);
         // A single submitted frame can produce zero, one, or multiple packets
         // depending on encoder delay, so always drain after each send.
-        try self.collect_ready_packets(audio_packets);
+        try self.collect_ready_packets(allocator, audio_packets);
     }
 
     fn collect_ready_packets(
         self: *Self,
+        allocator: Allocator,
         audio_packets: *std.DoublyLinkedList,
     ) !void {
         var audio_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
@@ -259,7 +267,7 @@ pub const AudioEncoder = struct {
             var owned_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
             errdefer ffmpeg.av_packet_free(&owned_pkt);
             ffmpeg.av_packet_move_ref(owned_pkt, audio_pkt);
-            const node = try EncodedAudioPacketNode.init(self.allocator, owned_pkt);
+            const node = try EncodedAudioPacketNode.init(allocator, owned_pkt);
             audio_packets.append(&node.node);
         }
     }
@@ -276,13 +284,13 @@ test "encodeChunk rejects non-contiguous sample input" {
     const allocator = std.testing.allocator;
 
     var encoder = try AudioEncoder.init(allocator, 48_000, 2);
-    defer encoder.deinit();
+    defer encoder.deinit(allocator);
 
     const pcm = [_]f32{ 0.0, 0.0, 0.0, 0.0 };
-    var first_result = (try encoder.encode_chunk(0, &pcm)).?;
+    var first_result = (try encoder.encode_chunk(allocator, 0, &pcm)).?;
     defer deinit_packet_list(&first_result);
     try std.testing.expect(first_result.first == null);
-    try std.testing.expectError(error.NonContiguousAudioPts, encoder.encode_chunk(3, &pcm));
+    try std.testing.expectError(error.NonContiguousAudioPts, encoder.encode_chunk(allocator, 3, &pcm));
 }
 
 test "encodeChunk plus flush produces encoded audio packets" {
@@ -293,7 +301,7 @@ test "encodeChunk plus flush produces encoded audio packets" {
     const sample_positions: usize = 2_048;
 
     var encoder = try AudioEncoder.init(allocator, sample_rate, channels);
-    defer encoder.deinit();
+    defer encoder.deinit(allocator);
 
     const pcm = try allocator.alloc(f32, sample_positions * channels);
     defer allocator.free(pcm);
@@ -308,12 +316,12 @@ test "encodeChunk plus flush produces encoded audio packets" {
     var all_packets: std.DoublyLinkedList = .{};
     defer deinit_packet_list(&all_packets);
 
-    var encoded_packets = (try encoder.encode_chunk(start_sample, pcm)).?;
+    var encoded_packets = (try encoder.encode_chunk(allocator, start_sample, pcm)).?;
     while (encoded_packets.popFirst()) |node| {
         all_packets.append(node);
     }
 
-    var flushed_packets = try encoder.flush();
+    var flushed_packets = try encoder.flush(allocator);
     while (flushed_packets.popFirst()) |node| {
         all_packets.append(node);
     }
