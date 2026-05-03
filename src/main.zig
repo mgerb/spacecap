@@ -11,6 +11,7 @@ const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig
 const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
 const PlatformFilePicker = @import("./file_picker/platform_file_picker.zig").PlatformFilePicker;
 const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shortcuts.zig").PlatformGlobalShortcuts;
+const Store = @import("./state/store.zig").Store;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -95,6 +96,15 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     try global_shortcuts.run();
     defer global_shortcuts.deinit();
 
+    var store = try Store.init(allocator);
+    defer store.deinit();
+
+    const store_thread = try std.Thread.spawn(.{}, struct {
+        fn run(_store: *Store) void {
+            _store.run();
+        }
+    }.run, .{store});
+
     const actor = try Actor.init(
         allocator,
         vulkan,
@@ -102,6 +112,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
         &file_picker_interface,
         &audio_capture_interface,
         &global_shortcuts,
+        store,
     );
     defer actor.deinit();
 
@@ -119,8 +130,10 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     try ipc.start();
     defer ipc.deinit();
 
-    const ui = try UI.init(allocator, actor, vulkan);
+    const ui = try UI.init(allocator, store, actor, vulkan);
     defer ui.deinit();
 
+    store.dispatch(.exit);
     state_thread.join();
+    store_thread.join();
 }

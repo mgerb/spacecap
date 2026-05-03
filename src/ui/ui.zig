@@ -15,6 +15,7 @@ const draw_video_preview = @import("./draw_video_preview.zig").draw_video_previe
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 const AppIcon = @import("./app_icon.zig").AppIcon;
+const Store = @import("../state/store.zig").Store;
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -27,6 +28,7 @@ pub const UI = struct {
     const log = std.log.scoped(.ui);
     const Self = @This();
 
+    store: *Store,
     actor: *Actor,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
@@ -43,6 +45,7 @@ pub const UI = struct {
     /// Init SDL and return new UI instance.
     pub fn init(
         allocator: std.mem.Allocator,
+        store: *Store,
         actor: *Actor,
         vulkan: *Vulkan,
     ) !*Self {
@@ -51,6 +54,7 @@ pub const UI = struct {
 
         self.* = Self{
             .allocator = allocator,
+            .store = store,
             .actor = actor,
             .vulkan = vulkan,
             .app_icon = .init(),
@@ -380,20 +384,23 @@ pub const UI = struct {
                 }
 
                 {
+                    const locked_state = self.store.state.lock();
+                    defer locked_state.unlock();
+                    const state = locked_state.unwrap_ptr();
                     self.actor.ui_mutex.lock();
                     defer self.actor.ui_mutex.unlock();
 
                     // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-                    if (self.actor.state.show_demo) {
+                    if (state.show_demo) {
                         var show_demo_window: bool = true;
                         c.ImGui_ShowDemoWindow(&show_demo_window);
 
                         if (!show_demo_window) {
-                            try self.actor.dispatch(.show_demo);
+                            self.store.dispatch(.show_demo);
                         }
                     }
 
-                    try draw_left_column(self.allocator, self.actor);
+                    try draw_left_column(self.allocator, self.actor, self.store);
 
                     if (!self.actor.state.is_video_capture_supprted) {
                         try draw_video_preview(.vulkan_video_not_supported);

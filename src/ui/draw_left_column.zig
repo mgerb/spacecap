@@ -6,6 +6,7 @@ const AUDIO_GAIN_MIN = @import("../state/audio_state.zig").AUDIO_GAIN_MIN;
 const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
+const Store = @import("../state/store.zig").Store;
 
 pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
@@ -13,8 +14,6 @@ const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
 const CAPTURE_FPS_MIN: c_int = 1;
 const CAPTURE_FPS_MAX: c_int = 500;
-const GUI_FPS_MIN: i32 = 1;
-const GUI_FPS_MAX: i32 = 240;
 const CAPTURE_BIT_RATE_BPS_PER_KBPS: u64 = 1_000;
 const CAPTURE_BIT_RATE_KBPS_MIN: i32 = 100;
 const CAPTURE_BIT_RATE_KBPS_MAX: i32 = 1_000_000;
@@ -175,7 +174,7 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: 
     }
 }
 
-pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
+pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Store) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
@@ -335,7 +334,7 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor) !void {
                 c.ImGui_SeparatorText("IMGUI Debug");
 
                 if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                    try actor.dispatch(.show_demo);
+                    store.dispatch(.show_demo);
                 }
 
                 c.ImGui_Spacing();
@@ -351,10 +350,11 @@ fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     c.ImGui_SeparatorText("Output");
 
     const video_output_directory = blk: {
-        const settings_locked = actor.state.user_settings.settings.lock();
-        defer settings_locked.unlock();
-        const settings = settings_locked.unwrap_ptr();
-        break :blk settings.video_output_directory.?.bytes;
+        // const settings_locked = actor.state.user_settings.settings.lock();
+        // defer settings_locked.unlock();
+        // const settings = settings_locked.unwrap_ptr();
+        // break :blk settings.video_output_directory.?.bytes;
+        break :blk actor.store.state.private.value.user_settings.user_settings.video_output_directory.?.bytes;
     };
 
     c.ImGui_Text("Video");
@@ -386,11 +386,16 @@ fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         if (c.ImGui_IsItemDeactivatedAfterEdit()) {
             const updated_directory = std.mem.sliceTo(_video_output_directory_local[0..], 0);
             if (updated_directory.len > 0 and !std.mem.eql(u8, updated_directory, video_output_directory)) {
-                try actor.dispatch(.{ .user_settings = .{
+                actor.store.dispatch(.{ .user_settings = .{
                     .set_video_output_directory = try .init(allocator, .{
                         .video_output_directory = updated_directory,
                     }),
                 } });
+                // try actor.dispatch(.{ .user_settings = .{
+                //     .set_video_output_directory = try .init(allocator, .{
+                //         .video_output_directory = updated_directory,
+                //     }),
+                // } });
             }
             video_output_directory_local = null;
         } else if (!c.ImGui_IsItemActive()) {

@@ -1,11 +1,10 @@
 const std = @import("std");
 const Self = @This();
 const Allocator = std.mem.Allocator;
-const ArenaAllocator = std.heap.ArenaAllocator;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const UserSettingsState = @import("./user_settings_state.zig").UserSettingsState;
-const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const AudioState = @import("./audio_state.zig").AudioState;
+const VideoState = @import("./video_state.zig").VideoState;
 
 const ReplayBufferViewModel = struct {
     video_size: u64 = 0,
@@ -30,10 +29,10 @@ const ReplayBufferViewModel = struct {
 is_recording_video: bool = false,
 is_recording_to_disk: bool = false,
 is_capturing_video: bool = false,
-show_demo: bool = false,
 is_video_capture_supprted: bool,
 
 audio: AudioState,
+video: VideoState,
 // User settings
 user_settings: UserSettingsState,
 
@@ -48,10 +47,12 @@ pub fn init(
         .user_settings = try UserSettingsState.init(allocator),
         .is_video_capture_supprted = is_video_capture_supprted,
         .audio = try .init(allocator, audio_capture),
+        .video = .init(),
     };
 }
 
 pub fn deinit(self: *Self) void {
     self.audio.deinit();
+    self.video.deinit();
     self.user_settings.deinit();
 }

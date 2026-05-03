@@ -22,6 +22,8 @@ const exporter = @import("../exporter.zig");
 const AudioActions = @import("./audio_state.zig").AudioActions;
 const UserSettingsActions = @import("./user_settings_state.zig").UserSettingsActions;
 const String = @import("../string.zig").String;
+const VideoActions = @import("./video_state.zig").VideoActions;
+const Store = @import("./store.zig").Store;
 
 const log = std.log.scoped(.actor);
 
@@ -34,11 +36,11 @@ pub const Actions = union(enum) {
     /// Restore the capture session on startup.
     restore_capture_session,
     save_replay,
-    show_demo,
     exit,
     open_global_shortcuts,
     user_settings: UserSettingsActions,
     audio: AudioActions,
+    video: VideoActions,
 };
 
 const ActionChan = BufferedChan(Actions, 100);
@@ -63,6 +65,7 @@ pub const Actor = struct {
     video_record_mutex: std.Thread.Mutex = .{},
     state: State,
     video_capture_thread: ?std.Thread = null,
+    store: *Store,
 
     /// Caller owns the memory. Be sure to deinit.
     pub fn init(
@@ -72,6 +75,7 @@ pub const Actor = struct {
         file_picker: *FilePicker,
         audio_capture: *AudioCapture,
         global_shortcuts: *GlobalShortcuts,
+        store: *Store,
     ) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
@@ -90,6 +94,7 @@ pub const Actor = struct {
                 vulkan.video_encode_queue != null,
                 audio_capture,
             ),
+            .store = store,
         };
         errdefer self.state.deinit();
 
@@ -234,6 +239,7 @@ pub const Actor = struct {
     fn handle_action(self: *Self, action: Actions) !void {
         try self.state.audio.handle_action(self, action);
         try self.state.user_settings.handle_action(self, action);
+        try self.state.video.handle_action(self, action);
         switch (action) {
             .start_record => {
                 try self.start_record();
@@ -330,11 +336,6 @@ pub const Actor = struct {
                 }
                 log.debug("Restoring capture session.", .{});
                 _ = try self.select_video_source(.restore_session);
-            },
-            .show_demo => {
-                self.ui_mutex.lock();
-                defer self.ui_mutex.unlock();
-                self.state.show_demo = !self.state.show_demo;
             },
             .exit => {
                 try self.stop_capture();
