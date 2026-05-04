@@ -1,8 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Store = @import("./store.zig").Store;
-const Message = @import("./store.zig").Message;
-const State = @import("./store.zig").State;
 const UserSettings = @import("./user_settings.zig").UserSettings;
 const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const String = @import("../string.zig").String;
@@ -10,7 +8,7 @@ const FilePickerError = @import("../file_picker/file_picker.zig").FilePickerErro
 
 const log = std.log.scoped(.user_settings_store);
 
-pub const UserSettingsMessage = union(enum) {
+pub const Message = union(enum) {
     select_output_directory,
     set_capture_fps: u32,
     set_capture_bit_rate: u64,
@@ -58,7 +56,7 @@ pub const UserSettingsMessage = union(enum) {
     };
 };
 
-pub const UserSettingsState = struct {
+pub const State = struct {
     allocator: Allocator,
     user_settings: UserSettings,
 
@@ -74,7 +72,7 @@ pub const UserSettingsState = struct {
     }
 };
 
-pub fn update(allocator: Allocator, msg: Message, state: *State) !void {
+pub fn update(allocator: Allocator, msg: Store.Message, state: *Store.State) !void {
     switch (msg) {
         .user_settings => |user_settings_msg| {
             switch (user_settings_msg) {

@@ -7,7 +7,6 @@ const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const Store = @import("../state/store.zig").Store;
-const State = @import("../state/store.zig").State;
 
 pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
@@ -175,7 +174,7 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: 
     }
 }
 
-pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *State) !void {
+pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *Store.State) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
@@ -408,7 +407,7 @@ fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
     }
 }
 
-fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *State) !void {
+fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *Store.State) !void {
     c.ImGui_SeparatorText("Capture Settings");
 
     const settings = state.user_settings.user_settings;

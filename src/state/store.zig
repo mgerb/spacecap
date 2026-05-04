@@ -6,54 +6,70 @@ const Mutex = @import("../mutex.zig").Mutex;
 const CaptureStore = @import("./capture_store.zig");
 const UserSettingStore = @import("./user_settings_store.zig");
 const FilePicker = @import("../file_picker/file_picker.zig").FilePicker;
+const AudioStore = @import("./audio_store.zig").AudioStore;
 
-const ChildStores = .{ CaptureStore, UserSettingStore };
-
-pub const Message = union(enum) {
-    show_demo,
-
-    exit,
-    capture: CaptureStore.CaptureMessage,
-    user_settings: UserSettingStore.UserSettingsMessage,
-
-    pub const effects = .{};
-};
-
-pub const State = struct {
-    show_demo: bool = false,
-
-    capture: CaptureStore.CaptureState = .{},
-    user_settings: UserSettingStore.UserSettingsState,
-
-    pub fn init(allocator: Allocator) !@This() {
-        return .{
-            .user_settings = try .init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *State) void {
-        self.user_settings.deinit();
-    }
-};
-
+// All stores have access to the Store. Runtime dependencies should
+// live directly on the store.
 pub const Store = struct {
     const Self = @This();
     const log = std.log.scoped(.store);
 
     allocator: Allocator,
-    messages: BufferedChan(Message, 1024),
+    message_queue: BufferedChan(Message, 1024),
     state: Mutex(State),
     effect_thread_pool: std.Thread.Pool = undefined,
     file_picker: *FilePicker,
+    audio_store: AudioStore,
+
+    // ----- Adding a new store -----
+    //
+    // 1. Add to `ChildStores`.
+    // 2. Add message to Message.
+    // 3. Add state to State (add deinit if necessary).
+
+    const ChildStores = .{
+        CaptureStore,
+        UserSettingStore,
+        AudioStore,
+    };
+
+    pub const Message = union(enum) {
+        show_demo,
+        exit,
+        capture: CaptureStore.Message,
+        user_settings: UserSettingStore.Message,
+        audio: AudioStore.Message,
+
+        pub const effects = .{};
+    };
+
+    pub const State = struct {
+        show_demo: bool = false,
+
+        capture: CaptureStore.State = .{},
+        user_settings: UserSettingStore.State,
+        audio: AudioStore.State = .{},
+
+        pub fn init(allocator: Allocator) !@This() {
+            return .{
+                .user_settings = try .init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *State) void {
+            self.user_settings.deinit();
+        }
+    };
 
     pub fn init(allocator: Allocator, file_picker: *FilePicker) !*Self {
         const self = try allocator.create(Self);
 
         self.* = .{
             .allocator = allocator,
-            .messages = try .init(allocator),
+            .message_queue = try .init(allocator),
             .state = .init(try .init(allocator)),
             .file_picker = file_picker,
+            .audio_store = .{},
         };
 
         try self.effect_thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -68,14 +84,17 @@ pub const Store = struct {
             var state = state_locked.unwrap_ptr();
             state.deinit();
         }
-        self.messages.deinit();
+        self.message_queue.deinit();
         self.effect_thread_pool.deinit();
         self.allocator.destroy(self);
     }
 
+    /// Pull messages off the queue and call relevant update/effect functions.
+    /// This should never block: update only modifies state, and effects run
+    /// in the thread pool.
     pub fn run(self: *Self) void {
         while (true) {
-            const msg = self.messages.recv() catch |err| {
+            const msg = self.message_queue.recv() catch |err| {
                 if (err != ChanError.Closed) {
                     log.err("[run] message receive error: {}", .{err});
                 }
@@ -94,7 +113,7 @@ pub const Store = struct {
                 update(self.allocator, msg, state);
             }
 
-            self.effect(msg) catch |err| {
+            self.dispatch_effects(msg) catch |err| {
                 log.err("[run] error executing effect: {}", .{err});
             };
         }
@@ -114,24 +133,26 @@ pub const Store = struct {
         }
     }
 
-    fn effect(self: *Self, msg: Message) !void {
+    /// Check if there are any registered effects for the message,
+    /// and if so, then dispatch on the thread pool.
+    fn dispatch_effects(self: *Self, msg: Message) !void {
         switch (msg) {
             inline else => |payload| {
                 const Payload = @TypeOf(payload);
 
                 if (comptime Payload != void) {
                     if (comptime @hasDecl(Payload, "effects")) {
-                        try self.run_registered_effect(Payload.effects, payload);
+                        try self.execute_registered_effects(Payload.effects, payload);
                         return;
                     }
                 }
 
-                try self.run_registered_effect(Message.effects, msg);
+                try self.execute_registered_effects(Message.effects, msg);
             },
         }
     }
 
-    fn run_registered_effect(self: *Self, comptime effects: anytype, msg: anytype) !void {
+    fn execute_registered_effects(self: *Self, comptime effects: anytype, msg: anytype) !void {
         comptime validate_effect_keys(@TypeOf(msg), effects);
         switch (msg) {
             inline else => |payload, tag| {
@@ -161,13 +182,14 @@ pub const Store = struct {
                                         switch (@typeInfo(return_type)) {
                                             .error_union, .error_set => {
                                                 effect_fn(store, effect_payload) catch |err| {
-                                                    log.err("[run_registered_effect] error in effect (" ++ @typeName(@TypeOf(effect_fn)) ++ "): {}", .{err});
+                                                    log.err("[execute_registered_effects] error in effect (" ++ @typeName(@TypeOf(effect_fn)) ++ "): {}", .{err});
                                                 };
                                             },
                                             else => {
                                                 effect_fn(store, effect_payload);
                                             },
                                         }
+                                        log.debug("[execute_registered_effects] effect: {s}", .{@typeName(@TypeOf(effect_fn))});
                                     } else {
                                         @compileError(@typeName(@TypeOf(effect_fn)) ++ " has no return type");
                                     }
@@ -183,6 +205,7 @@ pub const Store = struct {
         }
     }
 
+    /// Comptime check to validate that registered effects match a message.
     fn validate_effect_keys(comptime MessageType: type, comptime effects: anytype) void {
         const msg_info = @typeInfo(MessageType);
         if (msg_info != .@"union") {
@@ -212,9 +235,9 @@ pub const Store = struct {
         return false;
     }
 
-    /// Thread safe and non-blocking.
+    /// Dispatch a message to the queue. Thread safe and non-blocking.
     pub fn dispatch(self: *Self, msg: Message) void {
-        self.messages.send(msg) catch |err| {
+        self.message_queue.send(msg) catch |err| {
             log.err("[dispatch] {}", .{err});
         };
     }
