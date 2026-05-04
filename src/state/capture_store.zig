@@ -3,14 +3,13 @@ const Allocator = std.mem.Allocator;
 const Store = @import("./store.zig").Store;
 const Message = @import("./store.zig").Message;
 const State = @import("./store.zig").State;
-const Mutex = @import("../mutex.zig").Mutex;
 
 pub const CaptureMessage = union(enum) {
     start: i32,
     stop,
 
     pub const effects = .{
-        .start = effect_start,
+        .start = .{effect_start},
     };
 };
 

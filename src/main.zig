@@ -96,7 +96,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     try global_shortcuts.run();
     defer global_shortcuts.deinit();
 
-    var store = try Store.init(allocator);
+    var store = try Store.init(allocator, &file_picker_interface);
     defer store.deinit();
 
     const store_thread = try std.Thread.spawn(.{}, struct {

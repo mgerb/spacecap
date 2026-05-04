@@ -400,7 +400,7 @@ pub const UI = struct {
                         }
                     }
 
-                    try draw_left_column(self.allocator, self.actor, self.store);
+                    try draw_left_column(self.allocator, self.actor, self.store, state);
 
                     if (!self.actor.state.is_video_capture_supprted) {
                         try draw_video_preview(.vulkan_video_not_supported);

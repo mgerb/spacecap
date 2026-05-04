@@ -7,6 +7,7 @@ const AUDIO_GAIN_MAX = @import("../state/audio_state.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const Store = @import("../state/store.zig").Store;
+const State = @import("../state/store.zig").State;
 
 pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
@@ -174,7 +175,7 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, actor: 
     }
 }
 
-pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Store) !void {
+pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *State) !void {
     // Get viewport size
     const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
@@ -309,11 +310,11 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Sto
         if (c.ImGui_BeginTabItem("Settings", null, 0)) {
             defer c.ImGui_EndTabItem();
 
-            try draw_capture_settings(allocator, actor);
+            try draw_capture_settings(allocator, actor, store, state);
 
             c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
 
-            try draw_output_settings(allocator, actor);
+            try draw_output_settings(allocator, store);
 
             // NOTE: Hiding this for now. Linux shortcuts can be configured at the
             // desktop environment level. See comments regarding `Method.configure_shortcuts`
@@ -346,15 +347,11 @@ pub fn draw_left_column(allocator: std.mem.Allocator, actor: *Actor, store: *Sto
     }
 }
 
-fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
+fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
     c.ImGui_SeparatorText("Output");
 
     const video_output_directory = blk: {
-        // const settings_locked = actor.state.user_settings.settings.lock();
-        // defer settings_locked.unlock();
-        // const settings = settings_locked.unwrap_ptr();
-        // break :blk settings.video_output_directory.?.bytes;
-        break :blk actor.store.state.private.value.user_settings.user_settings.video_output_directory.?.bytes;
+        break :blk store.state.private.value.user_settings.user_settings.video_output_directory.?.bytes;
     };
 
     c.ImGui_Text("Video");
@@ -386,16 +383,11 @@ fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         if (c.ImGui_IsItemDeactivatedAfterEdit()) {
             const updated_directory = std.mem.sliceTo(_video_output_directory_local[0..], 0);
             if (updated_directory.len > 0 and !std.mem.eql(u8, updated_directory, video_output_directory)) {
-                actor.store.dispatch(.{ .user_settings = .{
+                store.dispatch(.{ .user_settings = .{
                     .set_video_output_directory = try .init(allocator, .{
                         .video_output_directory = updated_directory,
                     }),
                 } });
-                // try actor.dispatch(.{ .user_settings = .{
-                //     .set_video_output_directory = try .init(allocator, .{
-                //         .video_output_directory = updated_directory,
-                //     }),
-                // } });
             }
             video_output_directory_local = null;
         } else if (!c.ImGui_IsItemActive()) {
@@ -407,7 +399,7 @@ fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
             .x = imgui_util.WIDTH_FILL,
             .y = 0,
         })) {
-            try actor.dispatch(.{ .user_settings = .select_output_directory });
+            store.dispatch(.{ .user_settings = .select_output_directory });
         }
         if (c.ImGui_BeginItemTooltip()) {
             c.ImGui_TextUnformatted("Choose directory");
@@ -416,19 +408,16 @@ fn draw_output_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     }
 }
 
-fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
+fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor, store: *Store, state: *State) !void {
     c.ImGui_SeparatorText("Capture Settings");
 
-    const settings_locked = actor.state.user_settings.settings.lock();
-    const settings = settings_locked.unwrap_ptr();
+    const settings = state.user_settings.user_settings;
 
     const current_capture_fps: i32 = @intCast(settings.capture_fps);
     const current_capture_bit_rate: i32 = @intCast(settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
     const current_replay_seconds: i32 = @intCast(settings.replay_seconds);
     var restore_capture_source_on_startup = settings.restore_capture_source_on_startup;
     var start_replay_buffer_on_startup = settings.start_replay_buffer_on_startup;
-
-    settings_locked.unlock();
 
     // FPS
     {
@@ -448,7 +437,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
             capture_fps_local = fps;
         }
         if (c.ImGui_IsItemDeactivatedAfterEdit() and fps > 0 and fps != current_capture_fps) {
-            try actor.dispatch(.{ .user_settings = .{
+            store.dispatch(.{ .user_settings = .{
                 .set_capture_fps = @intCast(fps),
             } });
             capture_fps_local = null;
@@ -476,7 +465,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
             capture_bit_rate_local = capture_bit_rate;
         }
         if (c.ImGui_IsItemDeactivatedAfterEdit() and capture_bit_rate != current_capture_bit_rate) {
-            try actor.dispatch(.{ .user_settings = .{
+            store.dispatch(.{ .user_settings = .{
                 .set_capture_bit_rate = @as(u64, @intCast(capture_bit_rate)) * CAPTURE_BIT_RATE_BPS_PER_KBPS,
             } });
             capture_bit_rate_local = null;
@@ -510,7 +499,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
             replay_seconds_local = replay_seconds;
         }
         if (c.ImGui_IsItemDeactivatedAfterEdit() and replay_seconds != current_replay_seconds) {
-            try actor.dispatch(.{ .user_settings = .{
+            store.dispatch(.{ .user_settings = .{
                 .set_replay_seconds = @intCast(replay_seconds),
             } });
             replay_seconds_local = null;
@@ -529,7 +518,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
     c.ImGui_SameLine();
     imgui_util.help_marker("Try to restore the last capture source when Spacecap starts.");
     if (c.ImGui_Checkbox("##restore_capture_source_on_startup", &restore_capture_source_on_startup)) {
-        try actor.dispatch(.{ .user_settings = .{
+        store.dispatch(.{ .user_settings = .{
             .set_restore_capture_source_on_startup = restore_capture_source_on_startup,
         } });
     }
@@ -541,7 +530,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, actor: *Actor) !void {
         c.ImGui_BeginDisabled(!restore_capture_source_on_startup);
         defer c.ImGui_EndDisabled();
         if (c.ImGui_Checkbox("##start_replay_buffer_on_startup", &start_replay_buffer_on_startup)) {
-            try actor.dispatch(.{ .user_settings = .{
+            store.dispatch(.{ .user_settings = .{
                 .set_start_replay_buffer_on_startup = start_replay_buffer_on_startup,
             } });
         }

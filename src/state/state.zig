@@ -2,7 +2,6 @@ const std = @import("std");
 const Self = @This();
 const Allocator = std.mem.Allocator;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
-const UserSettingsState = @import("./user_settings_state.zig").UserSettingsState;
 const AudioState = @import("./audio_state.zig").AudioState;
 const VideoState = @import("./video_state.zig").VideoState;
 
@@ -33,8 +32,6 @@ is_video_capture_supprted: bool,
 
 audio: AudioState,
 video: VideoState,
-// User settings
-user_settings: UserSettingsState,
 
 replay_buffer: ReplayBufferViewModel = .{},
 
@@ -44,7 +41,6 @@ pub fn init(
     audio_capture: *AudioCapture,
 ) !Self {
     return .{
-        .user_settings = try UserSettingsState.init(allocator),
         .is_video_capture_supprted = is_video_capture_supprted,
         .audio = try .init(allocator, audio_capture),
         .video = .init(),
@@ -54,5 +50,4 @@ pub fn init(
 pub fn deinit(self: *Self) void {
     self.audio.deinit();
     self.video.deinit();
-    self.user_settings.deinit();
 }

@@ -20,7 +20,6 @@ const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoRepla
 const Muxer = @import("../video/muxer.zig").Muxer;
 const exporter = @import("../exporter.zig");
 const AudioActions = @import("./audio_state.zig").AudioActions;
-const UserSettingsActions = @import("./user_settings_state.zig").UserSettingsActions;
 const String = @import("../string.zig").String;
 const VideoActions = @import("./video_state.zig").VideoActions;
 const Store = @import("./store.zig").Store;
@@ -38,7 +37,6 @@ pub const Actions = union(enum) {
     save_replay,
     exit,
     open_global_shortcuts,
-    user_settings: UserSettingsActions,
     audio: AudioActions,
     video: VideoActions,
 };
@@ -158,10 +156,10 @@ pub const Actor = struct {
         const thread_2 = try std.Thread.spawn(.{}, struct {
             fn run(_self: *Self) void {
                 const restore_capture_source_on_startup = blk: {
-                    const settings_locked = _self.state.user_settings.settings.lock();
-                    defer settings_locked.unlock();
-                    const settings = settings_locked.unwrap_ptr();
-                    break :blk settings.restore_capture_source_on_startup;
+                    const state_locked = _self.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
+                    break :blk state.user_settings.user_settings.restore_capture_source_on_startup;
                 };
                 if (restore_capture_source_on_startup) {
                     _self.handle_action(.restore_capture_session) catch |err| {
@@ -178,9 +176,10 @@ pub const Actor = struct {
                 t1.join();
                 t2.join();
                 const should_handle_action: bool = blk: {
-                    const settings_locked = _self.state.user_settings.settings.lock();
-                    defer settings_locked.unlock();
-                    const settings = settings_locked.unwrap_ptr();
+                    const state_locked = _self.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
+                    const settings = state.user_settings.user_settings;
                     break :blk settings.restore_capture_source_on_startup and settings.start_replay_buffer_on_startup;
                 };
                 if (should_handle_action) {
@@ -238,7 +237,6 @@ pub const Actor = struct {
 
     fn handle_action(self: *Self, action: Actions) !void {
         try self.state.audio.handle_action(self, action);
-        try self.state.user_settings.handle_action(self, action);
         try self.state.video.handle_action(self, action);
         switch (action) {
             .start_record => {
@@ -270,9 +268,10 @@ pub const Actor = struct {
                 }
 
                 {
-                    const settings_locked = self.state.user_settings.settings.lock();
-                    defer settings_locked.unlock();
-                    const settings = settings_locked.unwrap_ptr();
+                    const state_locked = self.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
+                    const settings = state.user_settings.user_settings;
                     fps = settings.capture_fps;
                     replay_seconds = settings.replay_seconds;
                     // video_output_directory should never be null at this point. If so, there is
@@ -343,21 +342,23 @@ pub const Actor = struct {
             .open_global_shortcuts => {
                 try self.global_shortcuts.open();
             },
-            .user_settings => |user_settings_action| {
-                switch (user_settings_action) {
-                    .set_replay_seconds => |replay_seconds| {
-                        self.video_record_mutex.lock();
-                        defer self.video_record_mutex.unlock();
-
-                        var video_replay_buffer_locked = self.video_replay_buffer.lock();
-                        defer video_replay_buffer_locked.unlock();
-                        if (video_replay_buffer_locked.unwrap()) |video_replay_buffer| {
-                            video_replay_buffer.set_replay_seconds(replay_seconds);
-                        }
-                    },
-                    else => {},
-                }
-            },
+            // TODO:
+            // .user_settings => |user_settings_action| {
+            //     _ = user_settings_action;
+            //     // switch (user_settings_action) {
+            //     //     .set_replay_seconds => |replay_seconds| {
+            //     //         self.video_record_mutex.lock();
+            //     //         defer self.video_record_mutex.unlock();
+            //     //
+            //     //         var video_replay_buffer_locked = self.video_replay_buffer.lock();
+            //     //         defer video_replay_buffer_locked.unlock();
+            //     //         if (video_replay_buffer_locked.unwrap()) |video_replay_buffer| {
+            //     //             video_replay_buffer.set_replay_seconds(replay_seconds);
+            //     //         }
+            //     //     },
+            //     //     else => {},
+            //     // }
+            // },
             else => {},
         }
     }
@@ -367,9 +368,11 @@ pub const Actor = struct {
         try self.stop_capture();
 
         const fps = blk: {
-            const settings_locked = self.state.user_settings.settings.lock();
-            defer settings_locked.unlock();
-            break :blk settings_locked.unwrap_ptr().capture_fps;
+            const state_locked = self.store.state.lock();
+            defer state_locked.unlock();
+            const state = state_locked.unwrap_ptr();
+            const settings = state.user_settings.user_settings;
+            break :blk settings.capture_fps;
         };
 
         self.video_capture.select_source(selection, fps) catch |err| {
@@ -402,9 +405,11 @@ pub const Actor = struct {
 
         while (true) {
             const fps = blk: {
-                const settings_locked = self.state.user_settings.settings.lock();
-                defer settings_locked.unlock();
-                break :blk settings_locked.unwrap_ptr().capture_fps;
+                const state_locked = self.store.state.lock();
+                defer state_locked.unlock();
+                const state = state_locked.unwrap_ptr();
+                const settings = state.user_settings.user_settings;
+                break :blk settings.capture_fps;
             };
 
             // Here we wait until the next projected frame time. This will happen if we are
@@ -580,9 +585,10 @@ pub const Actor = struct {
         }
 
         {
-            const settings_locked = self.state.user_settings.settings.lock();
-            defer settings_locked.unlock();
-            const settings = settings_locked.unwrap_ptr();
+            const state_locked = self.store.state.lock();
+            defer state_locked.unlock();
+            const state = state_locked.unwrap_ptr();
+            const settings = state.user_settings.user_settings;
             fps = settings.capture_fps;
             capture_bit_rate = settings.capture_bit_rate;
             replay_seconds = settings.replay_seconds;
@@ -664,9 +670,10 @@ pub const Actor = struct {
         }
 
         {
-            const settings_locked = self.state.user_settings.settings.lock();
-            defer settings_locked.unlock();
-            const settings = settings_locked.unwrap_ptr();
+            const state_locked = self.store.state.lock();
+            defer state_locked.unlock();
+            const state = state_locked.unwrap_ptr();
+            const settings = state.user_settings.user_settings;
             fps = settings.capture_fps;
             capture_bit_rate = settings.capture_bit_rate;
             assert(settings.video_output_directory != null);

@@ -5,6 +5,7 @@ const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
 const CaptureStore = @import("./capture_store.zig");
 const UserSettingStore = @import("./user_settings_store.zig");
+const FilePicker = @import("../file_picker/file_picker.zig").FilePicker;
 
 const ChildStores = .{ CaptureStore, UserSettingStore };
 
@@ -43,14 +44,16 @@ pub const Store = struct {
     messages: BufferedChan(Message, 1024),
     state: Mutex(State),
     effect_thread_pool: std.Thread.Pool = undefined,
+    file_picker: *FilePicker,
 
-    pub fn init(allocator: Allocator) !*Self {
+    pub fn init(allocator: Allocator, file_picker: *FilePicker) !*Self {
         const self = try allocator.create(Self);
 
         self.* = .{
             .allocator = allocator,
             .messages = try .init(allocator),
             .state = .init(try .init(allocator)),
+            .file_picker = file_picker,
         };
 
         try self.effect_thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -138,16 +141,44 @@ pub const Store = struct {
                     return;
                 }
 
-                // TODO: Make effects arrays.
-                const effect_fn = @field(effects, effect_name);
+                const effect_fns = @field(effects, effect_name);
 
-                try self.effect_thread_pool.spawn(struct {
-                    fn run(store: *Store, effect_payload: @TypeOf(payload)) void {
-                        // NOTE: If compiler error here - payload in effect must match
-                        // the payload in the message type.
-                        effect_fn(store, effect_payload);
+                comptime {
+                    if (@typeInfo(@TypeOf(effect_fns)) != .@"struct" or !@typeInfo(@TypeOf(effect_fns)).@"struct".is_tuple) {
+                        @compileError("effect must be a tuple: " ++ effect_name);
                     }
-                }.run, .{ self, payload });
+                }
+
+                inline for (effect_fns) |effect_fn| {
+                    try self.effect_thread_pool.spawn(struct {
+                        fn run(store: *Store, effect_payload: @TypeOf(payload)) void {
+
+                            // NOTE: If compiler error here - payload in effect must match
+                            // the payload in the message type.
+                            switch (comptime @typeInfo(@TypeOf(effect_fn))) {
+                                .@"fn" => |f| {
+                                    if (f.return_type) |return_type| {
+                                        switch (@typeInfo(return_type)) {
+                                            .error_union, .error_set => {
+                                                effect_fn(store, effect_payload) catch |err| {
+                                                    log.err("[run_registered_effect] error in effect (" ++ @typeName(@TypeOf(effect_fn)) ++ "): {}", .{err});
+                                                };
+                                            },
+                                            else => {
+                                                effect_fn(store, effect_payload);
+                                            },
+                                        }
+                                    } else {
+                                        @compileError(@typeName(@TypeOf(effect_fn)) ++ " has no return type");
+                                    }
+                                },
+                                else => {
+                                    @compileError(@typeName(@TypeOf(effect_fn)) ++ " must be a function");
+                                },
+                            }
+                        }
+                    }.run, .{ self, payload });
+                }
             },
         }
     }

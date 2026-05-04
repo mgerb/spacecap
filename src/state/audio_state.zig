@@ -108,9 +108,10 @@ pub const AudioState = struct {
                         defer available_devices.deinit();
 
                         var user_settings = blk: {
-                            const settings_locked = actor.state.user_settings.settings.lock();
-                            defer settings_locked.unlock();
-                            const settings = settings_locked.unwrap_ptr();
+                            const state_locked = actor.store.state.lock();
+                            defer state_locked.unlock();
+                            const state = state_locked.unwrap_ptr();
+                            const settings = state.user_settings.user_settings;
                             break :blk try settings.clone(self.allocator);
                         };
                         defer user_settings.deinit(self.allocator);
@@ -151,7 +152,7 @@ pub const AudioState = struct {
                                 device.selected = !device.selected;
                                 try self.update_selected_devices(devices);
 
-                                try actor.dispatch(.{
+                                actor.store.dispatch(.{
                                     .user_settings = .{
                                         .set_audio_device_settings = try .init(self.allocator, .{
                                             .device_id = device.id,
@@ -175,7 +176,7 @@ pub const AudioState = struct {
                             for (devices.items) |*device| {
                                 if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
                                 device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
-                                try actor.dispatch(.{
+                                actor.store.dispatch(.{
                                     .user_settings = .{
                                         .set_audio_device_settings = try .init(self.allocator, .{
                                             .device_id = device.id,
@@ -190,23 +191,26 @@ pub const AudioState = struct {
                     },
                 }
             },
-            .user_settings => |user_settings_action| {
-                switch (user_settings_action) {
-                    .set_replay_seconds => |replay_seconds| {
-                        var replay_buffer_locked = self.audio_replay_buffer.lock();
-                        defer replay_buffer_locked.unlock();
-                        if (replay_buffer_locked.unwrap()) |replay_buffer| {
-                            replay_buffer.set_replay_seconds(replay_seconds);
-                        }
-                    },
-                    else => {},
-                }
-            },
+            // .user_settings => |user_settings_action| {
+            //     _ = user_settings_action;
+            //     // TODO:
+            //     // switch (user_settings_action) {
+            //     //     .set_replay_seconds => |replay_seconds| {
+            //     //         var replay_buffer_locked = self.audio_replay_buffer.lock();
+            //     //         defer replay_buffer_locked.unlock();
+            //     //         if (replay_buffer_locked.unwrap()) |replay_buffer| {
+            //     //             replay_buffer.set_replay_seconds(replay_seconds);
+            //     //         }
+            //     //     },
+            //     //     else => {},
+            //     // }
+            // },
             .start_record => {
                 const replay_seconds = blk: {
-                    const settings_locked = actor.state.user_settings.settings.lock();
-                    defer settings_locked.unlock();
-                    const settings = settings_locked.unwrap_ptr();
+                    const state_locked = actor.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
+                    const settings = state.user_settings.user_settings;
                     break :blk settings.replay_seconds;
                 };
                 var replay_buffer_locked = self.audio_replay_buffer.lock();
