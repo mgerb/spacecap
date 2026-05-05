@@ -3,10 +3,10 @@ const Allocator = std.mem.Allocator;
 const BufferedChan = @import("../channel.zig").BufferedChan;
 const ChanError = @import("../channel.zig").ChanError;
 const Mutex = @import("../mutex.zig").Mutex;
-const CaptureStore = @import("./capture_store.zig");
+const CaptureStore = @import("./capture_store.zig").CaptureStore;
+const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const UserSettingStore = @import("./user_settings_store.zig");
 const FilePicker = @import("../file_picker/file_picker.zig").FilePicker;
-const AudioStore = @import("./audio_store.zig").AudioStore;
 
 // All stores have access to the Store. Runtime dependencies should
 // live directly on the store.
@@ -19,7 +19,7 @@ pub const Store = struct {
     state: Mutex(State),
     effect_thread_pool: std.Thread.Pool = undefined,
     file_picker: *FilePicker,
-    audio_store: AudioStore,
+    capture_store: CaptureStore,
 
     // ----- Adding a new store -----
     //
@@ -30,7 +30,6 @@ pub const Store = struct {
     const ChildStores = .{
         CaptureStore,
         UserSettingStore,
-        AudioStore,
     };
 
     pub const Message = union(enum) {
@@ -38,7 +37,6 @@ pub const Store = struct {
         exit,
         capture: CaptureStore.Message,
         user_settings: UserSettingStore.Message,
-        audio: AudioStore.Message,
 
         pub const effects = .{};
     };
@@ -46,22 +44,27 @@ pub const Store = struct {
     pub const State = struct {
         show_demo: bool = false,
 
-        capture: CaptureStore.State = .{},
+        capture: CaptureStore.State,
         user_settings: UserSettingStore.State,
-        audio: AudioStore.State = .{},
 
         pub fn init(allocator: Allocator) !@This() {
             return .{
                 .user_settings = try .init(allocator),
+                .capture = try .init(allocator),
             };
         }
 
         pub fn deinit(self: *State) void {
             self.user_settings.deinit();
+            self.capture.deinit();
         }
     };
 
-    pub fn init(allocator: Allocator, file_picker: *FilePicker) !*Self {
+    pub fn init(
+        allocator: Allocator,
+        file_picker: *FilePicker,
+        audio_capture: *AudioCapture,
+    ) !*Self {
         const self = try allocator.create(Self);
 
         self.* = .{
@@ -69,7 +72,7 @@ pub const Store = struct {
             .message_queue = try .init(allocator),
             .state = .init(try .init(allocator)),
             .file_picker = file_picker,
-            .audio_store = .{},
+            .capture_store = try .init(allocator, self, audio_capture),
         };
 
         try self.effect_thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
@@ -84,6 +87,7 @@ pub const Store = struct {
             var state = state_locked.unwrap_ptr();
             state.deinit();
         }
+        self.capture_store.deinit();
         self.message_queue.deinit();
         self.effect_thread_pool.deinit();
         self.allocator.destroy(self);

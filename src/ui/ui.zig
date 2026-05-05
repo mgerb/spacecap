@@ -384,9 +384,9 @@ pub const UI = struct {
                 }
 
                 {
-                    const locked_state = self.store.state.lock();
-                    defer locked_state.unlock();
-                    const state = locked_state.unwrap_ptr();
+                    const state_locked = self.store.state.lock();
+                    defer state_locked.unlock();
+                    const state = state_locked.unwrap_ptr();
                     self.actor.ui_mutex.lock();
                     defer self.actor.ui_mutex.unlock();
 

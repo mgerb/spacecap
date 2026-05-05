@@ -116,9 +116,9 @@ pub fn update(allocator: Allocator, msg: Store.Message, state: *Store.State) !vo
 
 fn effect_sync_settings_to_file(store: *Store, _: anytype) !void {
     var user_settings_snapshot = blk: {
-        const locked_state = store.state.lock();
-        defer locked_state.unlock();
-        const state = locked_state.unwrap_ptr();
+        const state_locked = store.state.lock();
+        defer state_locked.unlock();
+        const state = state_locked.unwrap_ptr();
         break :blk state.user_settings.user_settings.clone(store.allocator) catch return;
     };
     defer user_settings_snapshot.deinit(store.allocator);

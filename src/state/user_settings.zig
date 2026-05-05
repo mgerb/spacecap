@@ -9,7 +9,7 @@ const SETTINGS_JSON = "settings.json";
 
 /// NOTE: This MUST remain JSON serializable.
 pub const UserSettings = struct {
-    const AudioDeviceSettings = struct {
+    pub const AudioDeviceSettings = struct {
         id: []const u8,
         selected: bool = false,
         gain: f32 = 1.0,

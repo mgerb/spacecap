@@ -7,3 +7,7 @@
 //
 //
 // move this to ../video ?
+
+pub const VideoSession = struct {
+    // TODO:
+};
