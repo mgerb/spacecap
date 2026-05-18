@@ -1,7 +1,9 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const log = std.log.scoped(.util);
 
 pub const DEBUG = @import("builtin").mode == .Debug;
+pub var test_app_data_dir: ?[]const u8 = null;
 
 pub fn is_windows() bool {
     return @import("builtin").os.tag == .windows;
@@ -123,6 +125,13 @@ pub fn check_fd(fd: i64) !void {
 /// The returned path is owned by the caller and must be freed.
 /// This function will create the directory if it does not exist.
 pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
+    if (@import("builtin").is_test) {
+        const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
+        // NOTE: See test.zig for usage.
+        assert(TEST_APP_DATA_DIR != null);
+        return std.testing.allocator.dupe(u8, TEST_APP_DATA_DIR.?);
+    }
+
     // TODO: Test on Windows.
     const base_dir: []u8 = if (comptime is_windows()) blk: {
         // On Windows, use %APPDATA%

@@ -115,10 +115,8 @@ pub const AudioSession = struct {
                 }
 
                 log.err("[capture_thread_handler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
-                assert(false);
-
-                // Return a default value to keep the compiler happy. We should never reach this point anyway.
-                break :blk 1.0;
+                data.deinit();
+                continue;
             };
 
             try self.write_audio_packets_to_disk(data);

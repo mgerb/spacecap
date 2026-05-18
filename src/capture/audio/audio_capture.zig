@@ -75,7 +75,6 @@ pub const AudioCapture = struct {
         stop: *const fn (*anyopaque) anyerror!void,
         get_available_devices: *const fn (*anyopaque, std.mem.Allocator) anyerror!AudioDeviceList,
         update_selected_devices: *const fn (*anyopaque, []const SelectedAudioDevice) anyerror!void,
-        deinit: *const fn (*anyopaque) void,
     };
 
     /// Receive audio capture data. Caller owns the memory and must deinit.
@@ -93,9 +92,5 @@ pub const AudioCapture = struct {
 
     pub fn update_selected_devices(self: *Self, devices: []const SelectedAudioDevice) !void {
         return self.vtable.update_selected_devices(self.ptr, devices);
-    }
-
-    pub fn deinit(self: *Self) void {
-        return self.vtable.deinit(self.ptr);
     }
 };

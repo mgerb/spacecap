@@ -184,3 +184,138 @@ pub const UserSettings = struct {
         try stringify.write(self.*);
     }
 };
+
+const TestUtil = struct {
+    fn settings_path(allocator: Allocator) ![]u8 {
+        const app_data_dir = try util.get_app_data_dir(allocator);
+        defer allocator.free(app_data_dir);
+        return std.fs.path.join(allocator, &.{ app_data_dir, SETTINGS_JSON });
+    }
+
+    fn write_settings_json(allocator: Allocator, json: []const u8) !void {
+        const path = try settings_path(allocator);
+        defer allocator.free(path);
+
+        const file = try std.fs.createFileAbsolute(path, .{});
+        defer file.close();
+
+        var writer = file.writer(&.{});
+        try writer.interface.writeAll(json);
+    }
+
+    fn expect_audio_device_settings(
+        settings: UserSettings,
+        id: []const u8,
+        selected: bool,
+        gain: f32,
+    ) !void {
+        const audio_device = settings.audio_devices.map.get(id).?;
+        try std.testing.expectEqualStrings(id, audio_device.id);
+        try std.testing.expectEqual(selected, audio_device.selected);
+        try std.testing.expectApproxEqAbs(gain, audio_device.gain, 0.001);
+    }
+};
+
+test "UserSettings - load" {
+    const Test = @import("../test.zig");
+    const allocator = std.testing.allocator;
+    try Test.init_temp_app_data_dir();
+    defer Test.destroy_temp_app_data_dir();
+
+    try TestUtil.write_settings_json(allocator,
+        \\{
+        \\  "capture_fps": 144,
+        \\  "capture_bit_rate": 25000000,
+        \\  "replay_seconds": 45,
+        \\  "start_replay_buffer_on_startup": true,
+        \\  "restore_capture_source_on_startup": false,
+        \\  "video_output_directory": "/tmp/spacecap-output",
+        \\  "audio_devices": {
+        \\    "microphone-1": {
+        \\      "id": "microphone-1",
+        \\      "selected": true,
+        \\      "gain": 0.5
+        \\    }
+        \\  },
+        \\  "unknown_setting": true
+        \\}
+    );
+
+    var settings = try UserSettings.init(allocator);
+    defer settings.deinit(allocator);
+
+    try std.testing.expectEqual(144, settings.capture_fps);
+    try std.testing.expectEqual(25_000_000, settings.capture_bit_rate);
+    try std.testing.expectEqual(45, settings.replay_seconds);
+    try std.testing.expect(settings.start_replay_buffer_on_startup);
+    try std.testing.expect(!settings.restore_capture_source_on_startup);
+    try std.testing.expectEqualStrings("/tmp/spacecap-output", settings.video_output_directory.?.bytes);
+    try TestUtil.expect_audio_device_settings(settings, "microphone-1", true, 0.5);
+}
+
+test "UserSettings - save" {
+    const Test = @import("../test.zig");
+    const allocator = std.testing.allocator;
+    try Test.init_temp_app_data_dir();
+    defer Test.destroy_temp_app_data_dir();
+
+    var settings: UserSettings = .{
+        .capture_fps = 30,
+        .capture_bit_rate = 8_000_000,
+        .replay_seconds = 12,
+        .start_replay_buffer_on_startup = true,
+        .restore_capture_source_on_startup = false,
+        .video_output_directory = try String.from(allocator, "/tmp/spacecap-recordings"),
+    };
+    defer settings.deinit(allocator);
+    try settings.update_audio_device_settings(allocator, "desktop-audio", true, 1.25);
+
+    try settings.save(allocator);
+
+    var loaded = try UserSettings._init(allocator);
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(30, loaded.capture_fps);
+    try std.testing.expectEqual(8_000_000, loaded.capture_bit_rate);
+    try std.testing.expectEqual(12, loaded.replay_seconds);
+    try std.testing.expect(loaded.start_replay_buffer_on_startup);
+    try std.testing.expect(!loaded.restore_capture_source_on_startup);
+    try std.testing.expectEqualStrings("/tmp/spacecap-recordings", loaded.video_output_directory.?.bytes);
+    try TestUtil.expect_audio_device_settings(loaded, "desktop-audio", true, 1.25);
+}
+
+test "UserSettings - clone" {
+    const allocator = std.testing.allocator;
+
+    var original: UserSettings = .{
+        .capture_fps = 60,
+        .capture_bit_rate = 10_000_000,
+        .replay_seconds = 30,
+        .video_output_directory = try String.from(allocator, "/tmp/original"),
+    };
+    defer original.deinit(allocator);
+    try original.update_audio_device_settings(allocator, "device-1", true, 0.75);
+
+    var cloned = try original.clone(allocator);
+    defer cloned.deinit(allocator);
+
+    try std.testing.expect(original.video_output_directory.?.bytes.ptr != cloned.video_output_directory.?.bytes.ptr);
+    const original_device_before = original.audio_devices.map.get("device-1").?;
+    const cloned_device_before = cloned.audio_devices.map.get("device-1").?;
+    try std.testing.expect(original_device_before.id.ptr != cloned_device_before.id.ptr);
+
+    try cloned.set_video_output_directory(try String.from(allocator, "/tmp/cloned"));
+    cloned.capture_fps = 120;
+    try cloned.update_audio_device_settings(allocator, "device-1", false, 2.0);
+    try cloned.update_audio_device_settings(allocator, "device-2", true, 1.0);
+
+    try std.testing.expectEqual(60, original.capture_fps);
+    try std.testing.expectEqualStrings("/tmp/original", original.video_output_directory.?.bytes);
+    try TestUtil.expect_audio_device_settings(original, "device-1", true, 0.75);
+    try std.testing.expect(original.audio_devices.map.get("device-2") == null);
+
+    try std.testing.expectEqual(120, cloned.capture_fps);
+    try std.testing.expectEqualStrings("/tmp/cloned", cloned.video_output_directory.?.bytes);
+    try TestUtil.expect_audio_device_settings(cloned, "device-1", false, 2.0);
+    try TestUtil.expect_audio_device_settings(cloned, "device-2", true, 1.0);
+}

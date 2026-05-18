@@ -27,8 +27,7 @@ pub const LinuxAudioCapture = struct {
         return self;
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
+    pub fn deinit(self: *Self) void {
         self.pipewire_audio.deinit();
         self.allocator.destroy(self);
     }
@@ -55,7 +54,6 @@ pub const LinuxAudioCapture = struct {
 
     pub fn audio_capture(self: *Self) AudioCapture {
         return .{ .ptr = self, .vtable = &.{
-            .deinit = deinit,
             .receive_data = receive_data,
             .get_available_devices = get_available_devices,
             .update_selected_devices = update_selected_devices,
