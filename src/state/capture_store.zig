@@ -32,11 +32,11 @@ pub const CaptureStore = struct {
 
     pub const Message = union(enum) {
         const SetAudioDeviceGainPayload = *ActionPayload(struct {
-            device_id: []u8,
+            device_id: []const u8,
             gain: f32,
 
             pub fn init(arena: *ArenaAllocator, args: struct {
-                device_id: []u8,
+                device_id: []const u8,
                 gain: f32,
             }) !@This() {
                 return .{
@@ -50,10 +50,10 @@ pub const CaptureStore = struct {
         load_system_audio_devices_success: AudioDevices,
         /// When audio devices become ready on app startup.
         audio_devices_ready,
-        start_audio_capture_thread,
         /// Toggle recording on an audio device by device ID.
         toggle_audio_device: String,
         set_audio_device_gain: SetAudioDeviceGainPayload,
+        start_audio_capture_thread,
 
         update_replay_buffer_size: union(enum) {
             audio_size: u64,
@@ -656,3 +656,188 @@ pub const CaptureStore = struct {
         }
     }
 };
+
+test "CaptureStore - init/exit" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+
+    // We can just grab the state directly. We are mostly doing things
+    // synchronously in tests so we don't have to worry about locking.
+    const state = &store.state.private.value;
+
+    store.dispatch(.show_demo);
+    store.run(.{ .once = true });
+
+    try std.testing.expectEqual(state.show_demo, true);
+
+    store.dispatch(.exit);
+    store.run(.{ .once = true });
+}
+
+test "CaptureStore - load_system_audio_devices" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    store.dispatch(.{ .capture = .load_system_audio_devices });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.audio_devices.list.items.len == 0);
+
+    // .load_system_audio_devices_success
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    const audio_device1 = state.capture.audio_devices.list.items[0];
+    const audio_device2 = state.capture.audio_devices.list.items[1];
+    try std.testing.expectEqualStrings(audio_device1.id, "test1");
+    try std.testing.expectEqualStrings(audio_device1.name, "test_device_1");
+    try std.testing.expectEqual(audio_device1.device_type, .sink);
+    try std.testing.expectEqual(audio_device1.gain, 1.0);
+    try std.testing.expect(audio_device1.is_default);
+    try std.testing.expect(audio_device1.selected);
+    try std.testing.expect(!audio_device2.is_default);
+    try std.testing.expect(!audio_device2.selected);
+
+    // .audio_devices_ready
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.startup.audio_devices_ready);
+
+    // Should update the device gain audio map on the audio session.
+    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 1.0);
+}
+
+test "CaptureStore - toggle_audio_device" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    store.dispatch(.{ .capture = .load_system_audio_devices });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.audio_devices.list.items[0].selected);
+
+    store.dispatch(.{ .capture = .{ .toggle_audio_device = try .from(std.testing.allocator, "test1") } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(!state.capture.audio_devices.list.items[0].selected);
+}
+
+test "CaptureStore - set_audio_device_gain" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    store.dispatch(.{ .capture = .load_system_audio_devices });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    store.dispatch(.{ .capture = .{
+        .set_audio_device_gain = try .init(std.testing.allocator, .{
+            .device_id = "test1",
+            .gain = 0.84,
+        }),
+    } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 0.84);
+    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 0.84);
+
+    // Should clamp to 2.0
+    store.dispatch(.{ .capture = .{
+        .set_audio_device_gain = try .init(std.testing.allocator, .{
+            .device_id = "test1",
+            .gain = 2.5,
+        }),
+    } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 2.00);
+    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 2.00);
+
+    // Should clamp to 0
+    store.dispatch(.{ .capture = .{
+        .set_audio_device_gain = try .init(std.testing.allocator, .{
+            .device_id = "test1",
+            .gain = -1.5,
+        }),
+    } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 0);
+    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 0);
+}
+
+test "CaptureStore - start_audio_capture_thread" {
+    // Start the capture thread with no audio devices loaded. It should
+    // deinit data and continue until exit.
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+
+    store.dispatch(.{ .capture = .start_audio_capture_thread });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try test_store.test_audio_capture.data.send(try .init(
+        std.testing.allocator,
+        "test1",
+        &.{},
+        0,
+        48_000,
+        2,
+    ));
+
+    // Sleep so that the thread has a half second to run before store
+    // deinit cleans it up.
+    std.Thread.sleep(std.time.ns_per_s * 0.5);
+}
+
+test "CaptureStore - update_replay_buffer_size" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    const size = 1024 * 1024 * 10; // 10MB
+
+    store.dispatch(.{ .capture = .{ .update_replay_buffer_size = .{ .audio_size = size } } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.dispatch(.{
+        .capture = .{
+            .update_replay_buffer_size = .{
+                .video = .{
+                    .seconds = 1,
+                    .size = size,
+                },
+            },
+        },
+    });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expectEqual(1, state.capture.replay_buffer.seconds);
+    try std.testing.expectEqual(10, state.capture.replay_buffer.size_in_mb(.audio));
+    try std.testing.expectEqual(10, state.capture.replay_buffer.size_in_mb(.video));
+    try std.testing.expectEqual(20, state.capture.replay_buffer.size_in_mb(.total));
+}
+
+// ----------------------------------------------------------------------------
+// TODO: Start here. Still need to write tests for the rest of the message types.
+// ----------------------------------------------------------------------------
+test "CaptureStore - start_replay_buffer" {}

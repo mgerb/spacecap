@@ -22,6 +22,7 @@ pub const Store = struct {
     message_queue: BufferedChan(Message, 1024),
     state: Mutex(State),
     effect_thread_pool: std.Thread.Pool = undefined,
+    effect_thread_pool_wait_group: std.Thread.WaitGroup = .{},
     file_picker: *FilePicker,
     capture_store: CaptureStore,
     global_shortcuts_store: *GlobalShortcutsStore,
@@ -81,17 +82,24 @@ pub const Store = struct {
     ) !*Self {
         const self = try allocator.create(Self);
 
-        self.* = .{ .allocator = allocator, .message_queue = try .init(allocator), .state = .init(try .init(allocator)), .file_picker = file_picker, .capture_store = try .init(
-            allocator,
-            vulkan,
-            self,
-            audio_capture,
-            video_capture,
-        ), .global_shortcuts_store = try .init(
-            allocator,
-            self,
-            global_shortcuts,
-        ) };
+        self.* = .{
+            .allocator = allocator,
+            .message_queue = try .init(allocator),
+            .state = .init(try .init(allocator)),
+            .file_picker = file_picker,
+            .capture_store = try .init(
+                allocator,
+                vulkan,
+                self,
+                audio_capture,
+                video_capture,
+            ),
+            .global_shortcuts_store = try .init(
+                allocator,
+                self,
+                global_shortcuts,
+            ),
+        };
 
         try self.effect_thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
 
@@ -99,6 +107,7 @@ pub const Store = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        self.effect_thread_pool_wait_group.wait();
         self.effect_thread_pool.deinit();
         {
             const state_locked = self.state.lock();
@@ -132,15 +141,43 @@ pub const Store = struct {
     }
 
     /// Pull messages off the queue and call relevant update/effect functions.
-    /// This should never block: update only modifies state, and effects run
-    /// in the thread pool.
-    pub fn run(self: *Self) void {
+    /// Update only modifies state, and effects run in the thread pool.
+    /// This will block until the .exit message.
+    pub fn run(
+        self: *Self,
+        /// These args are currently only used for testing. They allows the processing
+        /// of messages one at a time while also enabling the ability to wait for any effects
+        /// that it dispatches.
+        comptime args: struct {
+            /// Run until the message queue is empty and then exit.
+            once: bool = false,
+            /// Wait for the effects after dispatching them to the thread pool.
+            wait_for_effects: bool = false,
+        },
+    ) void {
+        defer {
+            if (args.wait_for_effects) {
+                self.effect_thread_pool_wait_group.wait();
+                self.effect_thread_pool_wait_group.reset();
+            }
+        }
         while (true) {
-            const msg = self.message_queue.recv() catch |err| {
-                if (err != ChanError.Closed) {
-                    log.err("[run] message receive error: {}", .{err});
+            const msg = blk: {
+                if (args.once) {
+                    break :blk self.message_queue.try_recv() catch |err| {
+                        if (err != ChanError.Closed) {
+                            log.err("[run] message receive error: {}", .{err});
+                        }
+                        return;
+                    } orelse return;
+                } else {
+                    break :blk self.message_queue.recv() catch |err| {
+                        if (err != ChanError.Closed) {
+                            log.err("[run] message receive error: {}", .{err});
+                        }
+                        return;
+                    };
                 }
-                return;
             };
 
             // NOTE: Any child store cleanup logic must go here.
@@ -186,17 +223,17 @@ pub const Store = struct {
 
                 if (comptime Payload != void) {
                     if (comptime @hasDecl(Payload, "effects")) {
-                        try self.execute_registered_effects(Payload.effects, payload);
+                        self.execute_registered_effects(Payload.effects, payload);
                         return;
                     }
                 }
 
-                try self.execute_registered_effects(Message.effects, msg);
+                self.execute_registered_effects(Message.effects, msg);
             },
         }
     }
 
-    fn execute_registered_effects(self: *Self, comptime effects: anytype, msg: anytype) !void {
+    fn execute_registered_effects(self: *Self, comptime effects: anytype, msg: anytype) void {
         comptime validate_effect_keys(@TypeOf(msg), effects);
         switch (msg) {
             inline else => |payload, tag| {
@@ -215,7 +252,7 @@ pub const Store = struct {
                 }
 
                 inline for (effect_fns) |effect_fn| {
-                    try self.effect_thread_pool.spawn(struct {
+                    self.effect_thread_pool.spawnWg(&self.effect_thread_pool_wait_group, struct {
                         fn run(store: *Store, effect_payload: @TypeOf(payload)) void {
 
                             // NOTE: If compiler error here - payload in effect must match
@@ -284,5 +321,238 @@ pub const Store = struct {
         self.message_queue.send(msg) catch |err| {
             log.err("[dispatch] {}", .{err});
         };
+    }
+};
+
+pub const TestStore = struct {
+    const Test = @import("../test.zig");
+    const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+    const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
+    const AudioDeviceList = @import("../capture/audio/audio_capture.zig").AudioDeviceList;
+    const rc = @import("zigrc");
+    const types = @import("../types.zig");
+    const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
+    const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
+    const AudioCaptureBufferedChan = @import("../capture/audio/audio_capture.zig").AudioCaptureBufferedChan;
+
+    pub const TestGlobalShortcuts = struct {
+        handler: ?GlobalShortcuts.ShortcutHandler = null,
+        pub var did_register = false;
+
+        fn run(_: *anyopaque) anyerror!void {}
+        fn stop(_: *anyopaque) void {}
+        fn open(_: *anyopaque) anyerror!void {}
+        fn deinit(_: *anyopaque) void {}
+
+        fn register_shortcut_handler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.handler = handler;
+            did_register = true;
+        }
+
+        fn global_shortcuts(self: *@This()) GlobalShortcuts {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .run = run,
+                    .stop = stop,
+                    .open = open,
+                    .register_shortcut_handler = register_shortcut_handler,
+                    .deinit = @This().deinit,
+                },
+            };
+        }
+    };
+
+    const TestAudioCapture = struct {
+        stopped: bool = false,
+        selected_devices_updated: bool = false,
+        data: AudioCaptureBufferedChan,
+
+        pub fn init(allocator: Allocator) !@This() {
+            return .{
+                .data = try .init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.data.deinit();
+        }
+
+        fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.data.recv();
+        }
+
+        fn stop(context: *anyopaque) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.stopped = true;
+        }
+
+        fn get_available_devices(_: *anyopaque, allocator: std.mem.Allocator) anyerror!AudioDeviceList {
+            var audio_device_list = try AudioDeviceList.init(allocator);
+            try audio_device_list.append(.{
+                .id = "test1",
+                .name = "test_device_1",
+                .device_type = .sink,
+                .is_default = true,
+            });
+            try audio_device_list.append(.{
+                .id = "test2",
+                .name = "test_device_2",
+                .device_type = .source,
+                .is_default = false,
+            });
+            return audio_device_list;
+        }
+
+        fn update_selected_devices(context: *anyopaque, _: []const SelectedAudioDevice) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.selected_devices_updated = true;
+        }
+
+        fn audio_capture(self: *@This()) AudioCapture {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .receive_data = receive_data,
+                    .stop = stop,
+                    .get_available_devices = get_available_devices,
+                    .update_selected_devices = update_selected_devices,
+                },
+            };
+        }
+    };
+
+    const TestVideoCapture = struct {
+        selected: bool = false,
+        stopped: bool = false,
+        closed_channels: bool = false,
+        restore_session: bool = false,
+        capture_size: ?types.Size = .{ .width = 1920, .height = 1080 },
+
+        fn select_source(context: *anyopaque, _: VideoCaptureSelection, _: u32) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.selected = true;
+        }
+
+        fn update_fps(_: *anyopaque, _: u32) anyerror!void {}
+
+        fn should_restore_capture_session(context: *anyopaque) anyerror!bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.restore_session;
+        }
+
+        fn next_frame(_: *anyopaque) ChanError!void {
+            return error.Closed;
+        }
+
+        fn close_all_channels(context: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.closed_channels = true;
+        }
+
+        fn wait_for_frame(_: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+            return error.Closed;
+        }
+
+        fn size(context: *anyopaque) ?types.Size {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.capture_size;
+        }
+
+        fn stop(context: *anyopaque) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.stopped = true;
+        }
+
+        fn deinit(_: *anyopaque) void {}
+
+        fn video_capture(self: *@This()) VideoCapture {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .select_source = select_source,
+                    .update_fps = update_fps,
+                    .should_restore_capture_session = should_restore_capture_session,
+                    .next_frame = next_frame,
+                    .close_all_channels = close_all_channels,
+                    .wait_for_frame = wait_for_frame,
+                    .size = size,
+                    .stop = stop,
+                    .deinit = @This().deinit,
+                },
+            };
+        }
+    };
+
+    pub const TestFilePicker = struct {};
+
+    // ----------------------------------------------------------------------------
+    // TestStore definition starts here.
+    // ----------------------------------------------------------------------------
+    allocator: Allocator,
+    store: *Store,
+    vulkan: Vulkan,
+
+    test_file_picker: TestFilePicker,
+    file_picker_interface: FilePicker,
+
+    test_audio_capture: TestAudioCapture,
+    audio_capture: AudioCapture,
+
+    test_video_capture: TestVideoCapture,
+    video_capture: VideoCapture,
+
+    test_global_shortcuts: TestGlobalShortcuts,
+    global_shortcuts: GlobalShortcuts,
+
+    pub fn init(allocator: Allocator) !*@This() {
+        try Test.init_temp_app_data_dir();
+
+        const self = try allocator.create(@This());
+
+        self.* = .{
+            .allocator = allocator,
+            .vulkan = undefined,
+            .store = undefined,
+            .test_file_picker = .{},
+            .file_picker_interface = undefined,
+            .test_audio_capture = try .init(allocator),
+            .audio_capture = undefined,
+            .test_video_capture = .{},
+            .video_capture = undefined,
+            .test_global_shortcuts = .{},
+            .global_shortcuts = undefined,
+        };
+
+        self.audio_capture = self.test_audio_capture.audio_capture();
+        self.video_capture = self.test_video_capture.video_capture();
+        self.global_shortcuts = self.test_global_shortcuts.global_shortcuts();
+
+        self.vulkan.video_encoder = null;
+        self.vulkan.video_encode_queue = null;
+        self.vulkan.window = null;
+        self.vulkan.capture_preview_ring_buffer = .init(null);
+        self.vulkan.capture_ring_buffer = .init(null);
+        self.vulkan.capture_preview_textures = .init(allocator);
+
+        self.store = try .init(
+            allocator,
+            &self.vulkan,
+            &self.file_picker_interface,
+            &self.audio_capture,
+            &self.video_capture,
+            &self.global_shortcuts,
+        );
+
+        return self;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.test_audio_capture.deinit();
+        self.store.deinit();
+        Test.destroy_temp_app_data_dir();
+        self.allocator.destroy(self);
     }
 };

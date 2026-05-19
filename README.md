@@ -1,44 +1,44 @@
-# Spacecap
+<h1 align="center">Spacecap</h1>
+<p align="center">
+    <img align="center" src="./packaging/logo_blue.png"/>
+</p>
 
-A hardware accelerated replay capture tool focused on performance. Currently
-only supports Linux. Still in early development (see roadmap below).
+A hardware accelerated screen recording/replay application focused on performance.
+Currently only supports Linux. Still in early development (see roadmap below).
+
+- Written in [Zig](https://ziglang.org/).
+- Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
+- UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
+- Muxing/Audio encoding with [ffmepg](https://www.ffmpeg.org/).
+
+---
 
 ![screenshot2](./screenshots/screenshot_3.png)
 
 <p align="center">(very early screenshot - UI still in development)</p>
 
-- Written in [Zig](https://ziglang.org/).
-- Hardware accelerated encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
-- UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
-
 ## Features
 
-- Desktop/window/region capture.
-- Save last n seconds of video (video buffered in memory).
+- Desktop/window capture.
+- Record.
+- Replay - save last n seconds of video (buffered in memory).
+- Capture preview.
 - Global keybinds.
 
 ## Roadmap
 
 - Screenshots.
-- Toggle recording (currently only replays are supported).
 - Video player/editor.
   - Simple video editor (trim start/end).
   - File browser to select videos to edit.
 - Additional video output formats (mp4, mov, mkv, gif, etc.).
 - Windows capture.
 
-## Why would you want to use this?
-
-You're looking for a lightweight and performant way to capture video replays.
-The goal of Spacecap is to be as fast and resource efficient as possible. To do
-this, frame buffers stay on the GPU (via dma-buff) for the entire duration of
-the encoding pipeline.
-
 ## Requirements
 
 - A GPU that supports Vulkan Video.
 
-**NOTE:** Only tested on an Nvidia GPU so far. AMD will be supported, I just
+**NOTE:** Only tested on an Nvidia GPU (RTX 3080) so far. AMD will be supported, I just
 have no way of testing at this time.
 
 ### Linux

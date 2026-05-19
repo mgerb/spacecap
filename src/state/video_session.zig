@@ -19,6 +19,7 @@ const VideoRecordData = struct {
     timestamp_ns: i128,
     is_idr: bool,
 
+    /// NOTE: Copies and manages data internally.
     pub fn init(
         allocator: Allocator,
         data: []const u8,
@@ -204,6 +205,8 @@ pub const VideoSession = struct {
         self.video_record_mutex.lock();
         defer self.video_record_mutex.unlock();
 
+        // Send the .done payload and wait for the record to disk thread to finish
+        // pulling all data out of the queue.
         if (self.record_data_queue) |*record_data_queue| {
             record_data_queue.send(.done) catch |err| {
                 log.err("[stop_recording_to_disk] record_data_queue.send error: {}", .{err});

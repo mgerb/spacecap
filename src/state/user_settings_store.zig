@@ -128,12 +128,6 @@ fn effect_sync_settings_to_file(store: *Store, _: anytype) !void {
 }
 
 fn effect_select_output_directory(store: *Store, _: anytype) !void {
-    // TODO:
-    // if (self.output_directory_picker_running.swap(true, .acq_rel)) {
-    //     return;
-    // }
-    // defer self.output_directory_picker_running.store(false, .release);
-
     var initial_directory = blk: {
         const state_locked = store.state.lock();
         defer state_locked.unlock();

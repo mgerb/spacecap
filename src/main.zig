@@ -86,8 +86,8 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     defer video_capture_interface.deinit();
 
     const _audio_capture = try PlatformAudioCapture.init(allocator);
+    defer _audio_capture.deinit();
     var audio_capture_interface = _audio_capture.audio_capture();
-    defer audio_capture_interface.deinit();
 
     var platform_file_picker = try PlatformFilePicker.init();
     defer platform_file_picker.deinit();
@@ -112,7 +112,7 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
 
     const store_thread = try std.Thread.spawn(.{}, struct {
         fn run(_store: *Store) void {
-            _store.run();
+            _store.run(.{});
         }
     }.run, .{store});
 
