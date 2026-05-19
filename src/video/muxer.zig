@@ -209,7 +209,7 @@ pub const Muxer = struct {
         else
             0;
         const jitter_tolerance_pts = if (self.fps > 0)
-            @max(ffmpeg.av_rescale_q(10 * std.time.ns_per_ms, ns_time_base, self.video_stream.time_base), 1)
+            @max(@divTrunc(frame_duration_pts * 3, 4), 1)
         else
             0;
 
