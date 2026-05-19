@@ -130,7 +130,13 @@ pub const Portal = struct {
             return error.SessionAlreadyExists;
         }
 
-        const loop = c.g_main_loop_new(null, 0) orelse return error.GMainLoopNewFailed;
+        // Keep portal callbacks on this worker thread's context. Running the
+        // default context here can dispatch unrelated UI/tray GLib sources.
+        const main_context = c.g_main_context_new() orelse return error.GMainContextNewFailed;
+        defer c.g_main_context_unref(main_context);
+
+        const loop = c.g_main_loop_new(main_context, 0) orelse return error.GMainLoopNewFailed;
+        defer c.g_main_loop_unref(loop);
         var ctx = CreateSessionContext{ .loop = loop };
 
         const outputs: c.XdpOutputType = switch (selection) {
@@ -141,6 +147,9 @@ pub const Portal = struct {
             },
         };
 
+        // libportal attaches async completion sources to the thread-default
+        // context at call time.
+        c.g_main_context_push_thread_default(main_context);
         c.xdp_portal_create_screencast_session(
             self.portal,
             outputs,
@@ -152,9 +161,9 @@ pub const Portal = struct {
             create_session_callback,
             &ctx,
         );
+        c.g_main_context_pop_thread_default(main_context);
 
         c.g_main_loop_run(loop);
-        c.g_main_loop_unref(loop);
 
         if (ctx.g_error) |err| {
             defer free_error_maybe(err);
@@ -164,39 +173,27 @@ pub const Portal = struct {
             return error.CreateScreencastSessionFailed;
         }
 
-        if (ctx.session == null) {
+        const session = ctx.session orelse {
             return error.CreateScreencastSessionFailed;
-        }
+        };
 
-        self.session = ctx.session;
+        self.session = session;
     }
-
-    const StartSessionContext = struct {
-        allocator: std.mem.Allocator,
-        loop: ?*c.GMainLoop,
-        session: *c.XdpSession,
-        cancellable: ?*c.GCancellable = null,
-        success: bool = false,
-        completed: bool = false,
-        timed_out: bool = false,
-        detached: bool = false,
-        g_error: ?*c.GError = null,
-    };
 
     fn start_session_callback(
         source_object: ?*c.GObject,
         res: ?*c.GAsyncResult,
         user_data: ?*anyopaque,
     ) callconv(.c) void {
-        _ = source_object;
         const ctx: *StartSessionContext = @ptrCast(@alignCast(user_data));
         var err: ?*c.GError = null;
-        const success = c.xdp_session_start_finish(ctx.session, res, &err) != 0;
+        const success = c.xdp_session_start_finish(@ptrCast(source_object), res, &err) != 0;
 
         if (ctx.detached) {
             if (err) |gerr| {
                 free_error_maybe(gerr);
             }
+            ctx.deinit();
             return;
         }
 
@@ -207,6 +204,43 @@ pub const Portal = struct {
             c.g_main_loop_quit(loop);
         }
     }
+
+    const StartSessionContext = struct {
+        loop: ?*c.GMainLoop,
+        cancellable: ?*c.GCancellable = null,
+        success: bool = false,
+        completed: bool = false,
+        timed_out: bool = false,
+        detached: bool = false,
+        g_error: ?*c.GError = null,
+
+        fn init(loop: *c.GMainLoop, cancellable: bool) !*StartSessionContext {
+            // A restore timeout can return before libportal calls back. Use GLib
+            // allocation so a late C callback can own and free this context.
+            const ptr = c.g_malloc0(@sizeOf(StartSessionContext)) orelse return error.OutOfMemory;
+            const self: *StartSessionContext = @ptrCast(@alignCast(ptr));
+            self.* = .{ .loop = loop };
+            if (cancellable) {
+                self.cancellable = c.g_cancellable_new() orelse {
+                    c.g_free(self);
+                    return error.GCancellableNewFailed;
+                };
+            }
+            return self;
+        }
+
+        fn deinit(self: *StartSessionContext) void {
+            if (self.cancellable) |cancellable| {
+                c.g_object_unref(cancellable);
+                self.cancellable = null;
+            }
+            if (self.g_error) |err| {
+                free_error_maybe(err);
+                self.g_error = null;
+            }
+            c.g_free(self);
+        }
+    };
 
     fn restore_start_timeout_callback(user_data: ?*anyopaque) callconv(.c) c.gboolean {
         const ctx: *StartSessionContext = @ptrCast(@alignCast(user_data));
@@ -221,61 +255,77 @@ pub const Portal = struct {
     }
 
     fn start_session(self: *Self, selection: VideoCaptureSelection) (VideoCaptureError || anyerror)!u32 {
-        const loop = c.g_main_loop_new(null, 0) orelse return error.GMainLoopNewFailed;
-        const ctx = try self.allocator.create(StartSessionContext);
-        defer self.allocator.destroy(ctx);
-        ctx.* = .{
-            .allocator = self.allocator,
-            .loop = loop,
-            .session = self.session.?,
-            .cancellable = if (selection == .restore_session) c.g_cancellable_new() else null,
-        };
+        // Isolate this loop from the process default context; otherwise this
+        // thread may dispatch unrelated GLib sources while waiting on the portal.
+        const main_context = c.g_main_context_new() orelse return error.GMainContextNewFailed;
+        defer c.g_main_context_unref(main_context);
 
-        var restore_timeout_id: ?c_uint = null;
+        const loop = c.g_main_loop_new(main_context, 0) orelse return error.GMainLoopNewFailed;
+        defer c.g_main_loop_unref(loop);
+
+        var ctx: ?*StartSessionContext = try .init(
+            loop,
+            selection == .restore_session,
+        );
+
+        var restore_timeout_source: ?[*c]c.GSource = null;
         defer {
-            if (!ctx.timed_out) {
-                if (restore_timeout_id) |id| {
-                    _ = c.g_source_remove(id);
+            if (restore_timeout_source) |source| {
+                if (ctx) |active_ctx| {
+                    if (!active_ctx.timed_out) {
+                        c.g_source_destroy(source);
+                    }
                 }
+                c.g_source_unref(source);
             }
-            if (ctx.cancellable) |cancellable| {
-                c.g_object_unref(cancellable);
-                ctx.cancellable = null;
+            if (ctx) |active_ctx| {
+                active_ctx.deinit();
             }
-            c.g_main_loop_unref(loop);
         }
 
-        if (ctx.cancellable != null) {
-            restore_timeout_id = c.g_timeout_add(SESSION_RESTORE_TIMEOUT_MS, restore_start_timeout_callback, ctx);
+        if (ctx.?.cancellable != null) {
+            // g_timeout_add() always uses the global default context, so attach
+            // an explicit timeout source to the private context instead.
+            restore_timeout_source = c.g_timeout_source_new(SESSION_RESTORE_TIMEOUT_MS);
+            if (restore_timeout_source == null) {
+                return error.GTimeoutSourceNewFailed;
+            }
+            c.g_source_set_callback(restore_timeout_source.?, restore_start_timeout_callback, ctx.?, null);
+            _ = c.g_source_attach(restore_timeout_source.?, main_context);
         }
+
+        c.g_main_context_push_thread_default(main_context);
+        defer c.g_main_context_pop_thread_default(main_context);
 
         c.xdp_session_start(
             self.session.?,
             null,
-            ctx.cancellable,
+            ctx.?.cancellable,
             start_session_callback,
-            ctx,
+            ctx.?,
         );
 
         c.g_main_loop_run(loop);
-        ctx.loop = null;
+        ctx.?.loop = null;
 
-        if (ctx.timed_out and !ctx.completed) {
-            // The restore attempt likely fell through to the interactive picker.
-            // Return immediately and let a late callback free the detached context.
-            ctx.detached = true;
+        if (ctx.?.timed_out) {
+            if (!ctx.?.completed) {
+                // The async callback may still arrive after we return. Transfer
+                // ownership to that callback so shutdown is not blocked.
+                ctx.?.detached = true;
+                ctx = null;
+            }
             return VideoCaptureError.SourcePickerCancelled;
         }
 
-        if (ctx.g_error) |err| {
-            defer free_error_maybe(err);
+        if (ctx.?.g_error) |err| {
             if (map_g_error(err)) |cerr| {
                 return cerr;
             }
             return error.StartSessionFailed;
         }
 
-        if (!ctx.success) {
+        if (!ctx.?.success) {
             return error.StartSessionFailed;
         }
 
