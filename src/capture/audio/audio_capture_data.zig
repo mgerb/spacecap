@@ -43,6 +43,12 @@ pub fn deinit(self: *@This()) void {
     self.allocator.destroy(self);
 }
 
+pub fn clone(self: *@This(), allocator: std.mem.Allocator) !*@This() {
+    const data = try init(allocator, self.id, self.pcm_data, self.timestamp, self.sample_rate, self.channels);
+    data.gain = self.gain;
+    return data;
+}
+
 pub fn start_ns(self: *@This()) i128 {
     return self.timestamp;
 }

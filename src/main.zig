@@ -1,7 +1,6 @@
 const std = @import("std");
 const UI = @import("./ui/ui.zig").UI;
 const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
-const Actor = @import("./state/actor.zig").Actor;
 const Util = @import("./util.zig");
 const sdl = @import("./ui/sdl.zig");
 const PlatformCaptureSetup = @import("./capture/platform_capture_setup.zig").PlatformCaptureSetup;
@@ -11,6 +10,11 @@ const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig
 const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
 const PlatformFilePicker = @import("./file_picker/platform_file_picker.zig").PlatformFilePicker;
 const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shortcuts.zig").PlatformGlobalShortcuts;
+const Store = @import("./state/store.zig").Store;
+const ipc_module = @import("./ipc/ipc.zig");
+const IpcCommand = ipc_module.IpcCommand;
+
+const log = std.log.scoped(.main);
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -35,29 +39,28 @@ fn cli_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !bool {
     const linux_args = parsed_args orelse return false;
 
     switch (linux_args) {
-        .send => |send_cmd| switch (send_cmd) {
-            .@"save-replay" => {
-                const _ipc = try PlatformIpc.init(allocator, null);
-                var ipc = _ipc.ipc();
-                defer ipc.deinit();
+        .send => |send_cmd| {
+            const ipc_command = IpcCommand.from_send_command(send_cmd);
+            const _ipc = try PlatformIpc.init(allocator, null);
+            var ipc = _ipc.ipc();
+            defer ipc.deinit();
 
-                ipc.send_command(.save_replay) catch |err| {
-                    switch (err) {
-                        error.SpacecapNotRunning => {
-                            std.debug.print("spacecap is not running.\n", .{});
-                        },
-                        error.IpcPermissionDenied => {
-                            std.debug.print("permission denied while contacting spacecap IPC socket.\n", .{});
-                        },
-                        else => {
-                            std.debug.print("failed to send save replay command: {}\n", .{err});
-                        },
-                    }
-                    std.process.exit(1);
-                };
+            ipc.send_command(ipc_command) catch |err| {
+                switch (err) {
+                    error.SpacecapNotRunning => {
+                        log.err("[cli_app] Spacecap is not running.", .{});
+                    },
+                    error.IpcPermissionDenied => {
+                        log.err("[cli_app] permission denied while contacting spacecap IPC socket.\n", .{});
+                    },
+                    else => {
+                        log.err("[cli_app] failed to send IPC command '{s}': {}\n", .{ @tagName(send_cmd), err });
+                    },
+                }
+                std.process.exit(1);
+            };
 
-                return true;
-            },
+            return true;
         },
     }
 
@@ -95,32 +98,31 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     try global_shortcuts.run();
     defer global_shortcuts.deinit();
 
-    const actor = try Actor.init(
+    var store = try Store.init(
         allocator,
         vulkan,
-        &video_capture_interface,
         &file_picker_interface,
         &audio_capture_interface,
+        &video_capture_interface,
         &global_shortcuts,
     );
-    defer actor.deinit();
+    defer store.deinit();
 
-    global_shortcuts.register_shortcut_handler(.{ .ptr = actor, .handler = Actor.global_shortcuts_handler });
+    store.dispatch_application_startup_messages();
 
-    const StateThread = struct {
-        pub fn run(_state: *Actor) void {
-            _state.run();
+    const store_thread = try std.Thread.spawn(.{}, struct {
+        fn run(_store: *Store) void {
+            _store.run();
         }
-    };
-    const state_thread = try std.Thread.spawn(.{}, StateThread.run, .{actor});
+    }.run, .{store});
 
-    const _ipc = try PlatformIpc.init(allocator, actor);
+    const _ipc = try PlatformIpc.init(allocator, store);
     var ipc = _ipc.ipc();
     try ipc.start();
     defer ipc.deinit();
 
-    const ui = try UI.init(allocator, actor, vulkan);
+    const ui = try UI.init(allocator, store, vulkan);
     defer ui.deinit();
 
-    state_thread.join();
+    store_thread.join();
 }

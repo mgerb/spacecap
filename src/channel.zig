@@ -98,11 +98,19 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
                 };
                 if (@hasDecl(type_info, "deinit")) {
                     for (self.buf, 0..) |buf, i| {
-                        if (buf) |b| {
-                            b.deinit();
+                        if (@typeInfo(T) == .pointer) {
+                            if (buf) |b| {
+                                b.deinit();
+                            }
+                        } else {
+                            if (buf) |*b| {
+                                @constCast(b).deinit();
+                            }
                         }
                         self.buf[i] = null;
                     }
+                } else {
+                    @compileError(@typeName(T) ++ " must implement a 'deinit' method when .drain = true");
                 }
             }
         }
@@ -127,7 +135,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Try to send
         /// Chan - will skip if no receiver is receiving
         /// BufferedChan - will skip if at capacity
-        /// Returns bool if sent successfully.
+        /// Returns true if sent successfully.
         pub fn try_send(self: *Self, data: T) ChanError!bool {
             self.mut.lock();
             if ((bufSize == 0 and self.recvQ.items.len > 0) or
@@ -229,9 +237,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             if ((bufSize == 0 and self.sendQ.items.len > 0) or
                 (bufSize > 0 and self.len > 0))
             {
-                const val = self._recv() catch |err| {
-                    return err;
-                };
+                const val = try self._recv();
                 return val;
             } else {
                 self.mut.unlock();
@@ -700,7 +706,7 @@ test "recv handles wake races" {
     }
 }
 
-test "trySend - Chan" {
+test "try_send - Chan" {
     const T = Chan(u8);
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
@@ -723,7 +729,7 @@ test "trySend - Chan" {
     th.join();
 }
 
-test "trySend - BufferedChan" {
+test "try_send - BufferedChan" {
     const T = BufferedChan(u8, 2);
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
@@ -737,7 +743,7 @@ test "trySend - BufferedChan" {
     try std.testing.expectEqual(chan.len, 2);
 }
 
-test "tryRecv - Chan" {
+test "try_recv - Chan" {
     const T = Chan(u8);
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();
@@ -758,7 +764,7 @@ test "tryRecv - Chan" {
     try std.testing.expectEqual(chan.try_recv(), 1);
 }
 
-test "tryRecv - BufferedChan" {
+test "try_recv - BufferedChan" {
     const T = BufferedChan(u8, 2);
     var chan = try T.init(std.testing.allocator);
     defer chan.deinit();

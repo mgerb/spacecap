@@ -67,6 +67,7 @@ pub const VideoReplayBuffer = struct {
         self.allocator.destroy(self);
     }
 
+    // Copies the data into the replay buffer.
     pub fn add_frame(self: *Self, data: []const u8, frame_time_ns: i128, is_idr: bool) !void {
         var data_list = try std.ArrayList(u8).initCapacity(self.allocator, data.len);
         try data_list.appendSlice(self.allocator, data);

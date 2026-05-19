@@ -9,7 +9,7 @@ const SETTINGS_JSON = "settings.json";
 
 /// NOTE: This MUST remain JSON serializable.
 pub const UserSettings = struct {
-    const AudioDeviceSettings = struct {
+    pub const AudioDeviceSettings = struct {
         id: []const u8,
         selected: bool = false,
         gain: f32 = 1.0,
@@ -48,9 +48,7 @@ pub const UserSettings = struct {
         const settings_path = try std.fs.path.join(allocator, &.{ app_data_dir, SETTINGS_JSON });
         defer allocator.free(settings_path);
 
-        const file = std.fs.openFileAbsolute(settings_path, .{}) catch |err| {
-            return err;
-        };
+        const file = try std.fs.openFileAbsolute(settings_path, .{});
         defer file.close();
 
         const stat = try file.stat();

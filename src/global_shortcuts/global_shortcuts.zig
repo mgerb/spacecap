@@ -6,8 +6,38 @@ pub const GlobalShortcuts = struct {
 
     pub const Shortcut = enum {
         save_replay,
+        start_replay_buffer,
+        stop_replay_buffer,
+        toggle_replay_buffer,
+        start_recording,
+        stop_recording,
+        toggle_recording,
 
-        // TODO: Add some comptime stuff and replace the string literals in xdg desktop shortcuts...
+        pub const all = std.enums.values(Shortcut);
+
+        pub fn id(self: Shortcut) []const u8 {
+            return @tagName(self);
+        }
+
+        pub fn display_name(self: Shortcut) []const u8 {
+            return switch (self) {
+                .save_replay => "Save Replay",
+                .start_replay_buffer => "Start Replay Buffer",
+                .stop_replay_buffer => "Stop Replay Buffer",
+                .toggle_replay_buffer => "Toggle Replay Buffer",
+                .start_recording => "Start Recording",
+                .stop_recording => "Stop Recording",
+                .toggle_recording => "Toggle Recording",
+            };
+        }
+
+        pub fn ids() [all.len][]const u8 {
+            var result: [all.len][]const u8 = undefined;
+            for (all, 0..) |shortcut, index| {
+                result[index] = shortcut.id();
+            }
+            return result;
+        }
     };
 
     pub const ShortcutHandler = struct {

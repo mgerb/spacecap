@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const Actor = @import("../../state/actor.zig").Actor;
+const Store = @import("../../state/store.zig").Store;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 
 const SOCKET_FILE_NAME = "spacecap.sock";
@@ -9,6 +9,12 @@ const log = std.log.scoped(.linux_ipc_server);
 const RequestPayload = enum(u8) {
     wake = 0,
     save_replay = 1,
+    start_replay_buffer = 2,
+    stop_replay_buffer = 3,
+    toggle_replay_buffer = 4,
+    start_recording = 5,
+    stop_recording = 6,
+    toggle_recording = 7,
 
     pub fn value(self: @This()) u8 {
         return @intFromEnum(self);
@@ -29,16 +35,16 @@ pub const IpcServer = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    actor: *Actor,
+    store: *Store,
     socket_path: ?[]u8 = null,
     listen_socket: ?std.posix.socket_t = null,
     thread: ?std.Thread = null,
     stop_requested: std.atomic.Value(bool) = .init(false),
 
-    pub fn init(allocator: std.mem.Allocator, actor: *Actor) !Self {
+    pub fn init(allocator: std.mem.Allocator, store: *Store) !Self {
         return .{
             .allocator = allocator,
-            .actor = actor,
+            .store = store,
             .socket_path = try get_socket_path(allocator),
         };
     }
@@ -161,12 +167,8 @@ pub const IpcServer = struct {
         switch (payload) {
             // Used to close the socket.
             .wake => return,
-            .save_replay => {
-                self.actor.dispatch(.save_replay) catch |err| {
-                    log.err("[handle_client] failed to dispatch save_replay from IPC command: {}", .{err});
-                    stream.writeAll(&[_]u8{ResponsePayload.request_failed.value()}) catch {};
-                    return;
-                };
+            else => {
+                dispatch_ipc_command(self.store, payload);
                 stream.writeAll(&[_]u8{ResponsePayload.ok.value()}) catch {};
                 return;
             },
@@ -194,6 +196,12 @@ pub const IpcServer = struct {
 
         const request_payload: RequestPayload = switch (command) {
             .save_replay => .save_replay,
+            .start_replay_buffer => .start_replay_buffer,
+            .stop_replay_buffer => .stop_replay_buffer,
+            .toggle_replay_buffer => .toggle_replay_buffer,
+            .start_recording => .start_recording,
+            .stop_recording => .stop_recording,
+            .toggle_recording => .toggle_recording,
         };
         try stream.writeAll(&[_]u8{request_payload.value()});
 
@@ -266,5 +274,32 @@ pub const IpcServer = struct {
             error.FileNotFound => {},
             else => return err,
         };
+    }
+
+    fn dispatch_ipc_command(store: *Store, command: RequestPayload) void {
+        switch (command) {
+            .wake => {},
+            .save_replay => store.dispatch(.{ .capture = .save_replay }),
+            .start_replay_buffer => store.dispatch(.{ .capture = .start_replay_buffer }),
+            .stop_replay_buffer => store.dispatch(.{ .capture = .stop_replay_buffer }),
+            .toggle_replay_buffer => {
+                const is_replay_buffer_active = blk: {
+                    const state_locked = store.state.lock();
+                    defer state_locked.unlock();
+                    break :blk state_locked.unwrap_ptr().capture.replay_buffer_active;
+                };
+                store.dispatch(.{ .capture = if (is_replay_buffer_active) .stop_replay_buffer else .start_replay_buffer });
+            },
+            .start_recording => store.dispatch(.{ .capture = .start_recording_to_disk }),
+            .stop_recording => store.dispatch(.{ .capture = .stop_recording_to_disk }),
+            .toggle_recording => {
+                const recording_to_disk = blk: {
+                    const state_locked = store.state.lock();
+                    defer state_locked.unlock();
+                    break :blk state_locked.unwrap_ptr().capture.recording_to_disk;
+                };
+                store.dispatch(.{ .capture = if (recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
+            },
+        }
     }
 };

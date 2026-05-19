@@ -1243,11 +1243,14 @@ pub const VulkanVideoEncoder = struct {
     pub fn finish_encode(
         self: *Self,
         encode_result: EncodeResult,
-        video_replay_buffer: *VideoReplayBuffer,
+        video_replay_buffer: ?*VideoReplayBuffer,
         frame_time_ns: i128,
-    ) !void {
+    ) ![]const u8 {
         const data = try self.get_output_video_packet();
-        try video_replay_buffer.add_frame(data, frame_time_ns, encode_result.idr);
+        if (video_replay_buffer) |_video_replay_buffer| {
+            try _video_replay_buffer.add_frame(data, frame_time_ns, encode_result.idr);
+        }
+        return data;
     }
 
     fn get_output_video_packet(self: *Self) ![]const u8 {
