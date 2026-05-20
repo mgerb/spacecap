@@ -18,6 +18,7 @@ test {
     _ = @import("./mutex.zig");
     _ = @import("./string.zig");
     _ = @import("./state/capture_store.zig");
+    _ = @import("./arc.zig");
 }
 
 /// If this is set, util.get_app_data_dir will return this. If any unit

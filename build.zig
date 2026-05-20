@@ -64,10 +64,6 @@ fn add_shared_dependencies(
     }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 
-    // zigrc
-    const zigrc = b.dependency("zigrc", .{});
-    exe.root_module.addImport("zigrc", zigrc.module("zigrc"));
-
     // zig-clap
     const clap = b.dependency("clap", .{
         .target = target,

@@ -329,7 +329,7 @@ pub const TestStore = struct {
     const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
     const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
     const AudioDeviceList = @import("../capture/audio/audio_capture.zig").AudioDeviceList;
-    const rc = @import("zigrc");
+    const Arc = @import("../arc.zig").Arc;
     const types = @import("../types.zig");
     const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
     const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
@@ -379,7 +379,7 @@ pub const TestStore = struct {
             self.data.deinit();
         }
 
-        fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
+        fn receive_data(context: *anyopaque) ChanError!Arc(AudioCaptureData) {
             const self: *@This() = @ptrCast(@alignCast(context));
             return self.data.recv();
         }
@@ -452,7 +452,7 @@ pub const TestStore = struct {
             self.closed_channels = true;
         }
 
-        fn wait_for_frame(_: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+        fn wait_for_frame(_: *anyopaque) ChanError!Arc(VulkanImageBuffer) {
             return error.Closed;
         }
 

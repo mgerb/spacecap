@@ -4,22 +4,23 @@ const Allocator = std.mem.Allocator;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioMixer = @import("./audio_mixer.zig").AudioMixer;
 const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
-const EncodedAudioPacketNode = @import("./audio_encoder.zig").EncodedAudioPacketNode;
 const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
 const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
+const Arc = @import("../arc.zig").Arc;
 
 /// Pending per-device PCM chunk that has not yet been fully mixed into the
 /// finalized audio timeline.
 pub const PendingChunkNode = struct {
-    data: *AudioCaptureData,
+    data: Arc(AudioCaptureData),
     start_frame: i64,
     end_frame: i64,
     node: std.DoublyLinkedList.Node = .{},
     allocator: Allocator,
 
+    /// Takes ownership of data.
     pub fn init(
         allocator: Allocator,
-        data: *AudioCaptureData,
+        data: Arc(AudioCaptureData),
         start_sample: i64,
         end_sample: i64,
     ) !*@This() {
@@ -101,7 +102,7 @@ pub const AudioTimeline = struct {
         var iter = self.device_map.iterator();
         while (iter.next()) |entry| {
             while (entry.value_ptr.chunks.popFirst()) |node| {
-                const chunk_node: *PendingChunkNode = @fieldParentPtr("node", node);
+                const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", node));
                 chunk_node.deinit();
             }
             self.allocator.free(entry.key_ptr.*);
@@ -113,8 +114,11 @@ pub const AudioTimeline = struct {
     }
 
     /// Takes ownership of data.
-    pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
-        if (data.sample_rate != self.sample_rate or data.channels != self.channels) {
+    pub fn add_data(self: *Self, data: Arc(AudioCaptureData)) !void {
+        defer data.deinit();
+        const audio_capture_data = data.as_ptr();
+
+        if (audio_capture_data.sample_rate != self.sample_rate or audio_capture_data.channels != self.channels) {
             return error.UnsupportedAudioFormat;
         }
 
@@ -123,18 +127,18 @@ pub const AudioTimeline = struct {
             // not lock the replay origin too tightly. A later chunk that is
             // only slightly earlier still fits into the same positive sample
             // timeline.
-            self.timeline_origin_ns = data.start_ns() - self.processing_delay_ns();
+            self.timeline_origin_ns = audio_capture_data.start_ns() - self.processing_delay_ns();
         }
 
-        const device = try self.device_map.getOrPut(data.id);
+        const device = try self.device_map.getOrPut(audio_capture_data.id);
         if (!device.found_existing) {
-            const key_copy = try self.allocator.dupe(u8, data.id);
+            const key_copy = try self.allocator.dupe(u8, audio_capture_data.id);
             errdefer self.allocator.free(key_copy);
             device.key_ptr.* = key_copy;
             device.value_ptr.* = .{};
         }
 
-        var start_sample = self.timestamp_to_sample_floor(data.start_ns());
+        var start_sample = self.timestamp_to_sample_floor(audio_capture_data.start_ns());
 
         // Chunks don't always arrive at exactly the timestamps they are
         // expected to. Small jitter here can cause static once multiple devices
@@ -147,15 +151,20 @@ pub const AudioTimeline = struct {
             }
         }
 
-        const end_sample = start_sample + @as(i64, @intCast(data.pcm_data.len / data.channels));
+        const end_sample = start_sample + @as(i64, @intCast(audio_capture_data.pcm_data.len / audio_capture_data.channels));
         device.value_ptr.expected_next_start_sample = end_sample;
 
-        const node = try PendingChunkNode.init(self.allocator, data, start_sample, end_sample);
+        // NOTE: This is where we actually copy the audio data, whereas the
+        // prior clones were just incrementing the Arc ref count.
+        const node = try PendingChunkNode.init(
+            self.allocator,
+            data.clone(),
+            start_sample,
+            end_sample,
+        );
         device.value_ptr.chunks.append(&node.node);
 
         self.max_seen_end_sample = @max(end_sample, self.max_seen_end_sample);
-
-        try self.process_ready_timeline(false);
     }
 
     pub fn finalize(self: *Self) !void {
@@ -204,7 +213,7 @@ pub const AudioTimeline = struct {
         };
     }
 
-    fn process_ready_timeline(self: *Self, flush_all: bool) !void {
+    pub fn process_ready_timeline(self: *Self, flush_all: bool) !void {
         assert(self.timeline_origin_ns != null);
 
         const delay_samples = if (flush_all) 0 else self.processing_delay_samples();
@@ -253,7 +262,7 @@ pub const AudioTimeline = struct {
             var node = entry.value_ptr.chunks.first;
             while (node) |current| {
                 const next = current.next;
-                const chunk_node: *PendingChunkNode = @fieldParentPtr("node", current);
+                const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", current));
                 if (chunk_node.end_frame <= self.encoded_until_sample) {
                     entry.value_ptr.chunks.remove(current);
                     chunk_node.deinit();
@@ -364,15 +373,23 @@ test "addData smooths small timestamp jitter between chunks" {
     const first = [_]f32{ 1.0, 1.0, 2.0, 2.0, 3.0, 3.0 };
     const second = [_]f32{ 4.0, 4.0, 5.0, 5.0, 6.0, 6.0 };
 
-    const chunk1 = try AudioCaptureData.init(allocator, "mic", &first, start_ns, 48_000, 2);
-    try timeline.add_data(chunk1);
+    var first_data = try AudioCaptureData.init(allocator, "mic", &first, start_ns, 48_000, 2);
+    errdefer first_data.deinit();
+    const chunk1 = try Arc(AudioCaptureData).init(allocator, first_data);
+    defer chunk1.deinit();
+    try timeline.add_data(chunk1.clone());
+    try timeline.process_ready_timeline(false);
 
     const second_delta_ns = @divFloor(
         @as(i128, 8) * std.time.ns_per_s + @as(i128, 48_000) - 1,
         @as(i128, 48_000),
     );
-    const chunk2 = try AudioCaptureData.init(allocator, "mic", &second, start_ns + second_delta_ns, 48_000, 2);
-    try timeline.add_data(chunk2);
+    var second_data = try AudioCaptureData.init(allocator, "mic", &second, start_ns + second_delta_ns, 48_000, 2);
+    errdefer second_data.deinit();
+    const chunk2 = try Arc(AudioCaptureData).init(allocator, second_data);
+    defer chunk2.deinit();
+    try timeline.add_data(chunk2.clone());
+    try timeline.process_ready_timeline(false);
 
     const device = timeline.device_map.get("mic") orelse return error.ExpectedDeviceState;
     const expected_end_sample = timeline.processing_delay_samples() + @as(i64, @intCast(samples * 2));

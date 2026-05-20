@@ -1,17 +1,14 @@
 const std = @import("std");
 const vk = @import("vulkan");
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const imguiz = @import("imguiz").imguiz;
-const util = @import("../util.zig");
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
-const BufferedChan = @import("../channel.zig").BufferedChan;
-const rc = @import("zigrc");
+const Arc = @import("../arc.zig").Arc;
 
 pub const VulkanImageRingBuffer = struct {
     const Self = @This();
     // TODO: Make ring buffer size variable at comptime.
     // TODO: Wrap in mutex.
-    buffers: [3]rc.Arc(*VulkanImageBuffer) = undefined,
+    buffers: [3]Arc(VulkanImageBuffer) = undefined,
     vulkan: *Vulkan,
     most_recent_index: ?u32 = null,
     mutex: std.Thread.Mutex = .{},
@@ -29,18 +26,18 @@ pub const VulkanImageRingBuffer = struct {
         };
 
         self.buffers[0] = try VulkanImageBuffer.init(args);
-        errdefer if (self.buffers[0].releaseUnwrap()) |val| val.deinit();
+        errdefer self.buffers[0].deinit();
         self.buffers[1] = try VulkanImageBuffer.init(args);
-        errdefer if (self.buffers[1].releaseUnwrap()) |val| val.deinit();
+        errdefer self.buffers[1].deinit();
         self.buffers[2] = try VulkanImageBuffer.init(args);
-        errdefer if (self.buffers[2].releaseUnwrap()) |val| val.deinit();
+        errdefer self.buffers[2].deinit();
 
         return self;
     }
 
     pub fn deinit(self: *Self) void {
         for (self.buffers) |buffer| {
-            if (buffer.releaseUnwrap()) |val| val.deinit();
+            buffer.deinit();
         }
         self.allocator.destroy(self);
     }
@@ -57,7 +54,7 @@ pub const VulkanImageRingBuffer = struct {
         use_signal_semaphore: bool,
         timestamp_ns: i128,
     }) !struct {
-        vulkan_image_buffer: ?rc.Arc(*VulkanImageBuffer) = null,
+        vulkan_image_buffer: ?Arc(VulkanImageBuffer) = null,
         semaphore: ?vk.Semaphore = null,
         fence: ?vk.Fence = null,
     } {
@@ -69,7 +66,7 @@ pub const VulkanImageRingBuffer = struct {
                 continue;
             }
             const vulkan_image_buffer = self.buffers[i];
-            var buffer = vulkan_image_buffer.value.*;
+            var buffer = vulkan_image_buffer.as_ptr();
             if (buffer.in_use.load(.acquire)) {
                 continue;
             }
@@ -94,12 +91,12 @@ pub const VulkanImageRingBuffer = struct {
     /// - Get the most recent buffer
     /// - Increment ref count
     /// - set in_use to true
-    pub fn get_most_recent_buffer(self: *Self) ?rc.Arc(*VulkanImageBuffer) {
+    pub fn get_most_recent_buffer(self: *Self) ?Arc(VulkanImageBuffer) {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.most_recent_index) |most_recent_index| {
-            const buffer = self.buffers[most_recent_index].retain();
-            buffer.value.*.in_use.store(true, .release);
+            const buffer = self.buffers[most_recent_index].clone();
+            buffer.as_ptr().in_use.store(true, .release);
             return buffer;
         }
 

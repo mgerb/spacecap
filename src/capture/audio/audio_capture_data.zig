@@ -21,11 +21,8 @@ pub fn init(
     timestamp: i128,
     sample_rate: u32,
     channels: u32,
-) !*@This() {
-    const self = try allocator.create(@This());
-    errdefer allocator.destroy(self);
-
-    self.* = .{
+) !@This() {
+    return .{
         .allocator = allocator,
         .id = try allocator.dupe(u8, id),
         .pcm_data = try allocator.dupe(f32, pcm_data),
@@ -33,27 +30,31 @@ pub fn init(
         .sample_rate = sample_rate,
         .channels = channels,
     };
-
-    return self;
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *const @This()) void {
     self.allocator.free(self.id);
     self.allocator.free(self.pcm_data);
-    self.allocator.destroy(self);
 }
 
-pub fn clone(self: *@This(), allocator: std.mem.Allocator) !*@This() {
-    const data = try init(allocator, self.id, self.pcm_data, self.timestamp, self.sample_rate, self.channels);
-    data.gain = self.gain;
-    return data;
+pub fn clone(self: *const @This(), allocator: std.mem.Allocator) !@This() {
+    const cloned_self = try .init(
+        allocator,
+        self.id,
+        self.pcm_data,
+        self.timestamp,
+        self.sample_rate,
+        self.channels,
+    );
+    cloned_self.gain = self.gain;
+    return cloned_self;
 }
 
-pub fn start_ns(self: *@This()) i128 {
+pub fn start_ns(self: *const @This()) i128 {
     return self.timestamp;
 }
 
-pub fn end_ns(self: *@This()) i128 {
+pub fn end_ns(self: *const @This()) i128 {
     const ns_per_sample = @divFloor(std.time.ns_per_s, self.sample_rate);
     const frames: usize = self.pcm_data.len / @as(usize, @intCast(self.channels));
     return self.timestamp + (@as(i128, @intCast(frames)) * ns_per_sample);

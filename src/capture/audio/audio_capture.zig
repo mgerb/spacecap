@@ -4,13 +4,14 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const BufferedChan = @import("../../channel.zig").BufferedChan;
 const ChanError = @import("../../channel.zig").ChanError;
 const AudioCaptureData = @import("./audio_capture_data.zig");
+const Arc = @import("../../arc.zig").Arc;
 
 // TODO: Maybe make these configurable?
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
 
 // TODO: Adjust chan size.
-pub const AudioCaptureBufferedChan = BufferedChan(*AudioCaptureData, 1_000);
+pub const AudioCaptureBufferedChan = BufferedChan(Arc(AudioCaptureData), 1_000);
 
 pub const AudioDeviceType = enum {
     source,
@@ -71,14 +72,14 @@ pub const AudioCapture = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        receive_data: *const fn (*anyopaque) ChanError!*AudioCaptureData,
+        receive_data: *const fn (*anyopaque) ChanError!Arc(AudioCaptureData),
         stop: *const fn (*anyopaque) anyerror!void,
         get_available_devices: *const fn (*anyopaque, std.mem.Allocator) anyerror!AudioDeviceList,
         update_selected_devices: *const fn (*anyopaque, []const SelectedAudioDevice) anyerror!void,
     };
 
     /// Receive audio capture data. Caller owns the memory and must deinit.
-    pub fn receive_data(self: *Self) ChanError!*AudioCaptureData {
+    pub fn receive_data(self: *Self) ChanError!Arc(AudioCaptureData) {
         return self.vtable.receive_data(self.ptr);
     }
 

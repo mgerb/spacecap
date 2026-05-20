@@ -43,6 +43,19 @@ pub fn Mutex(T: type) type {
             };
         }
 
+        /// If the underlying data type has a deinit method, then call it. This
+        /// is not thread safe. The lock should be acquired from the caller.
+        /// Generally this should not be used directly. It was implemented so
+        /// that Arc could work with Mutex [e.g. Arc(Mutex(T))]. Arc does not
+        /// lock when it calls this deinit, but in practice Arc is only ever
+        /// going to call deinit when there is a single reference so the
+        /// object.
+        pub fn deinit(self: *Self) void {
+            if (@hasDecl(T, "deinit")) {
+                self.private.value.deinit();
+            }
+        }
+
         pub fn lock(self: *Self) Locked {
             self.private.mutex.lock();
             return .{

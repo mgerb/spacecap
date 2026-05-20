@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const rc = @import("zigrc");
+const Arc = @import("../../../../arc.zig").Arc;
 const pw = @import("pipewire").c;
 
 const pipewire_util = @import("./pipewire_util.zig");
@@ -35,7 +35,7 @@ pub const PipewireVideo = struct {
     // Send messages to Pipewire on this channel.
     rx_chan: Chan(bool),
     // Receive messages from Pipewire on this channel.
-    tx_chan: Chan(rc.Arc(*VulkanImageBuffer)),
+    tx_chan: Chan(Arc(VulkanImageBuffer)),
     worker_thread: ?std.Thread = null,
     pipewire_frame_buffer_manager: ?*PipewireFrameBufferManager = null,
     /// Stores all information about the video stream.
@@ -428,7 +428,7 @@ pub const PipewireVideo = struct {
 
         if (copy_data.vulkan_image_buffer) |vulkan_image_buffer| {
             self.vulkan_image_buffer_chan.drain();
-            self.vulkan_image_buffer_chan.send(vulkan_image_buffer) catch |err| {
+            self.vulkan_image_buffer_chan.send(vulkan_image_buffer.clone()) catch |err| {
                 log.err("[stream_process_callback] vulkan image buffer chan send err: {}", .{err});
             };
         }
@@ -484,7 +484,7 @@ pub const PipewireVideo = struct {
             self.tx_chan.send(vulkan_image_buffer) catch |err| {
                 switch (err) {
                     ChanError.Closed => {
-                        if (vulkan_image_buffer.releaseUnwrap()) |val| val.deinit();
+                        vulkan_image_buffer.deinit();
                         break;
                     },
                     else => {

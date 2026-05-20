@@ -2,9 +2,9 @@ const std = @import("std");
 
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
-const rc = @import("zigrc");
 const sdl = @import("./sdl.zig");
 const Tray = @import("./tray.zig").Tray;
+const Arc = @import("../arc.zig").Arc;
 
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
@@ -354,21 +354,16 @@ pub const UI = struct {
             c.ImGui_NewFrame();
 
             {
-                var capture_preview_buffer: ?rc.Arc(*VulkanImageBuffer) = null;
-                var capture_preview_texture: ?rc.Arc(VulkanCapturePreviewTexture) = null;
+                var capture_preview_buffer: ?Arc(VulkanImageBuffer) = null;
+                var capture_preview_texture: ?Arc(VulkanCapturePreviewTexture) = null;
                 // Hold onto the buffer until draw/render/present is done.
                 defer {
                     if (capture_preview_buffer) |buffer| {
-                        if (buffer.releaseUnwrap()) |val| {
-                            val.deinit();
-                        } else {
-                            buffer.value.*.in_use.store(false, .release);
-                        }
+                        buffer.as_ptr().in_use.store(false, .release);
+                        buffer.deinit();
                     }
                     if (capture_preview_texture) |_capture_preview_texture| {
-                        if (_capture_preview_texture.releaseUnwrap()) |*val| {
-                            @constCast(val).deinit();
-                        }
+                        _capture_preview_texture.deinit();
                     }
                 }
 
@@ -397,11 +392,11 @@ pub const UI = struct {
                         if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
                             if (capture_preview_ring_buffer.get_most_recent_buffer()) |buffer| {
                                 capture_preview_buffer = buffer;
-                                capture_preview_texture = try self.vulkan.get_capture_preview_texture(buffer.value.*);
+                                capture_preview_texture = try self.vulkan.get_capture_preview_texture(buffer.as_ptr());
                                 try draw_video_preview(.{ .capture_preview = .{
-                                    .capture_preview_buffer = capture_preview_texture.?.value,
-                                    .width = buffer.value.*.width,
-                                    .height = buffer.value.*.height,
+                                    .capture_preview_buffer = capture_preview_texture.?.as_ptr(),
+                                    .width = buffer.as_ptr().width,
+                                    .height = buffer.as_ptr().height,
                                 } });
                             }
                         }

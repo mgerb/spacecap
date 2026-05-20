@@ -16,6 +16,7 @@ const deinitPacketList = @import("../audio/audio_encoder.zig").deinit_packet_lis
 const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const Muxer = @import("../video/muxer.zig").Muxer;
+const Arc = @import("../arc.zig").Arc;
 
 pub const AudioSession = struct {
     const Self = @This();
@@ -95,7 +96,7 @@ pub const AudioSession = struct {
 
     fn capture_thread_handler(self: *Self) !void {
         while (true) {
-            const data = self.audio_capture.receive_data() catch |err| {
+            var data = self.audio_capture.receive_data() catch |err| {
                 if (err == ChanError.Closed) {
                     log.debug("[capture_thread_handler] chan closed", .{});
                     break;
@@ -103,35 +104,32 @@ pub const AudioSession = struct {
                 log.err("[capture_thread_handler] data_chan error: {}", .{err});
                 return err;
             };
-            errdefer data.deinit();
+            defer data.deinit();
 
-            data.gain = blk: {
+            data.as_ptr().gain = blk: {
                 const device_gain_locked = self.device_gain_map.lock();
                 defer device_gain_locked.unlock();
                 const device_gain = device_gain_locked.unwrap_ptr();
 
-                if (device_gain.get(data.id)) |gain| {
+                if (device_gain.get(data.as_ptr().id)) |gain| {
                     break :blk gain;
                 }
 
-                log.err("[capture_thread_handler] Unable to find device ({s}) in available devices. This should never happen.", .{data.id});
-                data.deinit();
+                log.err("[capture_thread_handler] Unable to find device ({s}) in available devices. This should never happen.", .{data.as_ptr().id});
                 continue;
             };
 
-            try self.write_audio_packets_to_disk(data);
+            try self.write_audio_packets_to_disk(data.clone());
 
             var replay_buffer_locked = self.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             if (replay_buffer_locked.unwrap()) |replay_buffer| {
-                try replay_buffer.add_data(data);
+                try replay_buffer.add_data(data.clone());
                 self.store.dispatch(.{
                     .capture = .{
                         .update_replay_buffer_size = .{ .audio_size = replay_buffer.size },
                     },
                 });
-            } else {
-                data.deinit();
             }
         }
     }
@@ -198,7 +196,9 @@ pub const AudioSession = struct {
     }
 
     // If time and muxer are both valid, then write audio to disk via muxer.
-    fn write_audio_packets_to_disk(self: *Self, data: *AudioCaptureData) !void {
+    fn write_audio_packets_to_disk(self: *Self, data: Arc(AudioCaptureData)) !void {
+        defer data.deinit();
+
         var locked = self.audio_recording_timeline.lock();
         defer locked.unlock();
         const timeline = locked.unwrap() orelse {
@@ -213,10 +213,8 @@ pub const AudioSession = struct {
         }
         const muxer = &(muxer_ptr.*.?);
 
-        const cloned_data = try data.clone(self.allocator);
-        errdefer cloned_data.deinit();
-
-        try timeline.add_data(cloned_data);
+        try timeline.add_data(data.clone());
+        try timeline.process_ready_timeline(false);
 
         var packets = timeline.take_ready_packets();
         defer deinitPacketList(&packets);
