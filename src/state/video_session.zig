@@ -289,14 +289,12 @@ pub const VideoSession = struct {
                 return err;
             };
             defer {
-                vulkan_image_buffer.value.*.in_use.store(false, .release);
-                if (vulkan_image_buffer.releaseUnwrap()) |val| {
-                    val.deinit();
-                }
+                vulkan_image_buffer.as_ptr().in_use.store(false, .release);
+                vulkan_image_buffer.deinit();
             }
 
-            var image_slc = [_]vk.Image{vulkan_image_buffer.value.*.image};
-            var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.value.*.image_view};
+            var image_slc = [_]vk.Image{vulkan_image_buffer.as_ptr().image};
+            var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.as_ptr().image_view};
 
             const should_encode = blk: {
                 const video_replay_buffer_locked = self.video_replay_buffer.lock();
@@ -314,12 +312,12 @@ pub const VideoSession = struct {
                 const _copy_data = try capture_preview_ring_buffer_locked.unwrap().?.copy_image_to_ring_buffer(
                     .{
                         .src_image = image_slc[0],
-                        .src_width = vulkan_image_buffer.value.*.width,
-                        .src_height = vulkan_image_buffer.value.*.height,
+                        .src_width = vulkan_image_buffer.as_ptr().width,
+                        .src_height = vulkan_image_buffer.as_ptr().height,
                         .wait_semaphore = null,
                         // Only signal this semaphore when encode will wait on it.
                         .use_signal_semaphore = should_encode,
-                        .timestamp_ns = vulkan_image_buffer.value.*.timestamp_ns,
+                        .timestamp_ns = vulkan_image_buffer.as_ptr().timestamp_ns,
                     },
                 );
                 break :blk _copy_data;
@@ -348,8 +346,8 @@ pub const VideoSession = struct {
                 .image = &image_slc,
                 .image_view = &image_view_slc,
                 .input_size = .{
-                    .width = vulkan_image_buffer.value.*.width,
-                    .height = vulkan_image_buffer.value.*.height,
+                    .width = vulkan_image_buffer.as_ptr().width,
+                    .height = vulkan_image_buffer.as_ptr().height,
                 },
                 .external_wait_semaphore = copy_data.semaphore,
             });
@@ -358,14 +356,14 @@ pub const VideoSession = struct {
             const encoded_packet = try video_encoder.finish_encode(
                 encode_result,
                 video_replay_buffer,
-                vulkan_image_buffer.value.*.timestamp_ns,
+                vulkan_image_buffer.as_ptr().timestamp_ns,
             );
 
             if (self.record_data_queue) |*record_data_queue| {
                 var video_record_data = try VideoRecordData.init(
                     self.allocator,
                     encoded_packet,
-                    vulkan_image_buffer.value.*.timestamp_ns,
+                    vulkan_image_buffer.as_ptr().timestamp_ns,
                     encode_result.idr,
                 );
 

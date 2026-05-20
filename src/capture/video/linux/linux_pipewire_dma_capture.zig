@@ -13,7 +13,7 @@ const VideoCaptureSelection = @import("../video_capture.zig").VideoCaptureSelect
 const VideoCapture = @import("../video_capture.zig").VideoCapture;
 const VideoCaptureError = @import("../video_capture.zig").VideoCaptureError;
 const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const rc = @import("zigrc");
+const Arc = @import("../../../arc.zig").Arc;
 
 pub const LinuxPipewireDmaCapture = struct {
     const Self = @This();
@@ -90,7 +90,7 @@ pub const LinuxPipewireDmaCapture = struct {
         }
     }
 
-    pub fn wait_for_frame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn wait_for_frame(context: *anyopaque) ChanError!Arc(VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire.?.tx_chan.recv();
     }

@@ -1,8 +1,7 @@
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const std = @import("std");
-const assert = std.debug.assert;
 const vk = @import("vulkan");
-const rc = @import("zigrc");
+const Arc = @import("../arc.zig").Arc;
 
 /// An image buffer that goes in the vulkan image ring buffer.
 pub const VulkanImageBuffer = struct {
@@ -44,7 +43,7 @@ pub const VulkanImageBuffer = struct {
 
     pub fn init(
         args: InitArgs,
-    ) !rc.Arc(*Self) {
+    ) !Arc(Self) {
         const base_image_usage: vk.ImageUsageFlags = .{
             .transfer_dst_bit = true,
         };
@@ -106,10 +105,7 @@ pub const VulkanImageBuffer = struct {
         const fence = try args.vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
         errdefer args.vulkan.device.destroyFence(fence, null);
 
-        const self = try args.allocator.create(Self);
-        errdefer args.allocator.destroy(self);
-
-        self.* = .{
+        return try .init(args.allocator, .{
             .allocator = args.allocator,
             .vulkan = args.vulkan,
             .image = image,
@@ -126,9 +122,7 @@ pub const VulkanImageBuffer = struct {
             .height = args.height,
             .src_queue_family_index = args.src_queue_family_index,
             .in_use = std.atomic.Value(bool).init(false),
-        };
-
-        return .init(args.allocator, self);
+        });
     }
 
     pub fn deinit(self: *Self) void {
@@ -142,7 +136,6 @@ pub const VulkanImageBuffer = struct {
         self.vulkan.device.destroyCommandPool(self.command_pool, null);
         self.vulkan.device.destroyFence(self.fence, null);
         self.vulkan.device.destroySemaphore(self.signal_semaphore, null);
-        self.allocator.destroy(self);
     }
 
     /// Copy an external vulkan image into the local image buffer.

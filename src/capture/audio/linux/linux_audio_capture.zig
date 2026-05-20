@@ -8,6 +8,7 @@ const AudioCaptureData = @import("../audio_capture_data.zig");
 const PipewireAudio = @import("./pipewire_audio.zig").PipewireAudio;
 const ChanError = @import("../../../channel.zig").ChanError;
 const listAudioDevices = @import("./audio_devices.zig").listAudioDevices;
+const Arc = @import("../../../arc.zig").Arc;
 
 pub const LinuxAudioCapture = struct {
     const Self = @This();
@@ -32,7 +33,7 @@ pub const LinuxAudioCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
+    pub fn receive_data(context: *anyopaque) ChanError!Arc(AudioCaptureData) {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.pipewire_audio.data_chan.recv();
     }

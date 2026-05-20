@@ -1,15 +1,12 @@
 const std = @import("std");
 
-const vk = @import("vulkan");
-
 const types = @import("../../../types.zig");
-const util = @import("../../../util.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
 const VideoCaptureSelection = @import("../video_capture.zig").VideoCaptureSelection;
 const VideoCapture = @import("../video_capture.zig").VideoCapture;
 const VulkanImageBuffer = @import("../../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const ChanError = @import("../../../channel.zig").ChanError;
-const rc = @import("zigrc");
+const Arc = @import("../../../arc.zig").Arc;
 
 const DWORD = u32;
 
@@ -63,7 +60,7 @@ pub const WindowsVideoCapture = struct {
         _ = self;
     }
 
-    pub fn wait_for_frame(context: *anyopaque) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn wait_for_frame(context: *anyopaque) ChanError!Arc(VulkanImageBuffer) {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         return ChanError.Closed;
@@ -79,12 +76,6 @@ pub const WindowsVideoCapture = struct {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
     }
-
-    // pub fn selectedScreenCastIdentifier(self: *anyopaque) ?[]const u8 {
-    //     const self: *Self = @ptrCast(@alignCast(context));
-    //     _ = self;
-    //     return null;
-    // }
 
     pub fn deinit(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));

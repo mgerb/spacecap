@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const PendingChunkNode = @import("./audio_timeline.zig").PendingChunkNode;
 const DeviceState = @import("./audio_timeline.zig").DeviceState;
+const Arc = @import("../arc.zig").Arc;
 
 pub const AudioMixer = struct {
     /// Mix all device audio within the requested sample positions.
@@ -24,7 +25,7 @@ pub const AudioMixer = struct {
         while (iter.next()) |entry| {
             var node = entry.value_ptr.chunks.first;
             while (node) |current| : (node = current.next) {
-                const chunk_node: *PendingChunkNode = @fieldParentPtr("node", current);
+                const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", current));
                 const chunk_start_sample = chunk_node.start_frame;
                 const chunk_end_sample = chunk_node.end_frame;
 
@@ -37,14 +38,15 @@ pub const AudioMixer = struct {
                 const sample_positions_to_mix: usize = @intCast(overlap_end_sample - overlap_start_sample);
                 const input_start_sample: usize = @intCast(overlap_start_sample - chunk_start_sample);
                 const output_start_sample: usize = @intCast(overlap_start_sample - start_sample);
-                const src_channels: usize = @intCast(chunk_node.data.channels);
+                const data_ptr = chunk_node.data.as_ptr();
+                const src_channels: usize = @intCast(data_ptr.channels);
 
                 for (0..sample_positions_to_mix) |sample_idx| {
                     const output_pcm_offset = (output_start_sample + sample_idx) * channels;
                     const input_pcm_offset = (input_start_sample + sample_idx) * src_channels;
                     for (0..channels) |channel_idx| {
                         mixed_pcm.items[output_pcm_offset + channel_idx] +=
-                            chunk_node.data.pcm_data[input_pcm_offset + channel_idx] * chunk_node.data.gain;
+                            data_ptr.pcm_data[input_pcm_offset + channel_idx] * data_ptr.gain;
                     }
                 }
             }
@@ -54,55 +56,60 @@ pub const AudioMixer = struct {
     }
 };
 
-fn add_test_chunk(
-    allocator: Allocator,
-    device_map: *std.StringHashMap(DeviceState),
-    id: []const u8,
-    pcm: []const f32,
-    start_sample: i64,
-    channels: u32,
-    gain: f32,
-) !void {
-    const entry = try device_map.getOrPut(id);
-    if (!entry.found_existing) {
-        entry.key_ptr.* = try allocator.dupe(u8, id);
-        entry.value_ptr.* = .{};
-    }
-
-    const data = try AudioCaptureData.init(
-        allocator,
-        id,
-        pcm,
-        0,
-        48_000,
-        channels,
-    );
-    data.gain = gain;
-
-    const sample_positions: i64 = @intCast(pcm.len / @as(usize, @intCast(channels)));
-    const node = try PendingChunkNode.init(allocator, data, start_sample, start_sample + sample_positions);
-    entry.value_ptr.chunks.append(&node.node);
-}
-
-fn deinit_test_device_map(allocator: Allocator, device_map: *std.StringHashMap(DeviceState)) void {
-    var iter = device_map.iterator();
-    while (iter.next()) |entry| {
-        while (entry.value_ptr.chunks.popFirst()) |node| {
-            const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", node));
-            chunk_node.deinit();
+const TestUtil = struct {
+    fn add_test_chunk(
+        allocator: Allocator,
+        device_map: *std.StringHashMap(DeviceState),
+        id: []const u8,
+        pcm: []const f32,
+        start_sample: i64,
+        channels: u32,
+        gain: f32,
+    ) !void {
+        const entry = try device_map.getOrPut(id);
+        if (!entry.found_existing) {
+            entry.key_ptr.* = try allocator.dupe(u8, id);
+            entry.value_ptr.* = .{};
         }
-        allocator.free(entry.key_ptr.*);
+
+        var audio_capture_data = try AudioCaptureData.init(
+            allocator,
+            id,
+            pcm,
+            0,
+            48_000,
+            channels,
+        );
+        errdefer audio_capture_data.deinit();
+
+        const data = try Arc(AudioCaptureData).init(allocator, audio_capture_data);
+        data.as_ptr().gain = gain;
+
+        const sample_positions: i64 = @intCast(pcm.len / @as(usize, @intCast(channels)));
+        const node = try PendingChunkNode.init(allocator, data, start_sample, start_sample + sample_positions);
+        entry.value_ptr.chunks.append(&node.node);
     }
-    device_map.deinit();
-}
+
+    fn deinit_test_device_map(allocator: Allocator, device_map: *std.StringHashMap(DeviceState)) void {
+        var iter = device_map.iterator();
+        while (iter.next()) |entry| {
+            while (entry.value_ptr.chunks.popFirst()) |node| {
+                const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", node));
+                chunk_node.deinit();
+            }
+            allocator.free(entry.key_ptr.*);
+        }
+        device_map.deinit();
+    }
+};
 
 test "AudioMixer.mix mixes a single aligned mono chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinit_test_device_map(allocator, &device_map);
+    defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 0.1, 0.2, 0.3, 0.4, 0.5 };
-    try add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 1.0);
+    try TestUtil.add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 1.0);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 5);
     defer mixed.deinit(allocator);
@@ -116,10 +123,10 @@ test "AudioMixer.mix mixes a single aligned mono chunk" {
 test "AudioMixer.mix mixes a single aligned stereo chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinit_test_device_map(allocator, &device_map);
+    defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
-    try add_test_chunk(allocator, &device_map, "stereo", &pcm, 0, 2, 1.0);
+    try TestUtil.add_test_chunk(allocator, &device_map, "stereo", &pcm, 0, 2, 1.0);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 2, 0, 3);
     defer mixed.deinit(allocator);
@@ -133,10 +140,10 @@ test "AudioMixer.mix mixes a single aligned stereo chunk" {
 test "AudioMixer.mix applies capture gain" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
-    defer deinit_test_device_map(allocator, &device_map);
+    defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
     const pcm = [_]f32{ 1.0, 0.5, 0.25 };
-    try add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 0.5);
+    try TestUtil.add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 0.5);
 
     var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 3);
     defer mixed.deinit(allocator);

@@ -11,6 +11,7 @@ const pipewire_include = @import("../../../common/linux/pipewire_include.zig");
 const pw = @import("pipewire").c;
 const c_def = pipewire_include.c_def;
 const PipewireTimestampSource = @import("../../../common/linux/pipewire_timestamp_source.zig").PipewireTimestampSource;
+const Arc = @import("../../../arc.zig").Arc;
 
 const AudioStream = struct {
     id: []u8,
@@ -229,7 +230,7 @@ pub const PipewireAudio = struct {
             raw_stream_nsec_ns,
         );
 
-        var audio_capture_data = AudioCaptureData.init(
+        const data = AudioCaptureData.init(
             self.allocator,
             stream_data.id,
             pcm_data[0..n_samples],
@@ -238,6 +239,11 @@ pub const PipewireAudio = struct {
             channels,
         ) catch |err| {
             log.err("[stream_process_callback] error creating audio capture data: {}", .{err});
+            return;
+        };
+        var audio_capture_data = Arc(AudioCaptureData).init(self.allocator, data) catch |err| {
+            data.deinit();
+            log.err("[stream_process_callback] error creating Arc(AudioCaptureData): {}", .{err});
             return;
         };
 

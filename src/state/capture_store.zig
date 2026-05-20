@@ -17,6 +17,8 @@ const Mutex = @import("../mutex.zig").Mutex;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
 const exporter = @import("../exporter.zig");
+const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
+const Arc = @import("../arc.zig").Arc;
 
 pub const AUDIO_GAIN_MIN: f32 = 0.0;
 pub const AUDIO_GAIN_MAX: f32 = 2.0;
@@ -479,17 +481,18 @@ pub const CaptureStore = struct {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .start_recording_to_disk_fail });
 
-        const local_state = blk: {
+        var local_state = blk: {
             const state_locked = store.state.lock();
             defer state_locked.unlock();
             const state = state_locked.unwrap_ptr();
             break :blk .{
                 .fps = state.user_settings.user_settings.capture_fps,
-                .video_output_directory = state.user_settings.user_settings.video_output_directory,
+                .video_output_directory = try state.user_settings.user_settings.video_output_directory.?.clone(store.allocator),
                 .capture_bit_rate = state.user_settings.user_settings.capture_bit_rate,
                 .recording_to_disk = state.capture.recording_to_disk,
             };
         };
+        defer local_state.video_output_directory.deinit();
 
         if (local_state.recording_to_disk) {
             return;
@@ -521,7 +524,7 @@ pub const CaptureStore = struct {
             size.width,
             size.height,
             local_state.fps,
-            local_state.video_output_directory.?.bytes,
+            local_state.video_output_directory.bytes,
         ));
 
         store.dispatch(.{ .capture = .start_recording_to_disk_success });
@@ -794,14 +797,20 @@ test "CaptureStore - start_audio_capture_thread" {
     store.dispatch(.{ .capture = .start_audio_capture_thread });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    try test_store.test_audio_capture.data.send(try .init(
+    var audio_capture_data = try AudioCaptureData.init(
         std.testing.allocator,
         "test1",
         &.{},
         0,
         48_000,
         2,
-    ));
+    );
+    errdefer audio_capture_data.deinit();
+
+    var data = try Arc(AudioCaptureData).init(std.testing.allocator, audio_capture_data);
+    errdefer data.deinit();
+
+    try test_store.test_audio_capture.data.send(data);
 
     // Sleep so that the thread has a half second to run before store
     // deinit cleans it up.

@@ -1,10 +1,7 @@
-const util = @import("../../util.zig");
-const std = @import("std");
 const types = @import("../../types.zig");
-const vk = @import("vulkan");
 const ChanError = @import("../../channel.zig").ChanError;
 const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const rc = @import("zigrc");
+const Arc = @import("../../arc.zig").Arc;
 
 pub const VideoCaptureSourceType = enum { window, desktop };
 
@@ -30,7 +27,7 @@ pub const VideoCapture = struct {
         should_restore_capture_session: *const fn (*anyopaque) anyerror!bool,
         next_frame: *const fn (*anyopaque) ChanError!void,
         close_all_channels: *const fn (*anyopaque) void,
-        wait_for_frame: *const fn (*anyopaque) ChanError!rc.Arc(*VulkanImageBuffer),
+        wait_for_frame: *const fn (*anyopaque) ChanError!Arc(VulkanImageBuffer),
         size: *const fn (*anyopaque) ?types.Size,
         stop: *const fn (*anyopaque) anyerror!void,
         deinit: *const fn (*anyopaque) void,
@@ -60,7 +57,7 @@ pub const VideoCapture = struct {
         return self.vtable.close_all_channels(self.ptr);
     }
 
-    pub fn wait_for_frame(self: *Self) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn wait_for_frame(self: *Self) ChanError!Arc(VulkanImageBuffer) {
         return self.vtable.wait_for_frame(self.ptr);
     }
 

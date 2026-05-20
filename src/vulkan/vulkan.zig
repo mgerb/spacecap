@@ -6,12 +6,11 @@ const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const util = @import("../util.zig");
 const VulkanVideoEncoder = @import("../video/vulkan_video_encoder.zig").VulkanVideoEncoder;
-const EncodeResult = @import("../video/vulkan_video_encoder.zig").EncodeResult;
 const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
 const VulkanCapturePreviewTexture = @import("./vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
-const rc = @import("zigrc");
 const Mutex = @import("../mutex.zig").Mutex;
+const Arc = @import("../arc.zig").Arc;
 
 const BaseDispatch = vk.BaseWrapper;
 const InstanceDispatch = vk.InstanceWrapper;
@@ -107,7 +106,7 @@ pub const Vulkan = struct {
     /// We need to create textures to render the capture preview.
     /// They will be stored here so that we don't couple the UI
     /// to the vulkan image ring buffer.
-    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, rc.Arc(VulkanCapturePreviewTexture)),
+    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, Arc(VulkanCapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
     /// in which the encoded can grab from.
     capture_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
@@ -283,29 +282,25 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !rc.Arc(VulkanCapturePreviewTexture) {
+    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !Arc(VulkanCapturePreviewTexture) {
         if (self.capture_preview_textures.get(vulkan_image_buffer)) |capture_preview_texture| {
-            return capture_preview_texture.retain();
+            return capture_preview_texture.clone();
         } else {
-            const capture_preview_texture = try rc.Arc(VulkanCapturePreviewTexture).init(
+            const capture_preview_texture = try Arc(VulkanCapturePreviewTexture).init(
                 self.allocator,
                 try VulkanCapturePreviewTexture.init(self, vulkan_image_buffer.image_view),
             );
-            errdefer if (capture_preview_texture.releaseUnwrap()) |*val| {
-                @constCast(val).deinit();
-            };
+            errdefer capture_preview_texture.deinit();
 
             try self.capture_preview_textures.put(vulkan_image_buffer, capture_preview_texture);
-            return self.capture_preview_textures.get(vulkan_image_buffer).?.retain();
+            return self.capture_preview_textures.get(vulkan_image_buffer).?.clone();
         }
     }
 
     fn clear_capture_preview_textures(self: *Self) void {
         var iter = self.capture_preview_textures.iterator();
         while (iter.next()) |entry| {
-            if (entry.value_ptr.releaseUnwrap()) |*val| {
-                @constCast(val).deinit();
-            }
+            entry.value_ptr.deinit();
         }
         self.capture_preview_textures.clearRetainingCapacity();
     }
@@ -725,7 +720,7 @@ pub const Vulkan = struct {
             defer capture_preview_ring_buffer_locked.unlock();
             if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
                 for (capture_preview_ring_buffer.buffers) |buffer| {
-                    try wait_fences.append(self.allocator, buffer.value.*.fence);
+                    try wait_fences.append(self.allocator, buffer.as_ptr().fence);
                 }
             }
         }
@@ -737,7 +732,7 @@ pub const Vulkan = struct {
             defer capture_ring_buffer_locked.unlock();
             if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
                 for (capture_ring_buffer.buffers) |buffer| {
-                    try wait_fences.append(self.allocator, buffer.value.*.fence);
+                    try wait_fences.append(self.allocator, buffer.as_ptr().fence);
                 }
             }
         }

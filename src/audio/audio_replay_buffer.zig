@@ -3,12 +3,11 @@ const Allocator = std.mem.Allocator;
 const LinkedListIterator = @import("../util.zig").LinkedListIterator;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioTimeline = @import("./audio_timeline.zig").AudioTimeline;
-const CodecContextInfo = @import("./audio_timeline.zig").CodecContextInfo;
-const SampleWindow = @import("./audio_timeline.zig").SampleWindow;
 const EncodedAudioPacketNode = @import("./audio_encoder.zig").EncodedAudioPacketNode;
 const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
 const SAMPLE_RATE = @import("../capture/audio/audio_capture.zig").SAMPLE_RATE;
 const CHANNELS = @import("../capture/audio/audio_capture.zig").CHANNELS;
+const Arc = @import("../arc.zig").Arc;
 
 const log = std.log.scoped(.AudioReplayBuffer);
 const Self = @This();
@@ -51,14 +50,16 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Takes ownership of data.
-pub fn add_data(self: *Self, data: *AudioCaptureData) !void {
-    self.timeline.add_data(data) catch |err| switch (err) {
+pub fn add_data(self: *Self, data: Arc(AudioCaptureData)) !void {
+    defer data.deinit();
+    self.timeline.add_data(data.clone()) catch |err| switch (err) {
         error.UnsupportedAudioFormat => {
             log.err("[add_data] unsopported format: sample rate: {}, channels: {}", .{ SAMPLE_RATE, CHANNELS });
             return error.UnsupportedAudioFormat;
         },
         else => return err,
     };
+    try self.timeline.process_ready_timeline(false);
 
     var ready_packets = self.timeline.take_ready_packets();
     defer deinitPacketList(&ready_packets);
@@ -127,12 +128,12 @@ const TestUtil = struct {
         timestamp_ns: i128,
         samples_per_channel: usize,
         value: f32,
-    ) !*AudioCaptureData {
+    ) !Arc(AudioCaptureData) {
         const pcm = try allocator.alloc(f32, samples_per_channel * CHANNELS);
         defer allocator.free(pcm);
         @memset(pcm, value);
 
-        return AudioCaptureData.init(
+        var audio_capture_data = try AudioCaptureData.init(
             allocator,
             "speaker",
             pcm,
@@ -140,30 +141,20 @@ const TestUtil = struct {
             SAMPLE_RATE,
             CHANNELS,
         );
+        errdefer audio_capture_data.deinit();
+
+        return Arc(AudioCaptureData).init(allocator, audio_capture_data);
     }
 };
 
 test "addData - encodes audio before export and exposes packet timing" {
     const allocator = std.testing.allocator;
-    const sample_rate: u32 = 48_000;
-    const channels: u32 = 2;
     const samples: usize = 2_048;
 
     var replay_buffer = try Self.init(allocator, 10);
     defer replay_buffer.deinit();
 
-    const pcm = try allocator.alloc(f32, samples * channels);
-    defer allocator.free(pcm);
-    @memset(pcm, @as(f32, 0.25));
-
-    const chunk = try AudioCaptureData.init(
-        allocator,
-        "speaker",
-        pcm,
-        std.time.ns_per_s,
-        sample_rate,
-        channels,
-    );
+    const chunk = try TestUtil.create_audio_capture_data(allocator, std.time.ns_per_s, samples, 0.25);
     try replay_buffer.add_data(chunk);
     try replay_buffer.finalize();
 
@@ -178,7 +169,6 @@ test "addData - encodes audio before export and exposes packet timing" {
 test "trimPackets - drops encoded packets outside replay window" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 48_000;
-    const channels: u32 = 2;
     const samples_per_chunk: usize = sample_rate;
 
     var replay_buffer = try Self.init(allocator, 1);
@@ -187,17 +177,11 @@ test "trimPackets - drops encoded packets outside replay window" {
     const base_ns: i128 = 5 * std.time.ns_per_s;
     var second: usize = 0;
     while (second < 4) : (second += 1) {
-        const pcm = try allocator.alloc(f32, samples_per_chunk * channels);
-        defer allocator.free(pcm);
-        @memset(pcm, @as(f32, 0.1));
-
-        const chunk = try AudioCaptureData.init(
+        const chunk = try TestUtil.create_audio_capture_data(
             allocator,
-            "speaker",
-            pcm,
             base_ns + @as(i128, @intCast(second)) * std.time.ns_per_s,
-            sample_rate,
-            channels,
+            samples_per_chunk,
+            0.1,
         );
         try replay_buffer.add_data(chunk);
     }

@@ -5,6 +5,7 @@ const AudioDeviceList = @import("../audio_capture.zig").AudioDeviceList;
 const SelectedAudioDevice = @import("../audio_capture.zig").SelectedAudioDevice;
 const AudioCaptureData = @import("../audio_capture_data.zig");
 const ChanError = @import("../../../channel.zig").ChanError;
+const Arc = @import("../../../arc.zig").Arc;
 
 pub const WindowsAudioCapture = struct {
     const Self = @This();
@@ -28,7 +29,7 @@ pub const WindowsAudioCapture = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn receive_data(context: *anyopaque) ChanError!*AudioCaptureData {
+    pub fn receive_data(context: *anyopaque) ChanError!Arc(AudioCaptureData) {
         const self: *Self = @ptrCast(@alignCast(context));
         return self.data_chan.recv();
     }

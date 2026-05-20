@@ -1,5 +1,5 @@
 const std = @import("std");
-const rc = @import("zigrc");
+const Arc = @import("../../../../arc.zig").Arc;
 
 const ChanError = @import("../../../../channel.zig").ChanError;
 const BufferedChan = @import("../../../../channel.zig").BufferedChan;
@@ -8,7 +8,7 @@ const VulkanImageBuffer = @import("../../../../vulkan/vulkan_image_buffer.zig").
 /// Buffered channel wrapper that drains and releases queued VulkanImageBuffer refs on shutdown.
 pub const VulkanImageBufferChan = struct {
     const Self = @This();
-    chan: BufferedChan(rc.Arc(*VulkanImageBuffer), 1),
+    chan: BufferedChan(Arc(VulkanImageBuffer), 1),
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         return .{
@@ -30,29 +30,27 @@ pub const VulkanImageBufferChan = struct {
 
     /// Increment the buffer ref count, set to in use, then send on the channel.
     /// On send error, release the buffer and return the error.
-    pub fn send(self: *Self, vulkan_image_buffer: rc.Arc(*VulkanImageBuffer)) ChanError!void {
-        _ = vulkan_image_buffer.retain();
-        vulkan_image_buffer.value.*.in_use.store(true, .release);
-        self.chan.send(vulkan_image_buffer) catch |err| {
-            vulkan_image_buffer.value.*.in_use.store(false, .release);
-            if (vulkan_image_buffer.releaseUnwrap()) |val| val.deinit();
-            return err;
-        };
+    pub fn send(self: *Self, vulkan_image_buffer: Arc(VulkanImageBuffer)) ChanError!void {
+        defer vulkan_image_buffer.deinit();
+        errdefer vulkan_image_buffer.as_ptr().in_use.store(false, .release);
+
+        vulkan_image_buffer.as_ptr().in_use.store(true, .release);
+        try self.chan.send(vulkan_image_buffer.clone());
     }
 
-    pub fn recv(self: *Self) ChanError!rc.Arc(*VulkanImageBuffer) {
+    pub fn recv(self: *Self) ChanError!Arc(VulkanImageBuffer) {
         return self.chan.recv();
     }
 
-    pub fn try_recv(self: *Self) ChanError!?rc.Arc(*VulkanImageBuffer) {
+    pub fn try_recv(self: *Self) ChanError!?Arc(VulkanImageBuffer) {
         return self.chan.tryRecv();
     }
 
     /// Drain and release all queued buffers.
     pub fn drain(self: *Self) void {
         while (self.chan.try_recv() catch null) |old_vulkan_image_buffer| {
-            old_vulkan_image_buffer.value.*.in_use.store(false, .release);
-            if (old_vulkan_image_buffer.releaseUnwrap()) |val| val.deinit();
+            old_vulkan_image_buffer.as_ptr().in_use.store(false, .release);
+            old_vulkan_image_buffer.deinit();
         }
     }
 };
