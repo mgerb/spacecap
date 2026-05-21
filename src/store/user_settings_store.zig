@@ -61,10 +61,10 @@ pub const State = struct {
     allocator: Allocator,
     user_settings: UserSettings,
 
-    pub fn init(allocator: Allocator) !@This() {
+    pub fn init(allocator: Allocator, io: std.Io) !@This() {
         return .{
             .allocator = allocator,
-            .user_settings = try .init(allocator),
+            .user_settings = try .init(allocator, io),
         };
     }
 
@@ -124,7 +124,7 @@ fn effect_sync_settings_to_file(store: *Store, _: anytype) !void {
     };
     defer user_settings_snapshot.deinit(store.allocator);
 
-    try user_settings_snapshot.save(store.allocator);
+    try user_settings_snapshot.save(store.allocator, store.io);
 }
 
 fn effect_select_output_directory(store: *Store, _: anytype) !void {
@@ -143,15 +143,15 @@ fn effect_select_output_directory(store: *Store, _: anytype) !void {
     // the file picker.
     const directory = blk: {
         if (initial_directory) |dir| {
-            var opened_dir = std.fs.openDirAbsolute(dir.bytes, .{}) catch {
+            var opened_dir = std.Io.Dir.openDirAbsolute(store.io, dir.bytes, .{}) catch {
                 break :blk null;
             };
-            opened_dir.close();
+            opened_dir.close(store.io);
             break :blk dir.bytes;
         }
         break :blk null;
     };
-    const selected_directory = store.file_picker.open_directory_picker(store.allocator, directory) catch |err| {
+    const selected_directory = store.file_picker.open_directory_picker(store.allocator, store.io, directory) catch |err| {
         switch (err) {
             FilePickerError.PickerCancelled => {
                 log.info("[select_output_directory] output directory selection cancelled", .{});

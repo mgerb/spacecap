@@ -29,7 +29,7 @@
     // This field is optional.
     // This is currently advisory only; Zig does not yet do anything
     // with this value.
-    .minimum_zig_version = "0.15.0-dev.34+8e0a4ca4b",
+    .minimum_zig_version = "0.16.0",
 
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
@@ -65,34 +65,33 @@
         //    // actually used.
         //    .lazy = false,
         //},
-        .zigwin32 = .{
-            .url = "git+https://github.com/marlersoft/zigwin32.git#d21b419d808215e1f82605fdaddc49750bfa3bca",
-            .hash = "zigwin32-25.0.28-preview-AAAAAI0J-wP-8_KKo4Yjr33XLhVhlJmeagGUedByaOnX",
+        .win32 = .{
+            .url = "git+https://github.com/marlersoft/zigwin32#ec98bb4d9eea532320a8551720a9e3ec6de64994",
+            .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.315.tar.gz",
             .hash = "N-V-__8AAPJS7wFRVAIGhMZ7cis5e-y5LZfn2KfO5O2jiHGH",
         },
         .vulkan_zig = .{
-            // Pinned to 0.15.1
-            .url = "https://github.com/Snektron/vulkan-zig/archive/af34c77ab52e8ce353faf2cd13c1ef13a99c2171.tar.gz",
-            .hash = "vulkan-0.0.0-r7YtxztIAwBc30xIMx4tzfUcEmc7goWiFJkR13yeLfi8",
+            .url = "git+https://github.com/Snektron/vulkan-zig?ref=master#b496a6a561ffbbeb530b0f9ed4e059f88c0723a5",
+            .hash = "vulkan-0.0.0-r7Ytx7N9AwD7IZt5_XNHtkJ4G9qY0pCH-cpcOsbL8wzD",
         },
         .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#3b56163b6f87e681856e019141f034e9966d8aa0",
-            .hash = "imguiz-0.0.0-sI63z3FwbgSB_xv3TSKRjoMhwSfup8tmCPMq1ZJyDqUs",
+            .url = "git+https://github.com/mgerb/imguiz#1c118ba37343de32f7a4db6715af914651ca7b9b",
+            .hash = "imguiz-0.0.0-sI63z6dxbgRbddJlMni21SmsxFtoO2AT0ZpmCNkm_Zro",
         },
         .ffmpeg = .{
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",
             .hash = "N-V-__8AAH4RHQXHEafp_hkUel3EMeK1wjHBfaIYYxYsKdiM",
         },
         .pipewire = .{
-            .url = "https://github.com/mgerb/pipewire/archive/refs/heads/dev.tar.gz",
-            .hash = "pipewire-1.6.2-tKslQ3LyEgC050NwrrKyjJjEXbO-M_CvmyVMu3FLLoJd",
+            .url = "https://github.com/mgerb/pipewire/archive/refs/heads/zig-0.16.0.tar.gz",
+            .hash = "pipewire-1.6.3-tKslQ_-KAQBG5PNtHtIRFe7BbdJBHKamvj_ySBC1TDFE",
         },
         .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.11.0.tar.gz",
-            .hash = "clap-0.11.0-oBajB-HnAQDPCKYzwF7rO3qDFwRcD39Q0DALlTSz5H7e",
+            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
+            .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
         },
     },
 

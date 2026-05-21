@@ -35,8 +35,8 @@ pub const PendingChunkNode = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        defer self.allocator.destroy(self);
         self.data.deinit();
-        self.allocator.destroy(self);
     }
 };
 
@@ -315,7 +315,7 @@ pub const AudioTimeline = struct {
     }
 };
 
-test "timestampToSampleFloor" {
+test "AudioTimeline - timestampToSampleFloor" {
     const allocator = std.testing.allocator;
     var timeline = try AudioTimeline.init(allocator, 48_000, 2);
     defer timeline.deinit();
@@ -330,7 +330,7 @@ test "timestampToSampleFloor" {
     try std.testing.expectEqual(1, timeline.timestamp_to_sample_floor(start_ns + 20_834));
 }
 
-test "timestampToSampleCeil" {
+test "AudioTimeline - timestampToSampleCeil" {
     const allocator = std.testing.allocator;
     var timeline = try AudioTimeline.init(allocator, 48_000, 2);
     defer timeline.deinit();
@@ -346,7 +346,7 @@ test "timestampToSampleCeil" {
     try std.testing.expectEqual(2, timeline.timestamp_to_sample_ceil(start_ns + 20_834));
 }
 
-test "getUnclampedSampleWindow preserves leading offset before first audio sample" {
+test "AudioTimeline - getUnclampedSampleWindow preserves leading offset before first audio sample" {
     const allocator = std.testing.allocator;
     var timeline = try AudioTimeline.init(allocator, 48_000, 2);
     defer timeline.deinit();
@@ -363,7 +363,7 @@ test "getUnclampedSampleWindow preserves leading offset before first audio sampl
     try std.testing.expectEqual(48_000, window.end_sample);
 }
 
-test "addData smooths small timestamp jitter between chunks" {
+test "AudioTimeline - addData smooths small timestamp jitter between chunks" {
     const allocator = std.testing.allocator;
     var timeline = try AudioTimeline.init(allocator, 48_000, 2);
     defer timeline.deinit();

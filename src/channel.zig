@@ -20,45 +20,47 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         const bufType = [bufSize]?T;
         buf: bufType = [_]?T{null} ** bufSize,
         closed: bool = false,
-        mut: std.Thread.Mutex = std.Thread.Mutex{},
-        alloc: std.mem.Allocator = undefined,
+        mut: std.Io.Mutex = .init,
+        allocator: std.mem.Allocator = undefined,
+        io: std.Io,
         recvQ: std.ArrayList(*Receiver) = undefined,
         sendQ: std.ArrayList(*Sender) = undefined,
         len: u32 = 0,
 
         // represents a thread waiting on recv
         const Receiver = struct {
-            mut: std.Thread.Mutex = std.Thread.Mutex{},
-            cond: std.Thread.Condition = std.Thread.Condition{},
+            mut: std.Io.Mutex = .init,
+            cond: std.Io.Condition = .init,
             data: ?T = null,
 
-            fn put_data_and_signal(self: *@This(), data: T) void {
+            fn put_data_and_signal(self: *@This(), io: std.Io, data: T) void {
                 self.data = data;
-                self.cond.signal();
+                self.cond.signal(io);
             }
         };
 
         // represents a thread waiting on send
         const Sender = struct {
-            mut: std.Thread.Mutex = std.Thread.Mutex{},
-            cond: std.Thread.Condition = std.Thread.Condition{},
+            mut: std.Io.Mutex = .init,
+            cond: std.Io.Condition = .init,
             data: T,
             delivered: bool = false,
 
-            fn get_data_and_signal(self: *@This()) T {
-                self.mut.lock();
-                defer self.mut.unlock();
+            fn get_data_and_signal(self: *@This(), io: std.Io) T {
+                self.mut.lockUncancelable(io);
+                defer self.mut.unlock(io);
                 self.delivered = true;
-                self.cond.signal();
+                self.cond.signal(io);
                 return self.data;
             }
         };
 
-        pub fn init(alloc: std.mem.Allocator) !Self {
+        pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
             return Self{
-                .alloc = alloc,
-                .recvQ = try std.ArrayList(*Receiver).initCapacity(alloc, 0),
-                .sendQ = try std.ArrayList(*Sender).initCapacity(alloc, 0),
+                .allocator = allocator,
+                .io = io,
+                .recvQ = try std.ArrayList(*Receiver).initCapacity(allocator, 0),
+                .sendQ = try std.ArrayList(*Sender).initCapacity(allocator, 0),
             };
         }
 
@@ -66,8 +68,8 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             if (!self.closed) {
                 self.close(.{});
             }
-            self.recvQ.deinit(self.alloc);
-            self.sendQ.deinit(self.alloc);
+            self.recvQ.deinit(self.allocator);
+            self.sendQ.deinit(self.allocator);
         }
 
         /// Close the channel. Any sender/receiver currently
@@ -76,19 +78,19 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             /// If true, remove and call "deinit" on all items remaining in the queue.
             drain: bool = false,
         }) void {
-            self.mut.lock();
-            defer self.mut.unlock();
+            self.mut.lockUncancelable(self.io);
+            defer self.mut.unlock(self.io);
             if (self.closed) {
                 return;
             }
             self.closed = true;
 
             for (self.sendQ.items) |sendQ| {
-                sendQ.cond.signal();
+                sendQ.cond.signal(self.io);
             }
 
             for (self.recvQ.items) |recvQ| {
-                recvQ.cond.signal();
+                recvQ.cond.signal(self.io);
             }
 
             if (args.drain) {
@@ -137,14 +139,14 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// BufferedChan - will skip if at capacity
         /// Returns true if sent successfully.
         pub fn try_send(self: *Self, data: T) ChanError!bool {
-            self.mut.lock();
+            self.mut.lockUncancelable(self.io);
             if ((bufSize == 0 and self.recvQ.items.len > 0) or
                 (bufSize > 0 and self.len < self.capacity()))
             {
                 try self._send(data);
                 return true;
             } else {
-                self.mut.unlock();
+                self.mut.unlock(self.io);
                 return false;
             }
         }
@@ -152,31 +154,31 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Chan - send and wait for receiver
         /// BufferedChan - send and wait for receiver if at capacity
         pub fn send(self: *Self, data: T) ChanError!void {
-            self.mut.lock();
+            self.mut.lockUncancelable(self.io);
             return self._send(data);
         }
 
         /// Private send method so that wrapping functions can manage locking
         fn _send(self: *Self, data: T) ChanError!void {
             if (self.closed) {
-                self.mut.unlock();
+                self.mut.unlock(self.io);
                 return ChanError.Closed;
             }
 
             // case: receiver already waiting
             // pull receiver (if any) and give it data. Signal receiver that it's done waiting.
             if (self.recvQ.items.len > 0) {
-                defer self.mut.unlock();
+                defer self.mut.unlock(self.io);
                 // Lock receiver mutex to synchronize data visibility with the waiting thread.
                 var receiver: *Receiver = self.recvQ.orderedRemove(0);
-                receiver.mut.lock();
-                defer receiver.mut.unlock();
-                receiver.put_data_and_signal(data);
+                receiver.mut.lockUncancelable(self.io);
+                defer receiver.mut.unlock(self.io);
+                receiver.put_data_and_signal(self.io, data);
                 return;
             }
 
             if (self.len < self.capacity() and bufSize > 0) {
-                defer self.mut.unlock();
+                defer self.mut.unlock(self.io);
 
                 // insert into first null spot in buffer
                 self.buf[self.len] = data;
@@ -188,14 +190,14 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             var sender = Sender{ .data = data };
 
             // prime condition
-            sender.mut.lock(); // cond.wait below will unlock it and wait until signal, then relock it
+            sender.mut.lockUncancelable(self.io); // cond.wait below will unlock it and wait until signal, then relock it
 
-            self.sendQ.append(self.alloc, &sender) catch |err| {
-                self.mut.unlock();
-                sender.mut.unlock();
+            self.sendQ.append(self.allocator, &sender) catch |err| {
+                self.mut.unlock(self.io);
+                sender.mut.unlock(self.io);
                 return err;
             }; // make visible to other threads
-            self.mut.unlock(); // allow all other threads to proceed. This thread is done reading/writing
+            self.mut.unlock(self.io); // allow all other threads to proceed. This thread is done reading/writing
 
             // Wait until a receiver consumes the data or the channel closes. Condition
             // waits can spuriously wake, so loop until the receiver marks the send as
@@ -203,27 +205,27 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             while (true) {
                 // A receiver may have already consumed the data before we start waiting.
                 if (sender.delivered) {
-                    sender.mut.unlock();
+                    sender.mut.unlock(self.io);
                     break;
                 }
 
                 // Check for closed without holding locks in the opposite order of receivers.
-                sender.mut.unlock();
-                self.mut.lock();
+                sender.mut.unlock(self.io);
+                self.mut.lockUncancelable(self.io);
                 const closed = self.closed;
-                self.mut.unlock();
-                sender.mut.lock();
+                self.mut.unlock(self.io);
+                sender.mut.lockUncancelable(self.io);
 
                 if (closed) {
-                    sender.mut.unlock();
+                    sender.mut.unlock(self.io);
                     return ChanError.Closed;
                 }
                 if (sender.delivered) {
-                    sender.mut.unlock();
+                    sender.mut.unlock(self.io);
                     break;
                 }
 
-                sender.cond.wait(&sender.mut);
+                sender.cond.waitUncancelable(self.io, &sender.mut);
             }
 
             // Sender mutex is already unlocked here.
@@ -233,34 +235,34 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
         /// Chan - if nothing is sending, return null
         /// BufferedChan - receive if items have been sent
         pub fn try_recv(self: *Self) ChanError!?T {
-            self.mut.lock();
+            self.mut.lockUncancelable(self.io);
             if ((bufSize == 0 and self.sendQ.items.len > 0) or
                 (bufSize > 0 and self.len > 0))
             {
                 const val = try self._recv();
                 return val;
             } else {
-                self.mut.unlock();
+                self.mut.unlock(self.io);
                 return null;
             }
         }
 
         pub fn recv(self: *Self) ChanError!T {
-            self.mut.lock();
+            self.mut.lockUncancelable(self.io);
             return self._recv();
         }
 
         /// Private recv method so that wrapping functions can manage locking
         fn _recv(self: *Self) ChanError!T {
             if (self.closed) {
-                self.mut.unlock();
+                self.mut.unlock(self.io);
                 return ChanError.Closed;
             }
 
             // case: value in buffer
             const l = self.len;
             if (l > 0 and bufSize > 0) {
-                defer self.mut.unlock();
+                defer self.mut.unlock(self.io);
                 const val = self.buf[0] orelse return ChanError.DataCorruption;
 
                 // advance items in buffer
@@ -275,7 +277,7 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
                 // the buffer remains the same logical length.
                 if (self.sendQ.items.len > 0) {
                     var sender: *Sender = self.sendQ.orderedRemove(0);
-                    const valFromSender: T = sender.get_data_and_signal();
+                    const valFromSender: T = sender.get_data_and_signal(self.io);
                     self.buf[l - 1] = valFromSender;
                 } else {
                     self.len -= 1;
@@ -286,9 +288,9 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             // case: sender already waiting
             // pull sender and take its data. Signal sender that it's done waiting.
             if (self.sendQ.items.len > 0) {
-                defer self.mut.unlock();
+                defer self.mut.unlock(self.io);
                 var sender: *Sender = self.sendQ.orderedRemove(0);
-                const data: T = sender.get_data_and_signal();
+                const data: T = sender.get_data_and_signal(self.io);
                 return data;
             }
 
@@ -296,14 +298,14 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             var receiver = Receiver{};
 
             // prime condition
-            receiver.mut.lock();
-            defer receiver.mut.unlock();
+            receiver.mut.lockUncancelable(self.io);
+            defer receiver.mut.unlock(self.io);
 
-            self.recvQ.append(self.alloc, &receiver) catch |err| {
-                self.mut.unlock();
+            self.recvQ.append(self.allocator, &receiver) catch |err| {
+                self.mut.unlock(self.io);
                 return err;
             };
-            self.mut.unlock();
+            self.mut.unlock(self.io);
 
             // Wait until a sender provides data. A sender may set data before we start
             // waiting, so always re-check after reacquiring the mutex to avoid missed
@@ -311,22 +313,22 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
             while (true) {
                 if (receiver.data != null) break;
 
-                receiver.mut.unlock();
-                self.mut.lock();
+                receiver.mut.unlock(self.io);
+                self.mut.lockUncancelable(self.io);
                 const closed = self.closed;
-                self.mut.unlock();
-                receiver.mut.lock();
+                self.mut.unlock(self.io);
+                receiver.mut.lockUncancelable(self.io);
 
                 if (receiver.data != null) break;
                 if (closed) {
                     return ChanError.Closed;
                 }
 
-                receiver.cond.wait(&receiver.mut);
+                receiver.cond.waitUncancelable(self.io, &receiver.mut);
             }
 
-            self.mut.lock();
-            defer self.mut.unlock();
+            self.mut.lockUncancelable(self.io);
+            defer self.mut.unlock(self.io);
             const closed = self.closed;
 
             // sender should have put data in .data
@@ -341,10 +343,10 @@ pub fn BufferedChan(comptime T: type, comptime bufSize: u32) type {
     };
 }
 
-test "unbufferedChan" {
+test "Channel - unbufferedChan" {
     // create channel of u8
     const T = Chan(u8);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     // spawn thread that immediately waits on channel
@@ -358,25 +360,25 @@ test "unbufferedChan" {
     defer t.join();
 
     // let thread wait a bit before sending value
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
 
     const val: u8 = 10;
     try chan.send(val);
 }
 
-test "bidirectional unbufferedChan" {
+test "Channel - bidirectional unbufferedChan" {
     const T = Chan(u8);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     const Thread = struct {
         fn run(c: *T) !void {
-            std.Thread.sleep(std.time.ns_per_s / 10);
+            std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
             const val = try c.recv();
             try std.testing.expectEqual(10, val);
-            std.Thread.sleep(std.time.ns_per_s / 10);
+            std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
             try c.send(val + 1);
-            std.Thread.sleep(std.time.ns_per_s / 10);
+            std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
             try c.send(val + 100);
         }
     };
@@ -384,7 +386,7 @@ test "bidirectional unbufferedChan" {
     const t = try std.Thread.spawn(.{}, Thread.run, .{&chan});
     defer t.join();
 
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
     var val: u8 = 10;
     try chan.send(val);
     val = try chan.recv();
@@ -393,9 +395,9 @@ test "bidirectional unbufferedChan" {
     try std.testing.expectEqual(110, val);
 }
 
-test "BufferedChan" {
+test "Channel - BufferedChan" {
     const T = BufferedChan(u8, 3);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     const Thread = struct {
@@ -424,9 +426,9 @@ test "BufferedChan" {
     try chan.send(val);
 }
 
-test "BufferedChan recv top-up keeps channel logically full" {
+test "Channel - BufferedChan recv top-up keeps channel logically full" {
     const T = BufferedChan(u8, 2);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     // Fill the buffer.
@@ -452,7 +454,7 @@ test "BufferedChan recv top-up keeps channel logically full" {
     for (0..500) |_| {
         saw_started = started.load(.seq_cst);
         if (saw_started) break;
-        std.Thread.sleep(std.time.ns_per_ms);
+        std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms), .awake) catch unreachable;
     }
     try std.testing.expect(saw_started);
     try std.testing.expectEqual(false, done.load(.seq_cst));
@@ -464,7 +466,7 @@ test "BufferedChan recv top-up keeps channel logically full" {
     for (0..500) |_| {
         saw_done = done.load(.seq_cst);
         if (saw_done) break;
-        std.Thread.sleep(std.time.ns_per_ms);
+        std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms), .awake) catch unreachable;
     }
     try std.testing.expect(saw_done);
 
@@ -473,14 +475,14 @@ test "BufferedChan recv top-up keeps channel logically full" {
     try std.testing.expectEqual(@as(u8, 3), try chan.recv());
 }
 
-test "len - BufferedChan" {
+test "Channel - len - BufferedChan" {
     const T = BufferedChan(u8, 50);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     const Thread = struct {
         fn run(_chan: *T) !void {
-            std.Thread.sleep(std.time.ns_per_ms);
+            std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms), .awake) catch unreachable;
             for (0..50) |i| {
                 _ = try _chan.recv();
                 try std.testing.expectEqual(49 - i, _chan.len);
@@ -498,15 +500,15 @@ test "len - BufferedChan" {
     th.join();
 }
 
-test "chan of chan" {
+test "Channel - chan of chan" {
     const T = BufferedChan(u8, 3);
     const TofT = Chan(T);
-    var chanOfChan = try TofT.init(std.testing.allocator);
+    var chanOfChan = try TofT.init(std.testing.allocator, std.testing.io);
     defer chanOfChan.deinit();
 
     const Thread = struct {
         fn run(cOC: *TofT) !void {
-            std.Thread.sleep(std.time.ns_per_s / 10);
+            std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
             var c = try cOC.recv();
             const val = try c.recv(); // should have value on buffer
             try std.testing.expectEqual(10, val);
@@ -516,19 +518,19 @@ test "chan of chan" {
     const t = try std.Thread.spawn(.{}, Thread.run, .{&chanOfChan});
     defer t.join();
 
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
     const val: u8 = 10;
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
     try chan.send(val);
 
     try chanOfChan.send(chan);
 }
 
-test "close - Chan" {
+test "Channel - close - Chan" {
     // create channel of u8
     const T = Chan(u8);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     // spawn thread that immediately waits on channel
@@ -546,23 +548,23 @@ test "close - Chan" {
     defer t.join();
 
     // let thread wait a bit before sending value
-    std.Thread.sleep(std.time.ns_per_ms * 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms * 10), .awake) catch unreachable;
 
     const val: u8 = 10;
     try chan.send(val);
 
-    std.Thread.sleep(std.time.ns_per_ms * 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms * 10), .awake) catch unreachable;
 
     chan.close(.{});
 
-    std.Thread.sleep(std.time.ns_per_ms);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms), .awake) catch unreachable;
 }
 
-test "close - Chan is idempotent" {
+test "Channel - close - Chan is idempotent" {
     const T = Chan(u8);
 
     {
-        var chan = try T.init(std.testing.allocator);
+        var chan = try T.init(std.testing.allocator, std.testing.io);
         defer chan.deinit();
 
         const ReceiverThread = struct {
@@ -576,7 +578,7 @@ test "close - Chan is idempotent" {
         };
 
         const receiver = try std.Thread.spawn(.{}, ReceiverThread.run, .{&chan});
-        std.Thread.sleep(std.time.ns_per_ms * 10);
+        std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms * 10), .awake) catch unreachable;
         chan.close(.{});
         receiver.join();
 
@@ -589,7 +591,7 @@ test "close - Chan is idempotent" {
     }
 
     {
-        var chan = try T.init(std.testing.allocator);
+        var chan = try T.init(std.testing.allocator, std.testing.io);
         defer chan.deinit();
 
         const SenderThread = struct {
@@ -603,7 +605,7 @@ test "close - Chan is idempotent" {
         };
 
         const sender = try std.Thread.spawn(.{}, SenderThread.run, .{&chan});
-        std.Thread.sleep(std.time.ns_per_ms * 10);
+        std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms * 10), .awake) catch unreachable;
         chan.close(.{});
         sender.join();
 
@@ -616,7 +618,7 @@ test "close - Chan is idempotent" {
     }
 }
 
-test "close - BufferedChan drains queued items" {
+test "Channel - close - BufferedChan drains queued items" {
     const Item = struct {
         allocator: std.mem.Allocator,
         deinit_count: *usize,
@@ -631,13 +633,13 @@ test "close - BufferedChan drains queued items" {
         }
 
         fn deinit(self: *@This()) void {
+            defer self.allocator.destroy(self);
             self.deinit_count.* += 1;
-            self.allocator.destroy(self);
         }
     };
 
     const T = BufferedChan(*Item, 4);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     var deinit_count: usize = 0;
@@ -654,9 +656,9 @@ test "close - BufferedChan drains queued items" {
     }
 }
 
-test "send handles wake races" {
+test "Channel - send handles wake races" {
     const T = Chan(u32);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     const iterations: u32 = 1000;
@@ -664,7 +666,7 @@ test "send handles wake races" {
     const Thread = struct {
         fn run(c: *T, count: u32) !void {
             for (0..count) |i| {
-                if ((i & 1) == 1) std.Thread.sleep(std.time.ns_per_ms / 10);
+                if ((i & 1) == 1) std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms / 10), .awake) catch unreachable;
                 try std.testing.expectEqual(@as(u32, @intCast(i)), try c.recv());
             }
         }
@@ -675,14 +677,14 @@ test "send handles wake races" {
 
     // Alternate scheduling so sometimes sender waits first, and sometimes receiver.
     for (0..iterations) |i| {
-        if ((i & 1) == 0) std.Thread.sleep(std.time.ns_per_ms / 10);
+        if ((i & 1) == 0) std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms / 10), .awake) catch unreachable;
         try chan.send(@intCast(i));
     }
 }
 
-test "recv handles wake races" {
+test "Channel - recv handles wake races" {
     const T = Chan(u32);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     const iterations: u32 = 1000;
@@ -690,7 +692,7 @@ test "recv handles wake races" {
     const Thread = struct {
         fn run(c: *T, count: u32) !void {
             for (0..count) |i| {
-                if ((i & 1) == 0) std.Thread.sleep(std.time.ns_per_ms / 10);
+                if ((i & 1) == 0) std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms / 10), .awake) catch unreachable;
                 try c.send(@intCast(i));
             }
         }
@@ -701,14 +703,14 @@ test "recv handles wake races" {
 
     // Alternate scheduling so sometimes receiver waits first, and sometimes sender.
     for (0..iterations) |i| {
-        if ((i & 1) == 1) std.Thread.sleep(std.time.ns_per_ms / 10);
+        if ((i & 1) == 1) std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_ms / 10), .awake) catch unreachable;
         try std.testing.expectEqual(@as(u32, @intCast(i)), try chan.recv());
     }
 }
 
-test "try_send - Chan" {
+test "Channel - try_send - Chan" {
     const T = Chan(u8);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     try std.testing.expectEqual(false, try chan.try_send(1));
@@ -723,15 +725,15 @@ test "try_send - Chan" {
 
     const th = try std.Thread.spawn(.{}, Thread.run, .{&chan});
 
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
     try std.testing.expectEqual(true, try chan.try_send(1));
 
     th.join();
 }
 
-test "try_send - BufferedChan" {
+test "Channel - try_send - BufferedChan" {
     const T = BufferedChan(u8, 2);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     try std.testing.expectEqual(true, try chan.try_send(1));
@@ -743,9 +745,9 @@ test "try_send - BufferedChan" {
     try std.testing.expectEqual(chan.len, 2);
 }
 
-test "try_recv - Chan" {
+test "Channel - try_recv - Chan" {
     const T = Chan(u8);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     try std.testing.expectEqual(chan.try_recv(), null);
@@ -759,14 +761,14 @@ test "try_recv - Chan" {
     const thread = try std.Thread.spawn(.{}, Thread.run, .{&chan});
     defer thread.join();
 
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
 
     try std.testing.expectEqual(chan.try_recv(), 1);
 }
 
-test "try_recv - BufferedChan" {
+test "Channel - try_recv - BufferedChan" {
     const T = BufferedChan(u8, 2);
-    var chan = try T.init(std.testing.allocator);
+    var chan = try T.init(std.testing.allocator, std.testing.io);
     defer chan.deinit();
 
     // should not block if nothing in it
@@ -781,7 +783,7 @@ test "try_recv - BufferedChan" {
     const thread = try std.Thread.spawn(.{}, Thread.run, .{&chan});
     defer thread.join();
 
-    std.Thread.sleep(std.time.ns_per_s / 10);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 10), .awake) catch unreachable;
 
     try std.testing.expectEqual(1, chan.try_recv());
 }

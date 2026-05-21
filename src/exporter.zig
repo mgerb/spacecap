@@ -15,6 +15,7 @@ const log = std.log.scoped(.exporter);
 /// Export audio/video to a file.
 pub fn export_replay_buffers(
     allocator: std.mem.Allocator,
+    io: std.Io,
     width: u32,
     height: u32,
     fps: u32,
@@ -46,6 +47,7 @@ pub fn export_replay_buffers(
 
     var muxer = try Muxer.init(
         allocator,
+        io,
         "replay",
         video_replay_buffer.header_frame.items,
         audio_codec_context,

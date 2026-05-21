@@ -60,7 +60,7 @@ pub fn end_ns(self: *const @This()) i128 {
     return self.timestamp + (@as(i128, @intCast(frames)) * ns_per_sample);
 }
 
-test "AudioCaptureData.end_ns stereo" {
+test "AudioCaptureData - end_ns stereo" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 1000;
     const channels: u32 = 2;
@@ -76,7 +76,7 @@ test "AudioCaptureData.end_ns stereo" {
     try std.testing.expectEqual(expected_end, data.end_ns());
 }
 
-test "AudioCaptureData.end_ns mono" {
+test "AudioCaptureData - end_ns mono" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 1000;
     const channels: u32 = 1;

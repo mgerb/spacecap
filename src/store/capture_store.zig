@@ -2,12 +2,12 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
-const AudioSession = @import("../audio/audio_session.zig").AudioSession;
-const VideoSession = @import("../video/video_session.zig").VideoSession;
+const AudioSession = @import("./audio_session.zig").AudioSession;
+const VideoSession = @import("./video_session.zig").VideoSession;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const Store = @import("./store.zig").Store;
-const AudioDevices = @import("../audio/audio_session.zig").AudioDevices;
+const AudioDevices = @import("./audio_session.zig").AudioDevices;
 const String = @import("../string.zig").String;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
 const ActionPayload = @import("./action_payload.zig").ActionPayload;
@@ -30,7 +30,7 @@ pub const CaptureStore = struct {
     vulkan: *Vulkan,
     audio_session: AudioSession,
     video_session: VideoSession,
-    muxer: Mutex(?Muxer) = .init(null),
+    muxer: Mutex(?Muxer),
 
     pub const Message = union(enum) {
         const SetAudioDeviceGainPayload = *ActionPayload(struct {
@@ -175,6 +175,7 @@ pub const CaptureStore = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         vulkan: *Vulkan,
         store: *Store,
         audio_capture: AudioCapture,
@@ -182,8 +183,9 @@ pub const CaptureStore = struct {
     ) !Self {
         return .{
             .vulkan = vulkan,
-            .audio_session = try .init(allocator, store, audio_capture),
-            .video_session = try .init(allocator, vulkan, store, video_capture),
+            .audio_session = try .init(allocator, io, store, audio_capture),
+            .video_session = try .init(allocator, io, vulkan, store, video_capture),
+            .muxer = .init(io, null),
         };
     }
 
@@ -518,6 +520,7 @@ pub const CaptureStore = struct {
         }
         muxer_locked.set(try .init(
             store.allocator,
+            store.io,
             "recording",
             self.vulkan.video_encoder.?.bit_stream_header.items,
             audio_codec_context,
@@ -612,6 +615,7 @@ pub const CaptureStore = struct {
 
         try exporter.export_replay_buffers(
             store.allocator,
+            store.io,
             size.width,
             size.height,
             fps,
@@ -794,6 +798,13 @@ test "CaptureStore - start_audio_capture_thread" {
     defer test_store.deinit();
     const store = test_store.store;
 
+    // Load devices otherwise the capture thread won't be able to
+    // lookup device gain.
+    store.dispatch(.{ .capture = .load_system_audio_devices });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
     store.dispatch(.{ .capture = .start_audio_capture_thread });
     store.run(.{ .once = true, .wait_for_effects = true });
 
@@ -814,7 +825,7 @@ test "CaptureStore - start_audio_capture_thread" {
 
     // Sleep so that the thread has a half second to run before store
     // deinit cleans it up.
-    std.Thread.sleep(std.time.ns_per_s * 0.5);
+    std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 2), .awake) catch unreachable;
 }
 
 test "CaptureStore - update_replay_buffer_size" {

@@ -44,9 +44,9 @@ pub fn init(
 }
 
 pub fn deinit(self: *Self) void {
+    defer self.allocator.destroy(self);
     deinitPacketList(&self.packets);
     self.timeline.deinit();
-    self.allocator.destroy(self);
 }
 
 /// Takes ownership of data.
@@ -147,7 +147,7 @@ const TestUtil = struct {
     }
 };
 
-test "addData - encodes audio before export and exposes packet timing" {
+test "AudioReplayBuffer - add_data - encodes audio before export and exposes packet timing" {
     const allocator = std.testing.allocator;
     const samples: usize = 2_048;
 
@@ -166,7 +166,7 @@ test "addData - encodes audio before export and exposes packet timing" {
     try std.testing.expect(packet_window.end_sample > packet_window.start_sample);
 }
 
-test "trimPackets - drops encoded packets outside replay window" {
+test "AudioReplayBuffer - trim_packets - drops encoded packets outside replay window" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 48_000;
     const samples_per_chunk: usize = sample_rate;
@@ -195,7 +195,7 @@ test "trimPackets - drops encoded packets outside replay window" {
     try std.testing.expect(first_packet.data.*.pts + first_packet.data.*.duration > expected_min_start);
 }
 
-test "size tracks encoded packet bytes as audio is added and trimmed" {
+test "AudioReplayBuffer - size tracks encoded packet bytes as audio is added and trimmed" {
     const allocator = std.testing.allocator;
     const samples_per_chunk: usize = 48_000;
     const base_ns: i128 = 3 * std.time.ns_per_s;

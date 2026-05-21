@@ -50,6 +50,7 @@ pub const PipewireFrameBufferManager = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         var iter = self.frame_buffers.iterator();
         while (iter.next()) |entry| {
             if (entry.value_ptr.frame_buffer_image) |*frame_buffer_image| {
@@ -63,7 +64,6 @@ pub const PipewireFrameBufferManager = struct {
             self.vk_foreign_semaphore = null;
         }
         self.frame_buffers.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn add_pipewire_buffer(self: *Self, pwb: *pw.struct_pw_buffer) !void {

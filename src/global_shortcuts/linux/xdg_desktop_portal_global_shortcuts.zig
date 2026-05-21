@@ -6,7 +6,7 @@ const TokenStorage = @import("../../common/linux/token_storage.zig");
 const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
 
-const c = @import("../../common/linux/gio.zig").c;
+const c = @import("../../tmp_bindings/gio_bindings.zig");
 
 const log = std.log.scoped(.xdg_desktop_portal_global_shortcuts);
 
@@ -21,6 +21,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     const Token = [16]u8;
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     dbus: *c.GDBusConnection,
     main_loop: ?*c.GMainLoop = null,
     run_thread: ?std.Thread = null,
@@ -42,7 +43,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     /// The ID is guaranteed to be non-zero, so we can use 0 to indicate null.
     activate_subscription: c_uint = 0,
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
@@ -57,6 +58,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
         self.* = .{
             .allocator = allocator,
+            .io = io,
             .dbus = dbus,
             .actions = try init_actions(allocator),
         };
@@ -78,6 +80,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         stop(self);
         self.close();
 
@@ -98,8 +101,6 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         }
 
         self.actions.deinit(self.allocator);
-
-        self.allocator.destroy(self);
     }
 
     fn close(self: *Self) void {
@@ -293,12 +294,12 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-createsession
                 .create_session => {
                     if (self.create_session.restore_session) {
-                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, "session_token") catch unreachable;
+                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, shortcuts.io, "session_token") catch unreachable;
                     }
 
                     if (shortcuts.session_token == null) {
-                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator) catch unreachable);
-                        TokenStorage.save_token(shortcuts.allocator, "session_token", shortcuts.session_token.?) catch unreachable;
+                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator, shortcuts.io) catch unreachable);
+                        TokenStorage.save_token(shortcuts.allocator, shortcuts.io, "session_token", shortcuts.session_token.?) catch unreachable;
                     }
 
                     assert(shortcuts.session_token != null);
@@ -518,7 +519,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             }
         };
 
-        const request_token = try TokenManager.generate_token(self.allocator);
+        const request_token = try TokenManager.generate_token(self.allocator, self.io);
         defer self.allocator.free(request_token);
 
         const payload = method.make_payload(self, request_token) orelse return;

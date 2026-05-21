@@ -21,9 +21,9 @@ pub const EncodedAudioPacketNode = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        defer self.allocator.destroy(self);
         var packet: [*c]ffmpeg.AVPacket = @constCast(self.data);
         ffmpeg.av_packet_free(&packet);
-        self.allocator.destroy(self);
     }
 };
 
@@ -220,7 +220,7 @@ pub const AudioEncoder = struct {
             // Planar float expects one channel per FFmpeg plane.
             var ch: usize = 0;
             while (ch < self.channels) : (ch += 1) {
-                const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[ch]));
+                const dst: [*]f32 = @ptrCast(@alignCast(frame[0].data[ch]));
                 if (submitted_samples < codec_samples_per_packet) {
                     @memset(dst[0..codec_samples_per_packet], 0.0);
                 }
@@ -231,7 +231,7 @@ pub const AudioEncoder = struct {
             }
         } else if (self.audio_codec_ctx.*.sample_fmt == ffmpeg.AV_SAMPLE_FMT_FLT) {
             // Interleaved float stores all channels in the first plane.
-            const dst: [*]f32 = @ptrCast(@alignCast(frame.*.data[0]));
+            const dst: [*]f32 = @ptrCast(@alignCast(frame[0].data[0]));
             if (submitted_samples < codec_samples_per_packet) {
                 @memset(dst[0 .. codec_samples_per_packet * self.channels], 0.0);
             }
@@ -280,7 +280,7 @@ pub fn deinit_packet_list(packets: *std.DoublyLinkedList) void {
     }
 }
 
-test "encodeChunk rejects non-contiguous sample input" {
+test "AudioEncoder - encode_chunk rejects non-contiguous sample input" {
     const allocator = std.testing.allocator;
 
     var encoder = try AudioEncoder.init(allocator, 48_000, 2);
@@ -293,7 +293,7 @@ test "encodeChunk rejects non-contiguous sample input" {
     try std.testing.expectError(error.NonContiguousAudioPts, encoder.encode_chunk(allocator, 3, &pcm));
 }
 
-test "encodeChunk plus flush produces encoded audio packets" {
+test "AudioEncoder - encode_chunk plus flush produces encoded audio packets" {
     const allocator = std.testing.allocator;
     const sample_rate: u32 = 48_000;
     const channels: u32 = 2;

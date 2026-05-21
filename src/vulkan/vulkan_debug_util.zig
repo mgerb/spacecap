@@ -129,6 +129,7 @@ pub fn debug_write_image_to_file(
 }
 
 pub fn debug_copy_write_image_to_file(
+    io: std.Io,
     vulkan: *Vulkan,
     image: vk.Image,
     format: vk.Format,
@@ -303,8 +304,8 @@ pub fn debug_copy_write_image_to_file(
     };
 
     {
-        vulkan.graphics_queue.mutex.lock();
-        defer vulkan.graphics_queue.mutex.unlock();
+        vulkan.graphics_queue.mutex.lockUncancelable(io);
+        defer vulkan.graphics_queue.mutex.unlock(io);
         try vulkan.device.queueSubmit(vulkan.graphics_queue.handle, 1, @ptrCast(&submit_info), .null_handle);
         try vulkan.device.queueWaitIdle(vulkan.graphics_queue.handle);
     }

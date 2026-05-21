@@ -17,10 +17,10 @@ pub const Store = struct {
     const log = std.log.scoped(.store);
 
     allocator: Allocator,
+    io: std.Io,
     message_queue: BufferedChan(Message, 1024),
     state: Mutex(State),
-    effect_thread_pool: std.Thread.Pool = undefined,
-    effect_thread_pool_wait_group: std.Thread.WaitGroup = .{},
+    effect_io_group: std.Io.Group = .init,
     file_picker: FilePicker,
     capture_store: CaptureStore,
     global_shortcuts_store: *GlobalShortcutsStore,
@@ -55,11 +55,11 @@ pub const Store = struct {
         user_settings: UserSettingStore.State,
         global_shortcuts: GlobalShortcutsStore.State = .{},
 
-        pub fn init(allocator: Allocator) !@This() {
+        pub fn init(allocator: Allocator, io: std.Io) !@This() {
             return .{
                 // NOTE: User settings are preloaded and do not follow
                 // standard message/effect procedure for startup.
-                .user_settings = try .init(allocator),
+                .user_settings = try .init(allocator, io),
                 .capture = try .init(allocator),
             };
         }
@@ -72,6 +72,7 @@ pub const Store = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         vulkan: *Vulkan,
         file_picker: FilePicker,
         audio_capture: AudioCapture,
@@ -82,11 +83,13 @@ pub const Store = struct {
 
         self.* = .{
             .allocator = allocator,
-            .message_queue = try .init(allocator),
-            .state = .init(try .init(allocator)),
+            .io = io,
+            .message_queue = try .init(allocator, io),
+            .state = .init(io, try .init(allocator, io)),
             .file_picker = file_picker,
             .capture_store = try .init(
                 allocator,
+                io,
                 vulkan,
                 self,
                 audio_capture,
@@ -99,14 +102,14 @@ pub const Store = struct {
             ),
         };
 
-        try self.effect_thread_pool.init(.{ .allocator = allocator, .n_jobs = 10 });
-
         return self;
     }
 
     pub fn deinit(self: *Self) void {
-        self.effect_thread_pool_wait_group.wait();
-        self.effect_thread_pool.deinit();
+        defer self.allocator.destroy(self);
+        self.effect_io_group.await(self.io) catch |err| {
+            log.err("[deinit] await error: {}", .{err});
+        };
         {
             const state_locked = self.state.lock();
             defer state_locked.unlock();
@@ -116,7 +119,6 @@ pub const Store = struct {
         self.capture_store.deinit();
         self.global_shortcuts_store.deinit();
         self.message_queue.deinit();
-        self.allocator.destroy(self);
     }
 
     /// All app initialization message that need to be dispatched upon
@@ -155,8 +157,9 @@ pub const Store = struct {
     ) void {
         defer {
             if (args.wait_for_effects) {
-                self.effect_thread_pool_wait_group.wait();
-                self.effect_thread_pool_wait_group.reset();
+                self.effect_io_group.await(self.io) catch |err| {
+                    log.err("[run] await effects error: {}", .{err});
+                };
             }
         }
         while (true) {
@@ -250,7 +253,7 @@ pub const Store = struct {
                 }
 
                 inline for (effect_fns) |effect_fn| {
-                    self.effect_thread_pool.spawnWg(&self.effect_thread_pool_wait_group, struct {
+                    self.effect_io_group.async(self.io, struct {
                         fn run(store: *Store, effect_payload: @TypeOf(payload)) void {
 
                             // NOTE: If compiler error here - payload in effect must match
@@ -367,7 +370,7 @@ pub const TestStore = struct {
 
         pub fn init(allocator: Allocator) !@This() {
             return .{
-                .data = try .init(allocator),
+                .data = try .init(allocator, std.testing.io),
             };
         }
 
@@ -385,7 +388,7 @@ pub const TestStore = struct {
             self.stopped = true;
         }
 
-        fn get_available_devices(_: *anyopaque, allocator: std.mem.Allocator) anyerror!AudioDeviceList {
+        fn get_available_devices(_: *anyopaque, allocator: std.mem.Allocator, _: std.Io) anyerror!AudioDeviceList {
             var audio_device_list = try AudioDeviceList.init(allocator);
             try audio_device_list.append(.{
                 .id = "test1",
@@ -480,7 +483,7 @@ pub const TestStore = struct {
     };
 
     pub const TestFilePicker = struct {
-        fn open_directory_picker(_: *anyopaque, allocator: Allocator, _: ?[]const u8) anyerror![]u8 {
+        fn open_directory_picker(_: *anyopaque, allocator: Allocator, _: std.Io, _: ?[]const u8) anyerror![]u8 {
             return allocator.dupe(u8, "/tmp");
         }
 
@@ -540,12 +543,13 @@ pub const TestStore = struct {
         self.vulkan.video_encoder = null;
         self.vulkan.video_encode_queue = null;
         self.vulkan.window = null;
-        self.vulkan.capture_preview_ring_buffer = .init(null);
-        self.vulkan.capture_ring_buffer = .init(null);
+        self.vulkan.capture_preview_ring_buffer = .init(std.testing.io, null);
+        self.vulkan.capture_ring_buffer = .init(std.testing.io, null);
         self.vulkan.capture_preview_textures = .init(allocator);
 
         self.store = try .init(
             allocator,
+            std.testing.io,
             &self.vulkan,
             self.file_picker_interface,
             self.audio_capture,
@@ -557,9 +561,9 @@ pub const TestStore = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        defer self.allocator.destroy(self);
         self.test_audio_capture.deinit();
         self.store.deinit();
         Test.destroy_temp_app_data_dir();
-        self.allocator.destroy(self);
     }
 };

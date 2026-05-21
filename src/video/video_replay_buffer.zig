@@ -14,8 +14,8 @@ pub const VideoReplayBufferNode = struct {
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *@This()) void {
+        defer self.allocator.destroy(self);
         self.data.data.deinit(self.allocator);
-        self.allocator.destroy(self);
     }
 };
 
@@ -58,13 +58,13 @@ pub const VideoReplayBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         self.header_frame.deinit(self.allocator);
         while (self.frames.popFirst()) |node| {
             const l: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", node));
             l.data.data.deinit(self.allocator);
             self.allocator.destroy(l);
         }
-        self.allocator.destroy(self);
     }
 
     // Copies the data into the replay buffer.
@@ -178,7 +178,7 @@ pub const VideoReplayBuffer = struct {
     }
 };
 
-test "addFrame - should add a frame with 3 bytes" {
+test "VideoReplayBuffer - addFrame - should add a frame with 3 bytes" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 30, &.{});
     defer replay_buffer.deinit();
     try replay_buffer.add_frame(&[_]u8{ 1, 2, 3 }, 0, false);
@@ -186,7 +186,7 @@ test "addFrame - should add a frame with 3 bytes" {
     try std.testing.expectEqual(@as(u32, 1), replay_buffer.len);
 }
 
-test "addFrame - should trim frames outside replay window" {
+test "VideoReplayBuffer - addFrame - should trim frames outside replay window" {
     const replay_seconds = 2;
     const max_seconds_retained = replay_seconds;
     const max_frames = max_seconds_retained + 1;
@@ -206,7 +206,7 @@ test "addFrame - should trim frames outside replay window" {
     try std.testing.expectEqual(max_seconds_retained, replay_buffer.get_seconds());
 }
 
-test "getReplayWindow - returns null when empty and first/last timestamps when populated" {
+test "VideoReplayBuffer - getReplayWindow - returns null when empty and first/last timestamps when populated" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
     defer replay_buffer.deinit();
 
@@ -221,7 +221,7 @@ test "getReplayWindow - returns null when empty and first/last timestamps when p
     try std.testing.expectEqual(@as(i128, 33), window.end_ns);
 }
 
-test "ensureFirstFrameIsIdr - removes leading non-idr frames" {
+test "VideoReplayBuffer - ensureFirstFrameIsIdr - removes leading non-idr frames" {
     var replay_buffer = try VideoReplayBuffer.init(std.testing.allocator, 10, &.{});
     defer replay_buffer.deinit();
 

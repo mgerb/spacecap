@@ -30,6 +30,7 @@ pub const VulkanImageBuffer = struct {
 
     pub const InitArgs = struct {
         allocator: std.mem.Allocator,
+        io: std.Io,
         vulkan: *Vulkan,
         width: u32,
         height: u32,
@@ -99,7 +100,7 @@ pub const VulkanImageBuffer = struct {
 
         var command_buffer: vk.CommandBuffer = undefined;
         try args.vulkan.device.allocateCommandBuffers(&cmd_alloc_info, @ptrCast(&command_buffer));
-        errdefer args.vulkan.device.freeCommandBuffers(command_pool, command_buffer_count, @ptrCast(&command_buffer));
+        errdefer args.vulkan.device.freeCommandBuffers(command_pool, &.{command_buffer});
         const signal_semaphore = try args.vulkan.device.createSemaphore(&.{}, null);
         errdefer args.vulkan.device.destroySemaphore(signal_semaphore, null);
         const fence = try args.vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
@@ -126,13 +127,13 @@ pub const VulkanImageBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        _ = self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64)) catch |err| {
+        _ = self.vulkan.device.waitForFences(&.{self.fence}, .true, std.math.maxInt(u64)) catch |err| {
             log.err("[deinit] error waiting for fences: {}", .{err});
         };
         self.vulkan.device.destroyImage(self.image, null);
         self.vulkan.device.destroyImageView(self.image_view, null);
         self.vulkan.device.freeMemory(self.image_memory, null);
-        self.vulkan.device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&self.command_buffer));
+        self.vulkan.device.freeCommandBuffers(self.command_pool, &.{self.command_buffer});
         self.vulkan.device.destroyCommandPool(self.command_pool, null);
         self.vulkan.device.destroyFence(self.fence, null);
         self.vulkan.device.destroySemaphore(self.signal_semaphore, null);
@@ -151,7 +152,7 @@ pub const VulkanImageBuffer = struct {
         },
     ) !void {
         self.timestamp_ns = args.timestamp_ns;
-        const result = try self.vulkan.device.waitForFences(1, @ptrCast(&self.fence), .true, std.math.maxInt(u64));
+        const result = try self.vulkan.device.waitForFences(&.{self.fence}, .true, std.math.maxInt(u64));
 
         if (result != .success) {
             return error.WaitForFences;

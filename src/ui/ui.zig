@@ -30,6 +30,7 @@ pub const UI = struct {
     store: *Store,
     vulkan: *Vulkan,
     allocator: std.mem.Allocator,
+    io: std.Io,
 
     window: ?*c.struct_SDL_Window = null,
     window_icon_surface: ?*c.SDL_Surface = null,
@@ -43,6 +44,7 @@ pub const UI = struct {
     /// Init SDL and return new UI instance.
     pub fn init(
         allocator: std.mem.Allocator,
+        io: std.Io,
         store: *Store,
         vulkan: *Vulkan,
     ) !*Self {
@@ -51,6 +53,7 @@ pub const UI = struct {
 
         self.* = Self{
             .allocator = allocator,
+            .io = io,
             .store = store,
             .vulkan = vulkan,
             .app_icon = .init(),
@@ -67,6 +70,8 @@ pub const UI = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
+
         const did_wait = self.vulkan.wait_for_all_graphics_fences_begin();
         defer {
             if (did_wait) {
@@ -112,8 +117,6 @@ pub const UI = struct {
             c.SDL_DestroySurface(icon_surface);
         }
         c.SDL_Quit();
-
-        self.allocator.destroy(self);
     }
 
     // TODO: Split off the main loop into its own method.
@@ -186,8 +189,9 @@ pub const UI = struct {
 
         const style = c.ImGui_GetStyle();
         if (io.*.ConfigFlags & c.ImGuiConfigFlags_ViewportsEnable > 0) {
-            style.*.WindowRounding = 0.0;
-            style.*.Colors[c.ImGuiCol_WindowBg].w = 1.0;
+            const window_bg_index: usize = @intCast(c.ImGuiCol_WindowBg);
+            const window_bg = &(style.*.Colors[0][window_bg_index]);
+            window_bg.w = 1.0;
         }
 
         // Setup Platform/Renderer backends
@@ -277,11 +281,9 @@ pub const UI = struct {
 
         // Main loop
         var done = false;
-        var timer = try std.time.Timer.start();
         var window_has_focus = true;
 
         while (!done) {
-            timer.reset();
             // Poll and handle events (inputs, window resize, etc.)
             // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
             // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
@@ -459,7 +461,8 @@ pub const UI = struct {
         var fd = &wd.Frames.Data[wd.FrameIndex];
 
         {
-            const err = try self.vulkan.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64));
+            const fence: vk.Fence = @enumFromInt(@intFromPtr(fd.Fence.?));
+            const err = try self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64));
             check_vk_result(@intFromEnum(err));
         }
 
@@ -482,8 +485,8 @@ pub const UI = struct {
         }
 
         {
-            self.vulkan.graphics_queue.mutex.lock();
-            defer self.vulkan.graphics_queue.mutex.unlock();
+            self.vulkan.graphics_queue.mutex.lockUncancelable(self.io);
+            defer self.vulkan.graphics_queue.mutex.unlock(self.io);
             c.cImGui_ImplVulkan_RenderDrawData(draw_data, fd.CommandBuffer);
         }
 
@@ -656,8 +659,8 @@ pub const UI = struct {
         }
 
         {
-            self.vulkan.graphics_queue.mutex.lock();
-            defer self.vulkan.graphics_queue.mutex.unlock();
+            self.vulkan.graphics_queue.mutex.lockUncancelable(self.io);
+            defer self.vulkan.graphics_queue.mutex.unlock(self.io);
             c.cImGui_ImplVulkanH_CreateOrResizeWindow(
                 self.vk_instance(),
                 self.vk_physical_device(),

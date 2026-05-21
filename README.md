@@ -9,7 +9,7 @@ Currently only supports Linux. Still in early development (see roadmap below).
 - Written in [Zig](https://ziglang.org/).
 - Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
 - UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
-- Muxing/Audio encoding with [ffmepg](https://www.ffmpeg.org/).
+- Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/).
 
 ---
 

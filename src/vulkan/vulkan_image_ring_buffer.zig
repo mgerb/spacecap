@@ -6,13 +6,14 @@ const Arc = @import("../arc.zig").Arc;
 
 pub const VulkanImageRingBuffer = struct {
     const Self = @This();
+    allocator: std.mem.Allocator,
+    io: std.Io,
     // TODO: Make ring buffer size variable at comptime.
     // TODO: Wrap in mutex.
     buffers: [3]Arc(VulkanImageBuffer) = undefined,
     vulkan: *Vulkan,
     most_recent_index: ?u32 = null,
-    mutex: std.Thread.Mutex = .{},
-    allocator: std.mem.Allocator,
+    mutex: std.Io.Mutex = .init,
 
     pub fn init(
         args: VulkanImageBuffer.InitArgs,
@@ -22,6 +23,7 @@ pub const VulkanImageRingBuffer = struct {
 
         self.* = .{
             .allocator = args.allocator,
+            .io = args.io,
             .vulkan = args.vulkan,
         };
 
@@ -36,10 +38,10 @@ pub const VulkanImageRingBuffer = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         for (self.buffers) |buffer| {
             buffer.deinit();
         }
-        self.allocator.destroy(self);
     }
 
     /// Find a buffer that currently isn't locked, lock it,
@@ -58,8 +60,8 @@ pub const VulkanImageRingBuffer = struct {
         semaphore: ?vk.Semaphore = null,
         fence: ?vk.Fence = null,
     } {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         for (0..3) |i| {
             // most_recent_index will only be null after the ring buffer has been initialized.
             if (self.most_recent_index != null and i == @as(usize, @intCast(self.most_recent_index.?))) {
@@ -92,8 +94,8 @@ pub const VulkanImageRingBuffer = struct {
     /// - Increment ref count
     /// - set in_use to true
     pub fn get_most_recent_buffer(self: *Self) ?Arc(VulkanImageBuffer) {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
         if (self.most_recent_index) |most_recent_index| {
             const buffer = self.buffers[most_recent_index].clone();
             buffer.as_ptr().in_use.store(true, .release);

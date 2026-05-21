@@ -38,9 +38,9 @@ pub fn Arc(comptime T: type) type {
         /// here: https://ziglang.org/documentation/master/std/#std.atomic.Value
         pub fn deinit(self: *const Self) void {
             if (self.internal.ref_count.fetchSub(1, .release) == 1) {
+                defer self.allocator.destroy(self.internal);
                 _ = self.internal.ref_count.load(.acquire);
                 self.internal.value.deinit();
-                self.allocator.destroy(self.internal);
             }
         }
 
@@ -93,7 +93,7 @@ test "Arc - clone" {
 test "Arc - clone on multiple threads (with Mutex)" {
     const Mutex = @import("./mutex.zig").Mutex;
     const allocator = std.testing.allocator;
-    var data: Arc(Mutex(TestUtil.Data)) = try .init(allocator, .init(try .init(allocator, "test1")));
+    var data: Arc(Mutex(TestUtil.Data)) = try .init(allocator, .init(std.testing.io, try .init(allocator, "test1")));
     defer data.deinit();
 
     const thread = struct {

@@ -15,12 +15,14 @@ pub const WindowsVideoCapture = struct {
     const DWORD = u32;
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     vulkan: *Vulkan,
 
-    pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, vulkan: *Vulkan) !*Self {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
+            .io = io,
             .vulkan = vulkan,
         };
         return self;

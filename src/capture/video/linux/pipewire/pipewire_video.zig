@@ -10,7 +10,6 @@ const VulkanImageBufferChan = @import("./vulkan_image_buffer_chan.zig").VulkanIm
 const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
 const VideoCaptureError = @import("../../video_capture.zig").VideoCaptureError;
 const VideoCaptureSelection = @import("../../video_capture.zig").VideoCaptureSelection;
-const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const c_def = @import("../../../../common/linux/pipewire_include.zig").c_def;
 const PipewireTimestampSource = @import("../../../../common/linux/pipewire_timestamp_source.zig").PipewireTimestampSource;
 const Portal = @import("./portal.zig").Portal;
@@ -21,9 +20,10 @@ pub const PipewireVideo = struct {
     const log = std.log.scoped(.PipewireVideo);
     const Self = @This();
 
+    allocator: Allocator,
+    io: std.Io,
     portal: *Portal,
     vulkan: *Vulkan,
-    allocator: Allocator,
     thread_loop: ?*pw.pw_thread_loop = null,
     context: ?*pw.pw_context = null,
     core: ?*pw.pw_core = null,
@@ -52,12 +52,14 @@ pub const PipewireVideo = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         vulkan: *Vulkan,
     ) (VideoCaptureError || anyerror)!*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
         self.* = Self{
             .allocator = allocator,
+            .io = io,
             .rx_chan = undefined,
             .tx_chan = undefined,
             .portal = undefined,
@@ -65,19 +67,20 @@ pub const PipewireVideo = struct {
             .vulkan_image_buffer_chan = undefined,
         };
 
-        self.rx_chan = try .init(allocator);
+        self.rx_chan = try .init(allocator, io);
         errdefer self.rx_chan.deinit();
-        self.tx_chan = try .init(allocator);
+        self.tx_chan = try .init(allocator, io);
         errdefer self.tx_chan.deinit();
-        self.portal = try .init(allocator);
+        self.portal = try .init(allocator, io);
         errdefer self.portal.deinit();
-        self.vulkan_image_buffer_chan = try .init(allocator);
+        self.vulkan_image_buffer_chan = try .init(allocator, io);
         errdefer self.vulkan_image_buffer_chan.deinit();
 
         return self;
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         // Stop the thread loop so we don't get anymore process callbacks.
         if (self.thread_loop) |thread_loop| {
             pw.pw_thread_loop_lock(thread_loop);
@@ -124,7 +127,6 @@ pub const PipewireVideo = struct {
 
         self.vulkan.destroy_capture_ring_buffer();
         self.portal.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn select_source(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
@@ -421,7 +423,7 @@ pub const PipewireVideo = struct {
         };
 
         if (copy_data.fence) |fence| {
-            _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), .true, std.math.maxInt(u64)) catch |err| {
+            _ = self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64)) catch |err| {
                 log.err("[stream_process_callback] error waiting for fences: {}", .{err});
             };
         }
@@ -439,7 +441,7 @@ pub const PipewireVideo = struct {
         const raw_metadata_pts_ns: i128 = @intCast(metadata.pts);
         const raw_stream_nsec_ns: i128 = if (self.stream) |stream| @intCast(pw.pw_stream_get_nsec(stream)) else 0;
 
-        var timestamp_ns: i128 = std.time.nanoTimestamp();
+        var timestamp_ns: i128 = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
         var source: PipewireTimestampSource = .host;
 
         if (raw_stream_nsec_ns > 0) {

@@ -30,29 +30,29 @@ pub const UserSettings = struct {
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     /// Read the settings json file if it exists, otherwise use defaults.
-    pub fn init(allocator: Allocator) !UserSettings {
+    pub fn init(allocator: Allocator, io: std.Io) !UserSettings {
         // Catch file read errors because we don't want to crash if
         // something goes wrong with the settings file.
-        return _init(allocator) catch |err| {
+        return _init(allocator, io) catch |err| {
             if (err != error.FileNotFound) {
                 log.err("[init] error loading settings file: {}", .{err});
             }
-            return try default_settings(allocator);
+            return try default_settings(allocator, io);
         };
     }
 
-    pub fn _init(allocator: Allocator) !UserSettings {
-        const app_data_dir = try util.get_app_data_dir(allocator);
+    pub fn _init(allocator: Allocator, io: std.Io) !UserSettings {
+        const app_data_dir = try util.get_app_data_dir(allocator, io);
         defer allocator.free(app_data_dir);
 
         const settings_path = try std.fs.path.join(allocator, &.{ app_data_dir, SETTINGS_JSON });
         defer allocator.free(settings_path);
 
-        const file = try std.fs.openFileAbsolute(settings_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.openFileAbsolute(io, settings_path, .{});
+        defer file.close(io);
 
-        const stat = try file.stat();
-        var reader = file.reader(&.{});
+        const stat = try file.stat(io);
+        var reader = file.reader(io, &.{});
         const file_contents = try reader.interface.readAlloc(allocator, stat.size);
         defer allocator.free(file_contents);
 
@@ -65,7 +65,7 @@ pub const UserSettings = struct {
         errdefer loaded.deinit(allocator);
 
         if (loaded.video_output_directory == null) {
-            const video_output_directory = try util.get_default_video_output_dir(allocator);
+            const video_output_directory = try util.get_default_video_output_dir(allocator, io);
             defer allocator.free(video_output_directory);
             loaded.video_output_directory = try String.from(allocator, video_output_directory);
         }
@@ -79,8 +79,8 @@ pub const UserSettings = struct {
         self.audio_devices.deinit(allocator);
     }
 
-    fn default_settings(allocator: Allocator) !UserSettings {
-        const video_output_directory = try util.get_default_video_output_dir(allocator);
+    fn default_settings(allocator: Allocator, io: std.Io) !UserSettings {
+        const video_output_directory = try util.get_default_video_output_dir(allocator, io);
         defer allocator.free(video_output_directory);
         return .{
             .video_output_directory = try String.from(allocator, video_output_directory),
@@ -169,17 +169,17 @@ pub const UserSettings = struct {
 
     /// Save a copy of settings to disk.
     /// NOTE: It is important to call this outside of the UI lock.
-    pub fn save(self: *@This(), allocator: Allocator) !void {
-        const app_data_dir = try util.get_app_data_dir(allocator);
+    pub fn save(self: *@This(), allocator: Allocator, io: std.Io) !void {
+        const app_data_dir = try util.get_app_data_dir(allocator, io);
         defer allocator.free(app_data_dir);
 
         const settings_path = try std.fs.path.join(allocator, &.{ app_data_dir, SETTINGS_JSON });
         defer allocator.free(settings_path);
 
-        const file = try std.fs.createFileAbsolute(settings_path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.createFileAbsolute(io, settings_path, .{});
+        defer file.close(io);
 
-        var writer = file.writer(&.{});
+        var writer = file.writer(io, &.{});
         var stringify: std.json.Stringify = .{ .writer = &writer.interface };
         try stringify.write(self.*);
     }
@@ -187,7 +187,7 @@ pub const UserSettings = struct {
 
 const TestUtil = struct {
     fn settings_path(allocator: Allocator) ![]u8 {
-        const app_data_dir = try util.get_app_data_dir(allocator);
+        const app_data_dir = try util.get_app_data_dir(allocator, std.testing.io);
         defer allocator.free(app_data_dir);
         return std.fs.path.join(allocator, &.{ app_data_dir, SETTINGS_JSON });
     }
@@ -196,10 +196,10 @@ const TestUtil = struct {
         const path = try settings_path(allocator);
         defer allocator.free(path);
 
-        const file = try std.fs.createFileAbsolute(path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.createFileAbsolute(std.testing.io, path, .{});
+        defer file.close(std.testing.io);
 
-        var writer = file.writer(&.{});
+        var writer = file.writer(std.testing.io, &.{});
         try writer.interface.writeAll(json);
     }
 
@@ -241,7 +241,7 @@ test "UserSettings - load" {
         \\}
     );
 
-    var settings = try UserSettings.init(allocator);
+    var settings = try UserSettings.init(allocator, std.testing.io);
     defer settings.deinit(allocator);
 
     try std.testing.expectEqual(144, settings.capture_fps);
@@ -270,9 +270,9 @@ test "UserSettings - save" {
     defer settings.deinit(allocator);
     try settings.update_audio_device_settings(allocator, "desktop-audio", true, 1.25);
 
-    try settings.save(allocator);
+    try settings.save(allocator, std.testing.io);
 
-    var loaded = try UserSettings._init(allocator);
+    var loaded = try UserSettings._init(allocator, std.testing.io);
     defer loaded.deinit(allocator);
 
     try std.testing.expectEqual(30, loaded.capture_fps);

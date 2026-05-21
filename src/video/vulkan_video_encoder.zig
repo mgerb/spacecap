@@ -184,7 +184,7 @@ pub const VulkanVideoEncoder = struct {
             .command_buffer_count = 1,
         };
         try self.vulkan.device.allocateCommandBuffers(&alloc_info, @ptrCast(&command_buffer));
-        defer self.vulkan.device.freeCommandBuffers(self.encode_command_pool.?, 1, @ptrCast(&command_buffer));
+        defer self.vulkan.device.freeCommandBuffers(self.encode_command_pool.?, &.{command_buffer});
 
         const begin_info = vk.CommandBufferBeginInfo{
             .flags = .{ .one_time_submit_bit = true },
@@ -205,8 +205,7 @@ pub const VulkanVideoEncoder = struct {
         try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         const result = try self.vulkan.device.waitForFences(
-            1,
-            @ptrCast(&self.encode_finished_fence),
+            &.{self.encode_finished_fence},
             .true,
             std.math.maxInt(u64),
         );
@@ -449,7 +448,7 @@ pub const VulkanVideoEncoder = struct {
             try self.encode_session_bind_memory.append(self.allocator, bind_mem);
         }
 
-        try self.vulkan.device.bindVideoSessionMemoryKHR(self.video_session.?, video_session_memory_requirement_count, self.encode_session_bind_memory.items.ptr);
+        try self.vulkan.device.bindVideoSessionMemoryKHR(self.video_session.?, self.encode_session_bind_memory.items);
     }
 
     fn create_video_session_parameters(self: *Self) !void {
@@ -731,8 +730,7 @@ pub const VulkanVideoEncoder = struct {
         var compute_pipeline: [1]vk.Pipeline = [_]vk.Pipeline{std.mem.zeroes(vk.Pipeline)};
         const result = try self.vulkan.device.createComputePipelines(
             .null_handle,
-            1,
-            @ptrCast(&compute_pipeline_info),
+            &.{compute_pipeline_info},
             null,
             &compute_pipeline,
         );
@@ -818,11 +816,10 @@ pub const VulkanVideoEncoder = struct {
                 descriptor_writes[p + 1].p_image_info = @ptrCast(&image_infos[p + 1]);
             }
 
+            const descriptor_write_count = 1 + self.ycbcr_image_plane_views.items.len;
             self.vulkan.device.updateDescriptorSets(
-                @as(u32, @intCast(self.ycbcr_image_plane_views.items.len)) + 1,
-                descriptor_writes[0..].ptr,
-                0,
-                null,
+                descriptor_writes[0..descriptor_write_count],
+                &.{},
             );
         }
     }
@@ -981,10 +978,8 @@ pub const VulkanVideoEncoder = struct {
             .compute,
             self.compute_pipeline_layout.?,
             0,
-            1,
-            @ptrCast(&self.compute_descriptor_sets.items[current_image_ix]),
-            0,
-            null,
+            &.{self.compute_descriptor_sets.items[current_image_ix]},
+            &.{},
         );
 
         const push_constants = PushConstants{
@@ -1256,19 +1251,18 @@ pub const VulkanVideoEncoder = struct {
     fn get_output_video_packet(self: *Self) ![]const u8 {
         defer {
             if (self.compute_command_buffer) |compute_command_buffer| {
-                self.vulkan.device.freeCommandBuffers(self.graphics_command_pool.?, 1, @ptrCast(&compute_command_buffer));
+                self.vulkan.device.freeCommandBuffers(self.graphics_command_pool.?, &.{compute_command_buffer});
             }
 
             if (self.encode_command_buffer) |encode_command_buffer| {
-                self.vulkan.device.freeCommandBuffers(self.encode_command_pool.?, 1, @ptrCast(&encode_command_buffer));
+                self.vulkan.device.freeCommandBuffers(self.encode_command_pool.?, &.{encode_command_buffer});
             }
 
             self.frame_count += 1;
         }
 
         var result = try self.vulkan.device.waitForFences(
-            1,
-            @ptrCast(&self.encode_finished_fence),
+            &.{self.encode_finished_fence},
             .true,
             std.math.maxInt(u64),
         );
@@ -1309,7 +1303,7 @@ pub const VulkanVideoEncoder = struct {
             .offset = aligned_offset,
             .size = aligned_size,
         };
-        try self.vulkan.device.invalidateMappedMemoryRanges(1, @ptrCast(&mapped_memory_range));
+        try self.vulkan.device.invalidateMappedMemoryRanges(&.{mapped_memory_range});
 
         const data = @as(
             [*]u8,
@@ -1372,6 +1366,7 @@ pub const VulkanVideoEncoder = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         self.destroy_encode_finished_fence();
         self.destroy_ycb_cr_conversion_pipeline();
         if (self.video_session_parameters) |video_session_parameters| {
@@ -1415,6 +1410,5 @@ pub const VulkanVideoEncoder = struct {
         self.dpb_image_views.deinit(self.allocator);
         self.ycbcr_image_plane_views.deinit(self.allocator);
         self.compute_descriptor_sets.deinit(self.allocator);
-        self.allocator.destroy(self);
     }
 };

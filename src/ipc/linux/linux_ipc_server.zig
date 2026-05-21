@@ -5,6 +5,8 @@ const IpcCommand = @import("../ipc.zig").IpcCommand;
 
 const SOCKET_FILE_NAME = "spacecap.sock";
 const log = std.log.scoped(.linux_ipc_server);
+const net = std.Io.net;
+const posix = std.posix;
 
 const RequestPayload = enum(u8) {
     wake = 0,
@@ -35,15 +37,17 @@ pub const IpcServer = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     store: *Store,
     socket_path: ?[]u8 = null,
-    listen_socket: ?std.posix.socket_t = null,
+    listen_socket: ?net.Server = null,
     thread: ?std.Thread = null,
     stop_requested: std.atomic.Value(bool) = .init(false),
 
-    pub fn init(allocator: std.mem.Allocator, store: *Store) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, store: *Store) !Self {
         return .{
             .allocator = allocator,
+            .io = io,
             .store = store,
             .socket_path = try get_socket_path(allocator),
         };
@@ -60,7 +64,7 @@ pub const IpcServer = struct {
 
     pub fn start(self: *Self) !void {
         assert(self.socket_path != null);
-        self.listen_socket = bind_listening_socket(self.socket_path.?) catch |err| switch (err) {
+        self.listen_socket = bind_listening_socket(self.io, self.socket_path.?) catch |err| switch (err) {
             error.SocketAlreadyActive => {
                 log.warn("[start] IPC server disabled: another process is listening on {s}", .{self.socket_path.?});
                 return;
@@ -80,10 +84,10 @@ pub const IpcServer = struct {
         self.stop_requested.store(true, .release);
 
         if (self.socket_path) |socket_path| {
-            const wake = std.net.connectUnixSocket(socket_path) catch null;
+            const wake = connect_unix_socket(self.io, socket_path) catch null;
             if (wake) |stream| {
-                defer stream.close();
-                stream.writeAll(&[_]u8{RequestPayload.wake.value()}) catch {};
+                defer stream.close(self.io);
+                write_all(self.io, stream, &[_]u8{RequestPayload.wake.value()}) catch {};
             }
         }
 
@@ -92,13 +96,13 @@ pub const IpcServer = struct {
             self.thread = null;
         }
 
-        if (self.listen_socket) |listen_socket| {
-            std.posix.close(listen_socket);
+        if (self.listen_socket) |*listen_socket| {
+            listen_socket.deinit(self.io);
             self.listen_socket = null;
         }
 
         if (self.socket_path) |socket_path| {
-            remove_socket_file(socket_path) catch |err| {
+            remove_socket_file(self.io, socket_path) catch |err| {
                 log.warn("[stop] failed to remove IPC socket file {s}: {}", .{ socket_path, err });
             };
         }
@@ -111,35 +115,27 @@ pub const IpcServer = struct {
                 break;
             }
 
-            const client_socket = std.posix.accept(
-                self.listen_socket.?,
-                null,
-                null,
-                std.posix.SOCK.CLOEXEC,
-            ) catch |err| {
+            const client_stream = self.listen_socket.?.accept(self.io) catch |err| {
                 if (self.stop_requested.load(.acquire)) {
                     break;
                 }
                 switch (err) {
-                    error.ConnectionAborted,
-                    error.ConnectionResetByPeer,
-                    => continue,
+                    error.ConnectionAborted => continue,
                     else => {
                         log.err("[server_thread] IPC accept failed: {}", .{err});
                         continue;
                     },
                 }
             };
-            defer std.posix.close(client_socket);
+            defer client_stream.close(self.io);
 
-            handle_client(self, client_socket);
+            handle_client(self, client_stream);
         }
     }
 
-    fn handle_client(self: *Self, client_socket: std.posix.socket_t) void {
-        const stream: std.net.Stream = .{ .handle = client_socket };
+    fn handle_client(self: *Self, stream: net.Stream) void {
         var command_buffer: [1]u8 = undefined;
-        const command_len = stream.read(&command_buffer) catch |err| switch (err) {
+        const command_len = read_short(self.io, stream, &command_buffer) catch |err| switch (err) {
             error.ConnectionResetByPeer,
             => return,
             else => {
@@ -157,7 +153,7 @@ pub const IpcServer = struct {
         }
 
         const payload = std.enums.fromInt(RequestPayload, command_buffer[0]) orelse {
-            stream.writeAll(&[_]u8{ResponsePayload.unknown_command.value()}) catch |err| {
+            write_all(self.io, stream, &[_]u8{ResponsePayload.unknown_command.value()}) catch |err| {
                 log.err("[handle_client] failed to write response: {}", .{err});
             };
             return;
@@ -169,7 +165,7 @@ pub const IpcServer = struct {
             .wake => return,
             else => {
                 dispatch_ipc_command(self.store, payload);
-                stream.writeAll(&[_]u8{ResponsePayload.ok.value()}) catch {};
+                write_all(self.io, stream, &[_]u8{ResponsePayload.ok.value()}) catch {};
                 return;
             },
         }
@@ -177,22 +173,21 @@ pub const IpcServer = struct {
 
     /// Send a message to the server. This will only be used in
     /// Spacecap CLI mode (separate from the running process.
-    pub fn send_ipc_command(allocator: std.mem.Allocator, command: IpcCommand) !void {
+    pub fn send_ipc_command(allocator: std.mem.Allocator, io: std.Io, command: IpcCommand) !void {
         const socket_path = try get_socket_path(allocator);
         defer allocator.free(socket_path);
         log.debug("[send_ipc_command] using socket: {s}", .{socket_path});
 
-        const stream = std.net.connectUnixSocket(socket_path) catch |err| switch (err) {
+        const stream = connect_unix_socket(io, socket_path) catch |err| switch (err) {
             error.FileNotFound,
             error.ConnectionRefused,
-            error.ConnectionResetByPeer,
             => return error.SpacecapNotRunning,
             error.AccessDenied,
             error.PermissionDenied,
             => return error.IpcPermissionDenied,
             else => return err,
         };
-        defer stream.close();
+        defer stream.close(io);
 
         const request_payload: RequestPayload = switch (command) {
             .save_replay => .save_replay,
@@ -203,10 +198,10 @@ pub const IpcServer = struct {
             .stop_recording => .stop_recording,
             .toggle_recording => .toggle_recording,
         };
-        try stream.writeAll(&[_]u8{request_payload.value()});
+        try write_all(io, stream, &[_]u8{request_payload.value()});
 
         var response_buffer: [1]u8 = undefined;
-        const response_len = stream.read(&response_buffer) catch |err| switch (err) {
+        const response_len = read_short(io, stream, &response_buffer) catch |err| switch (err) {
             error.ConnectionResetByPeer,
             => return error.RequestFailed,
             else => return err,
@@ -228,49 +223,34 @@ pub const IpcServer = struct {
         }
     }
 
-    fn bind_listening_socket(socket_path: []const u8) !std.posix.socket_t {
-        const listen_socket = try std.posix.socket(
-            std.posix.AF.UNIX,
-            std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
-            0,
-        );
-        errdefer std.posix.close(listen_socket);
-
-        var address = try std.net.Address.initUnix(socket_path);
-        std.posix.bind(listen_socket, &address.any, address.getOsSockLen()) catch |err| switch (err) {
+    fn bind_listening_socket(io: std.Io, socket_path: []const u8) !net.Server {
+        var address = try net.UnixAddress.init(socket_path);
+        return address.listen(io, .{ .kernel_backlog = 16 }) catch |err| switch (err) {
             error.AddressInUse => {
-                const existing = std.net.connectUnixSocket(socket_path);
+                const existing = connect_unix_socket(io, socket_path);
                 if (existing) |stream| {
-                    stream.close();
+                    stream.close(io);
                     return error.SocketAlreadyActive;
-                } else |connect_err| switch (connect_err) {
-                    error.ConnectionRefused,
-                    error.FileNotFound,
-                    => {
-                        try remove_socket_file(socket_path);
-                        try std.posix.bind(listen_socket, &address.any, address.getOsSockLen());
-                    },
-                    else => return err,
+                } else |_| {
+                    try remove_socket_file(io, socket_path);
+                    return try address.listen(io, .{ .kernel_backlog = 16 });
                 }
             },
             else => return err,
         };
-
-        try std.posix.listen(listen_socket, 16);
-        return listen_socket;
     }
 
     /// Must be freed by the caller.
     fn get_socket_path(allocator: std.mem.Allocator) ![]u8 {
-        if (std.posix.getenv("XDG_RUNTIME_DIR")) |runtime_dir| {
-            return std.fs.path.join(allocator, &.{ runtime_dir, SOCKET_FILE_NAME });
+        if (std.c.getenv("XDG_RUNTIME_DIR")) |runtime_dir| {
+            return std.fs.path.join(allocator, &.{ std.mem.span(runtime_dir), SOCKET_FILE_NAME });
         }
 
-        return std.fmt.allocPrint(allocator, "/tmp/spacecap-{}.sock", .{std.posix.getuid()});
+        return std.fmt.allocPrint(allocator, "/tmp/spacecap-{}.sock", .{std.os.linux.getuid()});
     }
 
-    fn remove_socket_file(socket_path: []const u8) !void {
-        std.fs.cwd().deleteFile(socket_path) catch |err| switch (err) {
+    fn remove_socket_file(io: std.Io, socket_path: []const u8) !void {
+        std.Io.Dir.deleteFileAbsolute(io, socket_path) catch |err| switch (err) {
             error.FileNotFound => {},
             else => return err,
         };
@@ -301,5 +281,68 @@ pub const IpcServer = struct {
                 store.dispatch(.{ .capture = if (recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
             },
         }
+    }
+
+    fn connect_unix_socket(io: std.Io, socket_path: []const u8) !net.Stream {
+        _ = try net.UnixAddress.init(socket_path);
+
+        const socket_fd = while (true) {
+            const rc = posix.system.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            switch (posix.errno(rc)) {
+                .SUCCESS => break @as(posix.fd_t, @intCast(rc)),
+                .INTR => continue,
+                .AFNOSUPPORT => return error.AddressFamilyUnsupported,
+                .MFILE => return error.ProcessFdQuotaExceeded,
+                .NFILE => return error.SystemFdQuotaExceeded,
+                .NOBUFS, .NOMEM => return error.SystemResources,
+                .PROTONOSUPPORT => return error.ProtocolUnsupportedByAddressFamily,
+                .PROTOTYPE => return error.SocketModeUnsupported,
+                else => |err| return posix.unexpectedErrno(err),
+            }
+        };
+
+        const stream: net.Stream = .{ .socket = .{
+            .handle = socket_fd,
+            .address = .{ .ip4 = .loopback(0) },
+        } };
+        errdefer stream.close(io);
+
+        var address: posix.sockaddr.un = .{ .path = undefined };
+        @memcpy(address.path[0..socket_path.len], socket_path);
+        const path_len = if (address.path.len - socket_path.len > 0) blk: {
+            address.path[socket_path.len] = 0;
+            break :blk socket_path.len + 1;
+        } else socket_path.len;
+        const address_len: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path_len);
+
+        while (true) {
+            switch (posix.errno(posix.system.connect(socket_fd, @ptrCast(&address), address_len))) {
+                .SUCCESS => return stream,
+                .INTR => continue,
+                .CONNREFUSED => return error.ConnectionRefused,
+                .AFNOSUPPORT => return error.AddressFamilyUnsupported,
+                .AGAIN, .INPROGRESS => return error.WouldBlock,
+                .ACCES => return error.AccessDenied,
+                .LOOP => return error.SymLinkLoop,
+                .NOENT => return error.FileNotFound,
+                .NOTDIR => return error.NotDir,
+                .ROFS => return error.ReadOnlyFileSystem,
+                .PERM => return error.PermissionDenied,
+                else => |err| return posix.unexpectedErrno(err),
+            }
+        }
+    }
+
+    fn read_short(io: std.Io, stream: net.Stream, buffer: []u8) !usize {
+        var reader_buffer: [256]u8 = undefined;
+        var reader = stream.reader(io, &reader_buffer);
+        return reader.interface.readSliceShort(buffer) catch |err| return reader.err orelse err;
+    }
+
+    fn write_all(io: std.Io, stream: net.Stream, bytes: []const u8) !void {
+        var writer_buffer: [256]u8 = undefined;
+        var writer = stream.writer(io, &writer_buffer);
+        writer.interface.writeAll(bytes) catch |err| return writer.err orelse err;
+        writer.interface.flush() catch |err| return writer.err orelse err;
     }
 };
