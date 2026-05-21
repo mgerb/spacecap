@@ -35,7 +35,9 @@ pub const VulkanImageBufferChan = struct {
         errdefer vulkan_image_buffer.as_ptr().in_use.store(false, .release);
 
         vulkan_image_buffer.as_ptr().in_use.store(true, .release);
-        try self.chan.send(vulkan_image_buffer.clone());
+        const queued_vulkan_image_buffer = vulkan_image_buffer.clone();
+        errdefer queued_vulkan_image_buffer.deinit();
+        try self.chan.send(queued_vulkan_image_buffer);
     }
 
     pub fn recv(self: *Self) ChanError!Arc(VulkanImageBuffer) {
