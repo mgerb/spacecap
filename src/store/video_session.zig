@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const vk = @import("vulkan");
 const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const Mutex = @import("../mutex.zig").Mutex;
-const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
+const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const Util = @import("../util.zig");
 const BufferedChan = @import("../channel.zig").BufferedChan;
@@ -44,11 +44,14 @@ const VideoRecordQueuePayload = union(enum) {
     data: VideoRecordData,
 };
 
+/// VideoSession owns the main audio capture loop. All video captured by the
+/// system goes through the VideoSession.
 pub const VideoSession = struct {
     const Self = @This();
     const log = std.log.scoped(.video_session);
 
     allocator: Allocator,
+    io: std.Io,
     vulkan: *Vulkan,
     store: *Store,
     video_capture: VideoCapture,
@@ -59,8 +62,8 @@ pub const VideoSession = struct {
     // very intuitve on where it is supposed to be used. Generally
     // the video encoder and the replay buffer should be locked together.
     // Init/deinit of record_data_queue must also be behind this lock.
-    video_record_mutex: std.Thread.Mutex = .{},
-    video_replay_buffer: Mutex(?*VideoReplayBuffer) = .init(null),
+    video_record_mutex: std.Io.Mutex = .init,
+    video_replay_buffer: Mutex(?*VideoReplayBuffer),
     // When recording to disk this channel will not be null. There is
     // a separate thread that pulls data off this queue and writes to disk.
     // We do this so that we don't slow the main capture thread by disk IO.
@@ -68,21 +71,24 @@ pub const VideoSession = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         vulkan: *Vulkan,
         store: *Store,
         video_capture: VideoCapture,
     ) !Self {
         return .{
             .allocator = allocator,
+            .io = io,
             .vulkan = vulkan,
             .store = store,
             .video_capture = video_capture,
+            .video_replay_buffer = .init(io, null),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
 
         if (self.record_data_queue) |*record_data_queue| {
             record_data_queue.send(.done) catch |err| {
@@ -150,8 +156,8 @@ pub const VideoSession = struct {
     }
 
     pub fn start_replay_buffer(self: *Self, fps: u32, capture_bit_rate: u64, replay_seconds: u32) !void {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
 
         try self.init_video_encoder(fps, capture_bit_rate);
 
@@ -171,8 +177,8 @@ pub const VideoSession = struct {
     }
 
     pub fn stop_replay_buffer(self: *Self) !void {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
         var video_replay_buffer_locked = self.video_replay_buffer.lock();
         defer video_replay_buffer_locked.unlock();
         if (video_replay_buffer_locked.unwrap()) |video_replay_buffer| {
@@ -192,18 +198,18 @@ pub const VideoSession = struct {
     }
 
     pub fn start_recording_to_disk(self: *Self, fps: u32, capture_bit_rate: u64) !void {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
         try self.init_video_encoder(fps, capture_bit_rate);
         if (self.record_data_queue == null) {
-            self.record_data_queue = try .init(self.allocator);
+            self.record_data_queue = try .init(self.allocator, self.io);
         }
         self.record_to_disk_thread = try std.Thread.spawn(.{}, record_to_disk_thread_handler, .{self});
     }
 
     pub fn stop_recording_to_disk(self: *Self) void {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
 
         // Send the .done payload and wait for the record to disk thread to finish
         // pulling all data out of the queue.
@@ -249,7 +255,7 @@ pub const VideoSession = struct {
 
     // TODO: Revise error code paths in here.
     fn video_capture_thread_handler(self: *Self) !void {
-        var previous_frame_start_time: i128 = 0;
+        var previous_frame_start_time: i96 = 0;
 
         while (true) {
             const fps = blk: {
@@ -261,16 +267,16 @@ pub const VideoSession = struct {
             // Here we wait until the next projected frame time. This will happen if we are
             // capturing/encoding frames too quickly.
             const ns_per_frame = (1.0 / @as(f64, @floatFromInt(fps))) * std.time.ns_per_s;
-            const now = std.time.nanoTimestamp();
+            const now = std.Io.Timestamp.now(self.store.io, .awake).nanoseconds;
             const next_projected_frame_start_time = previous_frame_start_time + @as(u64, @intFromFloat(ns_per_frame));
 
             if (previous_frame_start_time > 0 and next_projected_frame_start_time > now) {
                 // TODO: add to state
-                Util.print_elapsed(previous_frame_start_time, "previous_frame_start_time");
-                std.Thread.sleep(@intCast(next_projected_frame_start_time - now));
+                Util.print_elapsed(self.io, previous_frame_start_time, "previous_frame_start_time");
+                try std.Io.sleep(self.store.io, .fromNanoseconds(@intCast(next_projected_frame_start_time - now)), .awake);
             }
 
-            previous_frame_start_time = std.time.nanoTimestamp();
+            previous_frame_start_time = std.Io.Timestamp.now(self.store.io, .awake).nanoseconds;
 
             self.video_capture.next_frame() catch |err| {
                 if (err == ChanError.Closed) {
@@ -327,15 +333,15 @@ pub const VideoSession = struct {
                 // In capture-only mode no downstream work waits on the preview copy.
                 // Wait here so the capture-ring source image is not recycled while still in flight.
                 if (copy_data.fence) |fence| {
-                    _ = self.vulkan.device.waitForFences(1, @ptrCast(&fence), .true, std.math.maxInt(u64)) catch |err| {
+                    _ = self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64)) catch |err| {
                         log.err("[video_capture_thread_handler] preview copy wait error: {}", .{err});
                     };
                 }
                 continue;
             }
 
-            self.video_record_mutex.lock();
-            defer self.video_record_mutex.unlock();
+            self.video_record_mutex.lockUncancelable(self.io);
+            defer self.video_record_mutex.unlock(self.io);
 
             const video_encoder = self.vulkan.video_encoder orelse continue;
             const video_locked = self.video_replay_buffer.lock();
@@ -420,8 +426,8 @@ pub const VideoSession = struct {
     }
 
     pub fn take_and_swap_replay_buffer(self: *Self, replay_seconds: u32) !?*VideoReplayBuffer {
-        self.video_record_mutex.lock();
-        defer self.video_record_mutex.unlock();
+        self.video_record_mutex.lockUncancelable(self.io);
+        defer self.video_record_mutex.unlock(self.io);
 
         var video_replay_buffer_locked = self.video_replay_buffer.lock();
         defer video_replay_buffer_locked.unlock();

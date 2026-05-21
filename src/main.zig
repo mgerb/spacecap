@@ -13,35 +13,33 @@ const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shor
 const Store = @import("./store/store.zig").Store;
 const ipc_module = @import("./ipc/ipc.zig");
 const IpcCommand = ipc_module.IpcCommand;
+const Env = @import("./env.zig");
 
 const log = std.log.scoped(.main);
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{
-        .thread_safe = true,
-    }){};
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const allocator = gpa.allocator();
+    Env.init(init.io, init.environ_map);
 
-    const parsed_args: ?args.Args = args.parse(allocator);
+    const parsed_args: ?args.Args = args.parse(init);
 
-    if (try cli_app(allocator, parsed_args)) {
+    if (try cli_app(allocator, init.io, parsed_args)) {
         return;
     }
-    try gui_app(allocator, parsed_args);
+    try gui_app(allocator, init.io, parsed_args);
 }
 
 /// Handle command-line-only modes and return whether execution
 /// should stop before launching the full app.
-fn cli_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !bool {
+fn cli_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !bool {
     if (!comptime Util.is_linux()) return false;
     const linux_args = parsed_args orelse return false;
 
     switch (linux_args) {
         .send => |send_cmd| {
             const ipc_command = IpcCommand.from_send_command(send_cmd);
-            const _ipc = try PlatformIpc.init(allocator, null);
+            const _ipc = try PlatformIpc.init(allocator, io, null);
             var ipc = _ipc.ipc();
             defer ipc.deinit();
 
@@ -69,7 +67,7 @@ fn cli_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !bool {
 
 /// Run the full Spacecap application, start global shortcuts + IPC server,
 /// and launch the UI/event loop.
-fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
+fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !void {
     _ = parsed_args;
     PlatformCaptureSetup.init();
     defer PlatformCaptureSetup.deinit();
@@ -77,26 +75,27 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     var sdl_vulkan_extensions = try sdl.get_sdl_vulkan_extensions(allocator);
     defer sdl_vulkan_extensions.deinit();
 
-    const vulkan = try Vulkan.init(allocator, sdl_vulkan_extensions.list.items);
+    const vulkan = try Vulkan.init(allocator, io, sdl_vulkan_extensions.list.items);
     defer vulkan.deinit();
 
     // TODO: create dropdown selector in UI to select capture method when more are implemented.
-    const platform_video_capture = try PlatformVideoCapture.init(allocator, vulkan);
+    const platform_video_capture = try PlatformVideoCapture.init(allocator, io, vulkan);
     defer platform_video_capture.deinit();
 
-    const platform_audio_capture = try PlatformAudioCapture.init(allocator);
+    const platform_audio_capture = try PlatformAudioCapture.init(allocator, io);
     defer platform_audio_capture.deinit();
 
     var platform_file_picker = try PlatformFilePicker.init();
     defer platform_file_picker.deinit();
 
-    const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
+    const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator, io);
     defer platform_global_shortcuts.deinit();
     var global_shortcuts = platform_global_shortcuts.global_shortcuts();
     try global_shortcuts.run();
 
     var store = try Store.init(
         allocator,
+        io,
         vulkan,
         platform_file_picker.file_picker(),
         platform_audio_capture.audio_capture(),
@@ -113,12 +112,12 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
         }
     }.run, .{store});
 
-    const _ipc = try PlatformIpc.init(allocator, store);
+    const _ipc = try PlatformIpc.init(allocator, io, store);
     var ipc = _ipc.ipc();
     try ipc.start();
     defer ipc.deinit();
 
-    const ui = try UI.init(allocator, store, vulkan);
+    const ui = try UI.init(allocator, io, store, vulkan);
     defer ui.deinit();
 
     store_thread.join();

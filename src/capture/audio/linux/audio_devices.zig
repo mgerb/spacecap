@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const ArenaAllocator = std.heap.ArenaAllocator;
-const c = @import("../../../common/linux/pipewire_include.zig").c;
 const pw = @import("pipewire").c;
 const AudioDeviceList = @import("../audio_capture.zig").AudioDeviceList;
 const AudioDeviceType = @import("../audio_capture.zig").AudioDeviceType;
@@ -84,7 +83,7 @@ const ListData = struct {
     }
 };
 
-pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
+pub fn list_audio_devices(allocator: std.mem.Allocator, io: std.Io) !AudioDeviceList {
     const list_loop = pw.pw_main_loop_new(null) orelse return error.PwMainLoopNew;
     defer pw.pw_main_loop_destroy(list_loop);
 
@@ -108,15 +107,17 @@ pub fn listAudioDevices(allocator: std.mem.Allocator) !AudioDeviceList {
     _ = pw.pw_registry_add_listener(registry, &registry_listener, &registry_events, &list_data);
 
     const Quitter = struct {
-        fn run(loop: ?*pw.pw_main_loop) void {
-            std.Thread.sleep(500 * std.time.ns_per_ms);
+        fn run(_io: std.Io, loop: ?*pw.pw_main_loop) void {
+            std.Io.sleep(_io, .fromNanoseconds(500 * std.time.ns_per_ms), .awake) catch |err| {
+                log.err("[list_audio_devices] sleep error: {}", .{err});
+            };
             if (loop) |list_loop_ptr| {
                 _ = pw.pw_main_loop_quit(list_loop_ptr);
             }
         }
     };
 
-    const quit_thread = try std.Thread.spawn(.{}, Quitter.run, .{list_loop});
+    const quit_thread = try std.Thread.spawn(.{}, Quitter.run, .{ io, list_loop });
     defer quit_thread.join();
 
     _ = pw.pw_main_loop_run(list_loop);
@@ -215,7 +216,7 @@ fn on_registry_global(
         .node_name = node_name_copy,
         .node_desc = node_desc_copy,
     };
-    list_data.devices.append(allocator, device) catch {};
+    list_data.devices.append(allocator, device) catch unreachable;
 }
 
 fn name_matches(name: ?[]const u8, node_name: []const u8) bool {
@@ -251,7 +252,7 @@ fn on_metadata_property(
     }
 
     const value_slice = std.mem.span(value);
-    list_data.set_default(key_slice, value_slice) catch {};
+    list_data.set_default(key_slice, value_slice) catch unreachable;
     return 0;
 }
 

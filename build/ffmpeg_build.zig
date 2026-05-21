@@ -51,8 +51,8 @@ pub fn build_windows(b: *std.Build) FfmpegBuild {
 
 pub fn link_libs(exe: *std.Build.Step.Compile, ffmpeg_build: FfmpegBuild) void {
     exe.step.dependOn(ffmpeg_build.step);
-    exe.addIncludePath(ffmpeg_build.include_dir);
-    exe.addLibraryPath(ffmpeg_build.lib_dir);
+    exe.root_module.addIncludePath(ffmpeg_build.include_dir);
+    exe.root_module.addLibraryPath(ffmpeg_build.lib_dir);
     exe.root_module.linkSystemLibrary("avformat", .{ .preferred_link_mode = .static });
     exe.root_module.linkSystemLibrary("avcodec", .{ .preferred_link_mode = .static });
     exe.root_module.linkSystemLibrary("avdevice", .{ .preferred_link_mode = .static });

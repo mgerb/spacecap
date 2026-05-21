@@ -55,7 +55,7 @@ fn add_shared_dependencies(
         },
     ).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
-    exe.addIncludePath(vulkan_headers.path(""));
+    exe.root_module.addIncludePath(vulkan_headers.path(""));
 
     // NOTE: SDL3 is statically linked by imguiz.
     const imguiz = b.dependency("imguiz", .{
@@ -175,28 +175,26 @@ fn build_windows(
         .use_llvm = true,
     });
     // TODO: seems like rpath is not working
-    exe.addRPath(b.path("./lib"));
+    exe.root_module.addRPath(b.path("./lib"));
 
     try add_shared_dependencies(allocator, b, exe, target, optimize);
 
-    exe.addLibraryPath(.{ .cwd_relative = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").? });
+    const vulkan_sdk_path_windows = b.graph.environ_map.get("VULKAN_SDK_PATH_WINDOWS").?;
+    exe.root_module.addLibraryPath(.{ .cwd_relative = vulkan_sdk_path_windows });
 
     try install_and_link_system_library(.{
         .allocator = allocator,
         .b = b,
         .exe = exe,
-        .source_dir = std.posix.getenv("VULKAN_SDK_PATH_WINDOWS").?,
+        .source_dir = vulkan_sdk_path_windows,
         .lib_name = "vulkan-1",
         .target = .windows,
     });
 
     // All windows machines should be able to link to this by default
-    exe.linkSystemLibrary("gdi32");
+    exe.root_module.linkSystemLibrary("gdi32", .{});
     // Required for ffmpeg.
-    exe.linkSystemLibrary("bcrypt");
-
-    const zigwin32 = b.dependency("zigwin32", .{});
-    exe.root_module.addImport("win32", zigwin32.module("win32"));
+    exe.root_module.linkSystemLibrary("bcrypt", .{});
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "windows" } },
@@ -268,12 +266,12 @@ fn build_linux_app_image(
 ) *std.Build.Step {
     const appimage_step = b.step("appimage", "Build Linux AppImage");
 
-    const file = std.fs.cwd().openFile("./build_app_image.sh", .{ .mode = .read_only }) catch unreachable;
-    defer file.close();
-    const stat = file.stat() catch unreachable;
-
-    var reader = file.reader(&.{});
-    const buffer = reader.interface.readAlloc(allocator, stat.size) catch unreachable;
+    const buffer = b.build_root.handle.readFileAlloc(
+        b.graph.io,
+        "build_app_image.sh",
+        allocator,
+        .limited(1024 * 1024),
+    ) catch unreachable;
     defer allocator.free(buffer);
 
     const cmd = b.addSystemCommand(&.{ "bash", "-lc", buffer });
@@ -302,6 +300,7 @@ fn build_unit_tests_default(
             .root_source_file = b.path(f),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         });
         module.addOptions("build_options", options);
         const exe = b.addTest(.{
@@ -310,8 +309,6 @@ fn build_unit_tests_default(
             // Keep test linking behavior aligned with Linux executable builds.
             .use_llvm = true,
         });
-
-        exe.linkLibC();
 
         try add_shared_dependencies(allocator, b, exe, target, optimize);
         try add_linux_dependencies(allocator, b, exe, target, optimize);
@@ -327,9 +324,7 @@ fn build_unit_tests_default(
 
 // NOTE: build only works on linux for now
 pub fn build(b: *std.Build) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = b.allocator;
 
     // Build Options
     const nix_option = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
@@ -367,7 +362,13 @@ pub fn build(b: *std.Build) !void {
         options,
     );
 
-    const linux_target = if (nix_option == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
+    const linux_target = if (nix_option == true) b.standardTargetOptions(.{
+        // TODO: Remove this when the zig pipewire module is fixed.
+        // https://github.com/allyourcodebase/pipewire/issues/6
+        .default_target = .{
+            .glibc_version = .{ .major = 2, .minor = 42, .patch = 0 },
+        },
+    }) else b.resolveTargetQuery(.{
         .os_tag = .linux,
         .abi = .gnu,
         .cpu_arch = .x86_64,

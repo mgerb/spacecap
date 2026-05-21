@@ -4,13 +4,15 @@ const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 pub const WindowsGlobalShortcuts = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
+    io: std.Io,
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,
+            .io = io,
         };
 
         return self;

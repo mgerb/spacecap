@@ -103,7 +103,7 @@ const TestUtil = struct {
     }
 };
 
-test "AudioMixer.mix mixes a single aligned mono chunk" {
+test "AudioMixer - mix mixes a single aligned mono chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);
@@ -120,7 +120,7 @@ test "AudioMixer.mix mixes a single aligned mono chunk" {
     }
 }
 
-test "AudioMixer.mix mixes a single aligned stereo chunk" {
+test "AudioMixer - mix mixes a single aligned stereo chunk" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);
@@ -137,7 +137,7 @@ test "AudioMixer.mix mixes a single aligned stereo chunk" {
     }
 }
 
-test "AudioMixer.mix applies capture gain" {
+test "AudioMixer - mix applies capture gain" {
     const allocator = std.testing.allocator;
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);

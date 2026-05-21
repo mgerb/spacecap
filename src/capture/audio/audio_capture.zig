@@ -74,7 +74,7 @@ pub const AudioCapture = struct {
     const VTable = struct {
         receive_data: *const fn (*anyopaque) ChanError!Arc(AudioCaptureData),
         stop: *const fn (*anyopaque) anyerror!void,
-        get_available_devices: *const fn (*anyopaque, std.mem.Allocator) anyerror!AudioDeviceList,
+        get_available_devices: *const fn (*anyopaque, std.mem.Allocator, std.Io) anyerror!AudioDeviceList,
         update_selected_devices: *const fn (*anyopaque, []const SelectedAudioDevice) anyerror!void,
     };
 
@@ -87,8 +87,8 @@ pub const AudioCapture = struct {
         return self.vtable.stop(self.ptr);
     }
 
-    pub fn get_available_devices(self: *Self, allocator: std.mem.Allocator) !AudioDeviceList {
-        return self.vtable.get_available_devices(self.ptr, allocator);
+    pub fn get_available_devices(self: *Self, allocator: std.mem.Allocator, io: std.Io) !AudioDeviceList {
+        return self.vtable.get_available_devices(self.ptr, allocator, io);
     }
 
     pub fn update_selected_devices(self: *Self, devices: []const SelectedAudioDevice) !void {

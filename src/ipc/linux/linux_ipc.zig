@@ -10,13 +10,15 @@ pub const LinuxIpc = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     store: ?*Store,
     server: ?IpcServer = null,
 
-    pub fn init(allocator: std.mem.Allocator, store: ?*Store) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, store: ?*Store) !*Self {
         const self = try allocator.create(Self);
         self.* = .{
             .allocator = allocator,
+            .io = io,
             .store = store,
             .server = null,
         };
@@ -25,11 +27,11 @@ pub const LinuxIpc = struct {
 
     pub fn deinit(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
+        defer self.allocator.destroy(self);
         if (self.server) |*server| {
             server.deinit();
             self.server = null;
         }
-        self.allocator.destroy(self);
     }
 
     pub fn start(context: *anyopaque) !void {
@@ -39,7 +41,7 @@ pub const LinuxIpc = struct {
         }
 
         const store = self.store orelse return error.StoreRequired;
-        self.server = try IpcServer.init(self.allocator, store);
+        self.server = try IpcServer.init(self.allocator, self.io, store);
         errdefer {
             if (self.server) |*server| {
                 server.deinit();
@@ -51,7 +53,7 @@ pub const LinuxIpc = struct {
 
     pub fn send_command(context: *anyopaque, command: IpcCommand) !void {
         const self: *Self = @ptrCast(@alignCast(context));
-        try IpcServer.send_ipc_command(self.allocator, command);
+        try IpcServer.send_ipc_command(self.allocator, self.io, command);
     }
 
     pub fn ipc(self: *Self) Ipc {

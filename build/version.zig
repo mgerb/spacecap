@@ -34,17 +34,17 @@ const BuildZonFile = struct {
 };
 
 pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version: bool) !PackageVersion {
-    const manifest_source = try std.fs.cwd().readFileAllocOptions(
-        allocator,
+    const manifest_source = try b.build_root.handle.readFileAllocOptions(
+        b.graph.io,
         "build.zig.zon",
-        1024 * 1024 * 10,
-        null,
+        allocator,
+        .limited(1024 * 1024 * 10),
         .of(u8),
         0,
     );
     defer allocator.free(manifest_source);
 
-    const build_zon_file = try std.zon.parse.fromSlice(BuildZonFile, allocator, manifest_source, null, .{
+    const build_zon_file = try std.zon.parse.fromSliceAlloc(BuildZonFile, allocator, manifest_source, null, .{
         .ignore_unknown_fields = true,
     });
     defer std.zon.parse.free(allocator, build_zon_file);
@@ -88,8 +88,7 @@ fn get_nightly_version(
         return allocator.dupe(u8, release_version);
     }
 
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
+    const result = std.process.run(allocator, b.graph.io, .{
         .argv = &.{
             "git",
             "-C",
@@ -111,7 +110,7 @@ fn get_nightly_version(
     defer allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 log.warn("`git describe` exited with code {}, using release version '{s}'", .{ code, release_version });
                 if (result.stdout.len > 0) {

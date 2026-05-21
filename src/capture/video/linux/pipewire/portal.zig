@@ -5,9 +5,7 @@ const TokenStorage = @import("../../../../common/linux/token_storage.zig");
 
 const log = std.log.scoped(.portal);
 
-const c = @cImport({
-    @cInclude("libportal/portal.h");
-});
+const c = @import("../../../../tmp_bindings/libportal_bindings.zig");
 
 fn free_maybe(ptr: ?*anyopaque) void {
     if (ptr != null) {
@@ -48,20 +46,22 @@ pub const Portal = struct {
     // Successful restore starts should return quickly. If they stall, assume the
     // portal is falling back to the interactive picker and cancel instead.
     allocator: std.mem.Allocator,
+    io: std.Io,
     portal: *c.XdpPortal,
     session: ?*c.XdpSession = null,
     restore_token: ?[]u8 = null,
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const portal = c.xdp_portal_new() orelse return error.XdpPortalNewFailed;
 
-        const restore_token = TokenStorage.load_token(allocator, "restore_token") catch null;
+        const restore_token = TokenStorage.load_token(allocator, io, "restore_token") catch null;
 
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,
+            .io = io,
             .portal = portal,
             .restore_token = restore_token,
         };
@@ -91,6 +91,7 @@ pub const Portal = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         if (self.session) |session| {
             c.xdp_session_close(session);
             c.g_object_unref(session);
@@ -103,8 +104,6 @@ pub const Portal = struct {
             self.allocator.free(token);
             self.restore_token = null;
         }
-
-        self.allocator.destroy(self);
     }
 
     const CreateSessionContext = struct {
@@ -352,7 +351,7 @@ pub const Portal = struct {
         }
         self.restore_token = duped;
 
-        TokenStorage.save_token(self.allocator, "restore_token", duped[0..duped.len]) catch |err| {
+        TokenStorage.save_token(self.allocator, self.io, "restore_token", duped[0..duped.len]) catch |err| {
             log.err("failed to save restore token: {}", .{err});
         };
     }
@@ -362,7 +361,7 @@ pub const Portal = struct {
             self.allocator.free(token);
             self.restore_token = null;
         }
-        TokenStorage.delete_token(self.allocator, "restore_token") catch |err| {
+        TokenStorage.delete_token(self.allocator, self.io, "restore_token") catch |err| {
             log.warn("failed to delete restore token: {}", .{err});
         };
     }

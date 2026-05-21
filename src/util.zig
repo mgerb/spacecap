@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.util);
+const Env = @import("./env.zig");
 
 pub const DEBUG = @import("builtin").mode == .Debug;
 pub var test_app_data_dir: ?[]const u8 = null;
@@ -13,8 +14,8 @@ pub fn is_linux() bool {
     return @import("builtin").os.tag == .linux;
 }
 
-pub fn print_elapsed(start_time: i128, prefix: []const u8) void {
-    const end = std.time.nanoTimestamp();
+pub fn print_elapsed(io: std.Io, start_time: i128, prefix: []const u8) void {
+    const end: i128 = @intCast(std.Io.Clock.real.now(io).nanoseconds);
     const total_time = @divFloor(end - start_time, @as(i128, @intCast(std.time.ns_per_ms)));
     std.debug.print("[{s}] time elapsed {}ms\n", .{ prefix, total_time });
 }
@@ -48,13 +49,14 @@ pub fn format_duration_label(allocator: std.mem.Allocator, total_seconds: u32) !
 /// Write bgrx data to a .bmp file - used for testing
 pub fn write_bmp_bgrx(
     allocator: std.mem.Allocator,
+    io: std.Io,
     file_name: []const u8,
     width: u32,
     height: u32,
     bgrx_data: []const u8, // expected to be width * height * 4
 ) !void {
-    const file = try std.fs.cwd().createFile(file_name, .{});
-    defer file.close();
+    const file = try std.Io.Dir.cwd().createFile(io, file_name, .{});
+    defer file.close(io);
 
     const row_bytes = width * 4;
     const pad_bytes: u8 = @intCast((4 - (row_bytes % 4)) % 4);
@@ -65,7 +67,8 @@ pub fn write_bmp_bgrx(
     const info_header_size = 40;
     const file_size = file_header_size + info_header_size + pixel_data_size;
 
-    var writer = file.writer(&.{});
+    var writer_buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &writer_buffer);
 
     // BITMAPFILEHEADER (14 bytes)
     try writer.interface.writeAll(&[_]u8{
@@ -106,6 +109,8 @@ pub fn write_bmp_bgrx(
 
         try writer.interface.writeAll(row_buf);
     }
+
+    try writer.interface.flush();
 }
 
 pub fn check_fd(fd: i64) !void {
@@ -124,7 +129,7 @@ pub fn check_fd(fd: i64) !void {
 /// - Linux: $XDG_CONFIG_HOME/spacecap or $HOME/.config/spacecap
 /// The returned path is owned by the caller and must be freed.
 /// This function will create the directory if it does not exist.
-pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
+pub fn get_app_data_dir(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
     if (@import("builtin").is_test) {
         const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
         // NOTE: See test.zig for usage.
@@ -135,10 +140,10 @@ pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
     // TODO: Test on Windows.
     const base_dir: []u8 = if (comptime is_windows()) blk: {
         // On Windows, use %APPDATA%
-        break :blk try std.process.getEnvVarOwned(allocator, "APPDATA");
+        break :blk try Env.get_env_var_owned(allocator, "APPDATA");
     } else if (comptime is_linux()) blk: {
         // On Linux, use $XDG_CONFIG_HOME or $HOME/.config
-        if (std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME")) |xdg_config_home| {
+        if (Env.get_env_var_owned(allocator, "XDG_CONFIG_HOME")) |xdg_config_home| {
             if (xdg_config_home.len > 0 and std.fs.path.isAbsolute(xdg_config_home)) {
                 break :blk xdg_config_home;
             }
@@ -148,7 +153,7 @@ pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
             else => return err,
         }
 
-        const home = try std.process.getEnvVarOwned(allocator, "HOME");
+        const home = try Env.get_env_var_owned(allocator, "HOME");
         defer allocator.free(home);
         break :blk try std.fs.path.join(allocator, &.{ home, ".config" });
     } else {
@@ -159,7 +164,7 @@ pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
     const app_config_dir = try std.fs.path.join(allocator, &.{ base_dir, "spacecap" });
     errdefer allocator.free(app_config_dir);
 
-    try std.fs.cwd().makePath(app_config_dir);
+    try std.Io.Dir.cwd().createDirPath(io, app_config_dir);
 
     return app_config_dir;
 }
@@ -169,18 +174,24 @@ pub fn get_app_data_dir(allocator: std.mem.Allocator) ![]u8 {
 //
 // Caller owns the memory.
 // e.g. ~/Videos/spacecap
-pub fn get_default_video_output_dir(allocator: std.mem.Allocator) ![]u8 {
+pub fn get_default_video_output_dir(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
+    if (@import("builtin").is_test) {
+        const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
+        assert(TEST_APP_DATA_DIR != null);
+        return allocator.dupe(u8, TEST_APP_DATA_DIR.?);
+    }
+
     // TODO: Test on Windows.
     const home_dir: ?[]u8 = if (comptime is_windows()) blk: {
-        break :blk std.process.getEnvVarOwned(allocator, "USERPROFILE") catch |err| {
+        break :blk Env.get_env_var_owned(allocator, "USERPROFILE") catch |err| {
             log.err("[get_default_video_output_dir] failed to read USERPROFILE: {}", .{err});
-            break :blk std.process.getEnvVarOwned(allocator, "HOME") catch |home_err| {
+            break :blk Env.get_env_var_owned(allocator, "HOME") catch |home_err| {
                 log.err("[get_default_video_output_dir] failed to read HOME: {}", .{home_err});
                 break :blk null;
             };
         };
     } else if (comptime is_linux()) blk: {
-        break :blk std.process.getEnvVarOwned(allocator, "HOME") catch |err| {
+        break :blk Env.get_env_var_owned(allocator, "HOME") catch |err| {
             log.err("[get_default_video_output_dir] failed to read HOME: {}", .{err});
             break :blk null;
         };
@@ -194,7 +205,7 @@ pub fn get_default_video_output_dir(allocator: std.mem.Allocator) ![]u8 {
         const output_dir = try std.fs.path.join(allocator, &.{ _home_dir, "Videos", "spacecap" });
         errdefer allocator.free(output_dir);
 
-        if (std.fs.cwd().makePath(output_dir)) {
+        if (std.Io.Dir.cwd().createDirPath(io, output_dir)) {
             return output_dir;
         } else |err| {
             log.err("[get_default_video_output_dir] failed to create output directory {s}: {}", .{ output_dir, err });
@@ -203,7 +214,7 @@ pub fn get_default_video_output_dir(allocator: std.mem.Allocator) ![]u8 {
     }
 
     log.warn("[get_default_video_output_dir] falling back to current working directory", .{});
-    return std.process.getCwdAlloc(allocator) catch |err| {
+    return std.process.currentPathAlloc(io, allocator) catch |err| {
         log.err("[get_default_video_output_dir] failed to get current working directory: {}", .{err});
         return allocator.dupe(u8, ".");
     };
@@ -225,7 +236,7 @@ pub fn LinkedListIterator(comptime T: type) type {
     };
 }
 
-test "format_duration_label formats compact duration strings" {
+test "Util - format_duration_label formats compact duration strings" {
     const allocator = std.testing.allocator;
     const cases = [_]struct {
         seconds: u32,
@@ -249,7 +260,7 @@ test "format_duration_label formats compact duration strings" {
     }
 }
 
-test "LinkedListIterator iterates doubly linked list data in order" {
+test "Util - LinkedListIterator iterates doubly linked list data in order" {
     const TestNode = struct {
         value: u32,
         node: std.DoublyLinkedList.Node = .{},
@@ -271,7 +282,7 @@ test "LinkedListIterator iterates doubly linked list data in order" {
     try std.testing.expectEqual(null, iter.next());
 }
 
-test "LinkedListIterator iterates singly linked list data in order" {
+test "Util - LinkedListIterator iterates singly linked list data in order" {
     const TestNode = struct {
         value: u32,
         node: std.SinglyLinkedList.Node = .{},

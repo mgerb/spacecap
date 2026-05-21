@@ -13,7 +13,7 @@ pub const FilePicker = struct {
     vtable: *const VTable,
 
     const VTable = struct {
-        open_directory_picker: *const fn (*anyopaque, Allocator, ?[]const u8) anyerror![]u8,
+        open_directory_picker: *const fn (*anyopaque, Allocator, std.Io, ?[]const u8) anyerror![]u8,
     };
 
     /// Open a directory picker and return the selected directory path.
@@ -22,8 +22,9 @@ pub const FilePicker = struct {
     pub fn open_directory_picker(
         self: *Self,
         allocator: Allocator,
+        io: std.Io,
         initial_directory: ?[]const u8,
     ) (FilePickerError || anyerror)![]u8 {
-        return self.vtable.open_directory_picker(self.ptr, allocator, initial_directory);
+        return self.vtable.open_directory_picker(self.ptr, allocator, io, initial_directory);
     }
 };

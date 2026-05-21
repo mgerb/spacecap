@@ -44,44 +44,44 @@ pub const Args = if (Util.is_linux())
 else
     struct {};
 
-pub fn parse(allocator: std.mem.Allocator) ?Args {
+pub fn parse(init: std.process.Init) ?Args {
     if (comptime Util.is_linux()) {
-        return parse_linux(allocator);
+        return parse_linux(init);
     } else if (comptime Util.is_windows()) {
-        return parse_windows(allocator);
+        return parse_windows(init);
     } else {
         log.err("unsupported platform", .{});
         unreachable;
     }
 }
 
-fn print_version() void {
-    var stdout = std.fs.File.stdout().writer(&.{});
+fn print_version(io: std.Io) void {
+    var stdout = std.Io.File.stdout().writer(io, &.{});
     stdout.interface.print("{s}\n", .{build_options.version}) catch unreachable;
 }
 
-fn parse_linux(allocator: std.mem.Allocator) ?Args {
+fn parse_linux(init: std.process.Init) ?Args {
     const parsers = comptime .{
         .command = clap.parsers.enumeration(SendCommand),
     };
 
-    var res = clap.parse(clap.Help, &linux_params_parsed, parsers, .{
-        .allocator = allocator,
+    var res = clap.parse(clap.Help, &linux_params_parsed, parsers, init.minimal.args, .{
+        .allocator = init.gpa,
     }) catch |err| {
         log.err("Unable to parse args: {}", .{err});
-        clap.helpToFile(.stderr(), clap.Help, &linux_params_parsed, .{ .markdown_lite = false }) catch {};
+        clap.helpToFile(init.io, .stderr(), clap.Help, &linux_params_parsed, .{ .markdown_lite = false }) catch {};
         std.process.exit(1);
     };
     defer res.deinit();
 
     if (res.args.help > 0) {
-        print_version();
-        clap.helpToFile(.stdout(), clap.Help, &linux_params_parsed, .{ .markdown_lite = false }) catch {};
+        print_version(init.io);
+        clap.helpToFile(init.io, .stdout(), clap.Help, &linux_params_parsed, .{ .markdown_lite = false }) catch {};
         std.process.exit(0);
     }
 
     if (res.args.version > 0) {
-        print_version();
+        print_version(init.io);
         std.process.exit(0);
     }
 
@@ -90,24 +90,24 @@ fn parse_linux(allocator: std.mem.Allocator) ?Args {
     return null;
 }
 
-fn parse_windows(allocator: std.mem.Allocator) ?Args {
-    var res = clap.parse(clap.Help, &windows_params_parsed, comptime .{}, .{
-        .allocator = allocator,
+fn parse_windows(init: std.process.Init) ?Args {
+    var res = clap.parse(clap.Help, &windows_params_parsed, comptime .{}, init.minimal.args, .{
+        .allocator = init.gpa,
     }) catch |err| {
         log.err("Unable to parse args: {}", .{err});
-        clap.helpToFile(.stderr(), clap.Help, &windows_params_parsed, .{}) catch {};
+        clap.helpToFile(init.io, .stderr(), clap.Help, &windows_params_parsed, .{}) catch {};
         std.process.exit(1);
     };
     defer res.deinit();
 
     if (res.args.help > 0) {
-        print_version();
-        clap.helpToFile(.stdout(), clap.Help, &windows_params_parsed, .{}) catch {};
+        print_version(init.io);
+        clap.helpToFile(init.io, .stdout(), clap.Help, &windows_params_parsed, .{}) catch {};
         std.process.exit(0);
     }
 
     if (res.args.version > 0) {
-        print_version();
+        print_version(init.io);
         std.process.exit(0);
     }
 

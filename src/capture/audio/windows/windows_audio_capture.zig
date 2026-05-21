@@ -10,23 +10,25 @@ const Arc = @import("../../../arc.zig").Arc;
 pub const WindowsAudioCapture = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
+    io: std.Io,
     data_chan: AudioCaptureBufferedChan,
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,
-            .data_chan = try .init(allocator),
+            .io = io,
+            .data_chan = try .init(allocator, io),
         };
 
         return self;
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         self.data_chan.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn receive_data(context: *anyopaque) ChanError!Arc(AudioCaptureData) {
@@ -39,7 +41,7 @@ pub const WindowsAudioCapture = struct {
         self.data_chan.close(.{ .drain = true });
     }
 
-    pub fn get_available_devices(context: *anyopaque, allocator: std.mem.Allocator) !AudioDeviceList {
+    pub fn get_available_devices(context: *anyopaque, allocator: std.mem.Allocator, _: std.Io) !AudioDeviceList {
         _ = context;
         return AudioDeviceList.init(allocator);
     }

@@ -76,7 +76,7 @@ pub const DeviceCandidate = struct {
 pub const Queue = struct {
     handle: vk.Queue,
     family: u32,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     pub fn init(device: Device, family: u32) Queue {
         return .{
@@ -90,6 +90,7 @@ pub const Vulkan = struct {
     const log = std.log.scoped(.Vulkan);
     const Self = @This();
     allocator: std.mem.Allocator,
+    io: std.Io,
     vkb: BaseDispatch,
     instance: Instance,
     device: Device,
@@ -102,19 +103,20 @@ pub const Vulkan = struct {
 
     video_encoder: ?*VulkanVideoEncoder = null,
     /// Ring buffer that holds the preview images that are rendered on the UI.
-    capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
+    capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer),
     /// We need to create textures to render the capture preview.
     /// They will be stored here so that we don't couple the UI
     /// to the vulkan image ring buffer.
     capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, Arc(VulkanCapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
     /// in which the encoded can grab from.
-    capture_ring_buffer: Mutex(?*VulkanImageRingBuffer) = .init(null),
+    capture_ring_buffer: Mutex(?*VulkanImageRingBuffer),
 
     /// The window used to render the UI with imgui
     window: ?imguiz.ImGui_ImplVulkanH_Window = null,
     pub fn init(
         allocator: std.mem.Allocator,
+        io: std.Io,
         extra_instance_extensions: ?[][*:0]const u8,
     ) !*Self {
         if (extra_instance_extensions) |e| {
@@ -221,6 +223,7 @@ pub const Vulkan = struct {
         errdefer allocator.destroy(self);
         self.* = Self{
             .allocator = allocator,
+            .io = io,
             .vkb = vkbd,
             .instance = instance,
             .debug_messenger = debug_messenger,
@@ -230,13 +233,16 @@ pub const Vulkan = struct {
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
+            .capture_preview_ring_buffer = .init(io, null),
             .capture_preview_textures = .init(allocator),
+            .capture_ring_buffer = .init(io, null),
         };
 
         return self;
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         self.deinit_video_encoder();
         self.destroy_capture_preview_ring_buffer();
         self.destroy_capture_ring_buffer();
@@ -251,7 +257,6 @@ pub const Vulkan = struct {
 
         self.allocator.destroy(self.device.wrapper);
         self.allocator.destroy(self.instance.wrapper);
-        self.allocator.destroy(self);
     }
 
     pub fn init_video_encoder(
@@ -309,6 +314,7 @@ pub const Vulkan = struct {
         self.capture_preview_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
                 .allocator = self.allocator,
+                .io = self.io,
                 .vulkan = self,
                 .dst_access_mask = .{ .shader_read_bit = true },
                 .dst_stage_mask = .{ .fragment_shader_bit = true },
@@ -344,6 +350,7 @@ pub const Vulkan = struct {
         self.capture_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
                 .allocator = self.allocator,
+                .io = self.io,
                 .vulkan = self,
                 .dst_access_mask = .{ .transfer_write_bit = true },
                 .dst_stage_mask = .{ .all_transfer_bit = true },
@@ -679,18 +686,18 @@ pub const Vulkan = struct {
         // It should never get to this point. The caller of this function should always have valid queues.
         assert(_queue != null);
 
-        _queue.?.mutex.lock();
-        defer _queue.?.mutex.unlock();
+        _queue.?.mutex.lockUncancelable(self.io);
+        defer _queue.?.mutex.unlock(self.io);
         if (args.fence != .null_handle) {
-            try self.device.resetFences(1, @ptrCast(&args.fence));
+            try self.device.resetFences(&.{args.fence});
         }
-        try self.device.queueSubmit(_queue.?.handle, @intCast(submit_info.len), submit_info.ptr, args.fence);
+        try self.device.queueSubmit(_queue.?.handle, submit_info, args.fence);
     }
 
     /// Lock graphics mutex and present.
     pub fn queue_present_khr(self: *Self, present_info: *const vk.PresentInfoKHR) !void {
-        self.graphics_queue.mutex.lock();
-        defer self.graphics_queue.mutex.unlock();
+        self.graphics_queue.mutex.lockUncancelable(self.io);
+        defer self.graphics_queue.mutex.unlock(self.io);
         _ = try self.device.queuePresentKHR(self.graphics_queue.handle, present_info);
     }
 
@@ -699,7 +706,12 @@ pub const Vulkan = struct {
         if (self.window) |window| {
             for (0..@intCast(window.Frames.Size)) |i| {
                 const fd = window.Frames.Data[i];
-                _ = self.device.waitForFences(1, @ptrCast(&fd.Fence), .true, std.math.maxInt(u64)) catch |err| {
+                const fence: vk.Fence = @enumFromInt(@intFromPtr(fd.Fence.?));
+                _ = self.device.waitForFences(
+                    &.{fence},
+                    .true,
+                    std.math.maxInt(u64),
+                ) catch |err| {
                     log.err("[wait_for_ui_fences] err: {}", .{err});
                 };
             }
@@ -751,13 +763,12 @@ pub const Vulkan = struct {
             try wait_fences.append(self.allocator, encoder.compute_finished_fence);
         }
 
-        self.graphics_queue.mutex.lock();
-        errdefer self.graphics_queue.mutex.unlock();
+        self.graphics_queue.mutex.lockUncancelable(self.io);
+        errdefer self.graphics_queue.mutex.unlock(self.io);
 
         if (wait_fences.items.len > 0) {
             _ = try self.device.waitForFences(
-                @intCast(wait_fences.items.len),
-                wait_fences.items.ptr,
+                wait_fences.items,
                 .true,
                 std.math.maxInt(u64),
             );
@@ -767,7 +778,7 @@ pub const Vulkan = struct {
     }
 
     pub fn wait_for_all_graphics_fences_end(self: *Self) void {
-        self.graphics_queue.mutex.unlock();
+        self.graphics_queue.mutex.unlock(self.io);
     }
 
     /// Copy a vulkan image on the GPU.
@@ -856,8 +867,7 @@ pub const Vulkan = struct {
             dst_image,
             .transfer_dst_optimal,
             &clear_value,
-            1,
-            @ptrCast(&clear_range),
+            &.{clear_range},
         );
 
         const copy_width = @min(dst_width, src_width);
@@ -877,8 +887,7 @@ pub const Vulkan = struct {
             .transfer_src_optimal,
             dst_image,
             .transfer_dst_optimal,
-            1,
-            @ptrCast(&copy_region),
+            &.{copy_region},
         );
 
         // Transfer the source image back to its original layout.

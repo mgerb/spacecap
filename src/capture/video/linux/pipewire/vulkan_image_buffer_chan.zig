@@ -10,9 +10,9 @@ pub const VulkanImageBufferChan = struct {
     const Self = @This();
     chan: BufferedChan(Arc(VulkanImageBuffer), 1),
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
         return .{
-            .chan = try .init(allocator),
+            .chan = try .init(allocator, io),
         };
     }
 

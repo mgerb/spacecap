@@ -32,6 +32,7 @@ pub const Muxer = struct {
     };
 
     allocator: Allocator,
+    io: std.Io,
     fps: u32,
     format_context: *ffmpeg.AVFormatContext,
     file_name: [:0]u8,
@@ -47,6 +48,7 @@ pub const Muxer = struct {
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         file_name_prefix: []const u8,
         header_frame: []const u8,
         audio_codec_context: ?CodecContextInfo,
@@ -56,8 +58,8 @@ pub const Muxer = struct {
         output_directory: []const u8,
     ) !Self {
         var format_context: *ffmpeg.AVFormatContext = undefined;
-        try std.fs.cwd().makePath(output_directory);
-        const file_name = try get_output_file_name(allocator, file_name_prefix, output_directory);
+        try std.Io.Dir.cwd().createDirPath(io, output_directory);
+        const file_name = try get_output_file_name(allocator, io, file_name_prefix, output_directory);
         errdefer allocator.free(file_name);
 
         var ret = ffmpeg.avformat_alloc_output_context2(@ptrCast(&format_context), null, "mp4", file_name);
@@ -112,6 +114,7 @@ pub const Muxer = struct {
 
         return .{
             .allocator = allocator,
+            .io = io,
             .fps = fps,
             .format_context = format_context,
             .file_name = file_name,
@@ -301,10 +304,12 @@ pub const Muxer = struct {
 
 fn get_output_file_name(
     allocator: Allocator,
+    io: std.Io,
     file_name_prefix: []const u8,
     output_directory: []const u8,
 ) ![:0]u8 {
-    const base_name = try std.fmt.allocPrint(allocator, "{s}_{}.mp4", .{ file_name_prefix, std.time.nanoTimestamp() });
+    const timestamp_ns = std.Io.Clock.real.now(io).nanoseconds;
+    const base_name = try std.fmt.allocPrint(allocator, "{s}_{}.mp4", .{ file_name_prefix, timestamp_ns });
     defer allocator.free(base_name);
 
     const path = try std.fs.path.join(allocator, &.{ output_directory, base_name });
@@ -312,7 +317,7 @@ fn get_output_file_name(
     return allocator.dupeZ(u8, path);
 }
 
-test "applyJitterCorrectionToPts snaps small jitter to expected cadence" {
+test "Muxer - apply_jitter_correction_to_pts snaps small jitter to expected cadence" {
     const expected = 3_000;
     const previous = 2_000;
     const frame_duration = 1_000;
@@ -324,7 +329,7 @@ test "applyJitterCorrectionToPts snaps small jitter to expected cadence" {
     );
 }
 
-test "applyJitterCorrectionToPts preserves large capture gaps" {
+test "Muxer - apply_jitter_correction_to_pts preserves large capture gaps" {
     const previous = 2_000;
     const frame_duration = 1_000;
     const jitter_tolerance = 250;

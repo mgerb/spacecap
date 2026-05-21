@@ -8,8 +8,9 @@ pub fn Mutex(T: type) type {
 
         const Locked = struct {
             private: struct {
+                io: std.Io,
                 value: *T,
-                mutex: *std.Thread.Mutex,
+                mutex: *std.Io.Mutex,
             },
 
             pub fn unwrap(self: @This()) T {
@@ -21,7 +22,7 @@ pub fn Mutex(T: type) type {
             }
 
             pub fn unlock(self: @This()) void {
-                self.private.mutex.unlock();
+                self.private.mutex.unlock(self.private.io);
             }
 
             /// Helper function for setting the value.
@@ -31,13 +32,15 @@ pub fn Mutex(T: type) type {
         };
 
         private: struct {
-            mutex: std.Thread.Mutex = .{},
+            io: std.Io,
+            mutex: std.Io.Mutex = .init,
             value: T,
         },
 
-        pub fn init(value: T) Self {
+        pub fn init(io: std.Io, value: T) Self {
             return .{
                 .private = .{
+                    .io = io,
                     .value = value,
                 },
             };
@@ -57,9 +60,10 @@ pub fn Mutex(T: type) type {
         }
 
         pub fn lock(self: *Self) Locked {
-            self.private.mutex.lock();
+            self.private.mutex.lockUncancelable(self.private.io);
             return .{
                 .private = .{
+                    .io = self.private.io,
                     .mutex = &self.private.mutex,
                     .value = &self.private.value,
                 },
@@ -77,8 +81,8 @@ pub fn Mutex(T: type) type {
     };
 }
 
-test "Mutex lock unwrap and unlock" {
-    var mutex: Mutex(i32) = .init(41);
+test "Mutex - lock unwrap and unlock" {
+    var mutex: Mutex(i32) = .init(std.testing.io, 41);
 
     var locked = mutex.lock();
     defer locked.unlock();
@@ -88,8 +92,8 @@ test "Mutex lock unwrap and unlock" {
     try std.testing.expectEqual(42, locked.unwrap());
 }
 
-test "Mutex set updates value" {
-    var mutex: Mutex(i32) = .init(1);
+test "Mutex - set updates value" {
+    var mutex: Mutex(i32) = .init(std.testing.io, 1);
 
     mutex.set(5);
 
@@ -98,8 +102,8 @@ test "Mutex set updates value" {
     try std.testing.expectEqual(5, locked.unwrap());
 }
 
-test "Mutex serializes concurrent mutation" {
-    var mutex: Mutex(u32) = .init(0);
+test "Mutex - serializes concurrent mutation" {
+    var mutex: Mutex(u32) = .init(std.testing.io, 0);
 
     const thread_count = 4;
     const iterations = 10_000;

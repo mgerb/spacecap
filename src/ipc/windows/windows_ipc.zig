@@ -8,7 +8,7 @@ pub const WindowsIpc = struct {
 
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, store: ?*Store) !*Self {
+    pub fn init(allocator: std.mem.Allocator, _: std.Io, store: ?*Store) !*Self {
         _ = store;
         const self = try allocator.create(Self);
         self.* = .{

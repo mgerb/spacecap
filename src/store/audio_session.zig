@@ -1,10 +1,10 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const AudioReplayBuffer = @import("./audio_replay_buffer.zig");
+const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
 const Mutex = @import("../mutex.zig").Mutex;
-const AudioTimeline = @import("./audio_timeline.zig").AudioTimeline;
+const AudioTimeline = @import("../audio/audio_timeline.zig").AudioTimeline;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const SAMPLE_RATE = @import("../capture/audio/audio_capture.zig").SAMPLE_RATE;
 const CHANNELS = @import("../capture/audio/audio_capture.zig").CHANNELS;
@@ -12,35 +12,42 @@ const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").Select
 const UserSettings = @import("../store/user_settings.zig").UserSettings;
 const Store = @import("../store/store.zig").Store;
 const ChanError = @import("../channel.zig").ChanError;
-const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
-const CodecContextInfo = @import("./audio_timeline.zig").CodecContextInfo;
+const deinitPacketList = @import("../audio/audio_encoder.zig").deinit_packet_list;
+const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const Muxer = @import("../video/muxer.zig").Muxer;
 const Arc = @import("../arc.zig").Arc;
 
+/// AudioSession owns the main audio capture loop. All audio captured by the
+/// system goes through the AudioSession.
 pub const AudioSession = struct {
     const Self = @This();
     const log = std.log.scoped(.audio_session);
 
     allocator: Allocator,
+    io: std.Io,
     store: *Store,
     audio_capture: AudioCapture,
-    audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
-    audio_recording_timeline: Mutex(?*AudioTimeline) = .init(null),
+    audio_replay_buffer: Mutex(?*AudioReplayBuffer),
+    audio_recording_timeline: Mutex(?*AudioTimeline),
     capture_thread: ?std.Thread = null,
     /// A lookup map to get the device gain by ID.
     device_gain_map: Mutex(std.StringHashMap(f32)),
 
     pub fn init(
         allocator: Allocator,
+        io: std.Io,
         store: *Store,
         audio_capture: AudioCapture,
     ) !Self {
         return .{
             .allocator = allocator,
+            .io = io,
             .store = store,
             .audio_capture = audio_capture,
-            .device_gain_map = .init(.init(allocator)),
+            .audio_replay_buffer = .init(io, null),
+            .audio_recording_timeline = .init(io, null),
+            .device_gain_map = .init(io, .init(allocator)),
         };
     }
 
@@ -260,7 +267,7 @@ pub const AudioSession = struct {
         allocator: Allocator,
         user_settings_audio_devices: std.json.ArrayHashMap(UserSettings.AudioDeviceSettings),
     ) !AudioDevices {
-        var available_devices = try self.audio_capture.get_available_devices(allocator);
+        var available_devices = try self.audio_capture.get_available_devices(allocator, self.io);
         defer available_devices.deinit();
 
         var devices: AudioDevices = try .init(allocator);

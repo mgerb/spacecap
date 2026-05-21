@@ -4,7 +4,7 @@ const TokenManager = @import("../../common/linux/token_manager.zig");
 const FilePicker = @import("../file_picker.zig").FilePicker;
 const FilePickerError = @import("../file_picker.zig").FilePickerError;
 
-const c = @import("../../common/linux/gio.zig").c;
+const c = @import("../../tmp_bindings/gio_bindings.zig");
 
 const log = std.log.scoped(.xdg_desktop_portal_file_picker);
 
@@ -120,11 +120,12 @@ pub const XdgDesktopPortalFilePicker = struct {
     pub fn open_directory_picker(
         context: *anyopaque,
         allocator: Allocator,
+        io: std.Io,
         initial_directory: ?[]const u8,
     ) ![]u8 {
         const self: *Self = @ptrCast(@alignCast(context));
 
-        const request_token = try TokenManager.generate_token(allocator);
+        const request_token = try TokenManager.generate_token(allocator, io);
         defer allocator.free(request_token);
 
         const initial_directory_z = if (initial_directory) |directory|

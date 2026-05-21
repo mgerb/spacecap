@@ -16,13 +16,15 @@ pub const LinuxPipewireDmaCapture = struct {
     const log = std.log.scoped(.LinuxPipewireDmaCapture);
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     vulkan: *Vulkan,
     pipewire: ?*PipewireVideo = null,
 
-    pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, vulkan: *Vulkan) !*Self {
         const self = try allocator.create(Self);
         self.* = Self{
             .allocator = allocator,
+            .io = io,
             .vulkan = vulkan,
         };
 
@@ -40,6 +42,7 @@ pub const LinuxPipewireDmaCapture = struct {
 
         self.pipewire = try PipewireVideo.init(
             self.allocator,
+            self.io,
             self.vulkan,
         );
         errdefer {
@@ -60,7 +63,7 @@ pub const LinuxPipewireDmaCapture = struct {
 
     pub fn should_restore_capture_session(context: *anyopaque) !bool {
         const self: *Self = @ptrCast(@alignCast(context));
-        const restore_token = TokenStorage.load_token(self.allocator, "restore_token") catch |err| {
+        const restore_token = TokenStorage.load_token(self.allocator, self.io, "restore_token") catch |err| {
             log.err("failed to load restore token: {}", .{err});
             return false;
         };
@@ -114,11 +117,11 @@ pub const LinuxPipewireDmaCapture = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         if (self.pipewire) |pipewire| {
             pipewire.deinit();
             self.pipewire = null;
         }
-        self.allocator.destroy(self);
     }
 
     pub fn video_capture(self: *Self) VideoCapture {

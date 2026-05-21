@@ -29,17 +29,19 @@ pub const PipewireAudio = struct {
     const log = std.log.scoped(.PipewireAudio);
     const Self = @This();
     allocator: std.mem.Allocator,
+    io: std.Io,
     data_chan: AudioCaptureBufferedChan,
     thread_loop: ?*pw.pw_thread_loop = null,
     streams: std.ArrayList(*AudioStream),
 
-    pub fn init(allocator: std.mem.Allocator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
         self.* = .{
             .allocator = allocator,
-            .data_chan = try .init(allocator),
+            .io = io,
+            .data_chan = try .init(allocator, io),
             .streams = try std.ArrayList(*AudioStream).initCapacity(allocator, 0),
         };
         errdefer {
@@ -53,6 +55,7 @@ pub const PipewireAudio = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
         if (self.thread_loop) |thread_loop| {
             pw.pw_thread_loop_stop(thread_loop);
             pw.pw_thread_loop_lock(thread_loop);
@@ -69,7 +72,6 @@ pub const PipewireAudio = struct {
         self.data_chan.close(.{ .drain = true });
         self.data_chan.deinit();
         self.streams.deinit(self.allocator);
-        self.allocator.destroy(self);
     }
 
     fn init_pipewire(self: *Self) !void {
@@ -225,6 +227,7 @@ pub const PipewireAudio = struct {
         // Keep timestamp source selection in one place so audio/video follow
         // the same fallback strategy and are easier to reason about.
         const timestamp_ns = select_best_timestamp(
+            self.io,
             stream_data,
             raw_metadata_pts_ns,
             raw_stream_nsec_ns,
@@ -263,11 +266,12 @@ pub const PipewireAudio = struct {
     }
 
     fn select_best_timestamp(
+        io: std.Io,
         stream_data: *AudioStream,
         raw_metadata_pts_ns: i128,
         raw_stream_nsec_ns: i128,
     ) i128 {
-        var timestamp_ns: i128 = std.time.nanoTimestamp();
+        var timestamp_ns: i128 = std.Io.Timestamp.now(io, .real).nanoseconds;
         var source: PipewireTimestampSource = .host;
         if (raw_metadata_pts_ns > 0) {
             timestamp_ns = raw_metadata_pts_ns;

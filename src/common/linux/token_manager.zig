@@ -18,16 +18,18 @@ pub fn get_request_path(allocator: std.mem.Allocator, unique_name: [:0]const u8,
     return path;
 }
 
-pub fn generate_token(allocator: std.mem.Allocator) ![:0]const u8 {
+pub fn generate_token(allocator: std.mem.Allocator, io: std.Io) ![:0]const u8 {
+    const rng_impl: std.Random.IoSource = .{ .io = io };
+    const rng = rng_impl.interface();
     return std.fmt.allocPrintSentinel(
         allocator,
         "spacecap{x:0<7}",
-        .{std.crypto.random.int(u28)},
+        .{rng.int(u28)},
         0,
     );
 }
 
-test "getRequestPath - formats and sanitizes unique name" {
+test "TokenManager - get_request_path - formats and sanitizes unique name" {
     const a = std.testing.allocator;
 
     const path = try get_request_path(a, "1.192", "spacecap123");
@@ -38,10 +40,10 @@ test "getRequestPath - formats and sanitizes unique name" {
     );
 }
 
-test "generateToken - prefix and hex suffix" {
+test "TokenManager - generate_token - prefix and hex suffix" {
     const a = std.testing.allocator;
 
-    const token = try generate_token(a);
+    const token = try generate_token(a, std.testing.io);
     defer a.free(token);
 
     try std.testing.expect(std.mem.startsWith(u8, token, "spacecap"));

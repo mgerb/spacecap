@@ -9,8 +9,7 @@ pub const WindowsFilePicker = struct {
         return .{};
     }
 
-    // TODO: Take an allocator for the returned owned memory.
-    pub fn open_directory_picker(context: *anyopaque, _: Allocator, initial_directory: ?[]const u8) ![]u8 {
+    pub fn open_directory_picker(context: *anyopaque, _: Allocator, _: std.Io, initial_directory: ?[]const u8) ![]u8 {
         const self: *Self = @ptrCast(@alignCast(context));
         _ = self;
         _ = initial_directory;
