@@ -1,13 +1,9 @@
 const std = @import("std");
 
-const vk = @import("vulkan");
-
 const types = @import("../../../types.zig");
-const util = @import("../../../util.zig");
 const TokenStorage = @import("../../../common/linux/token_storage.zig");
 const Vulkan = @import("../../../vulkan/vulkan.zig").Vulkan;
 const PipewireVideo = @import("./pipewire/pipewire_video.zig").PipewireVideo;
-const Chan = @import("../../../channel.zig").Chan;
 const ChanError = @import("../../../channel.zig").ChanError;
 const VideoCaptureSelection = @import("../video_capture.zig").VideoCaptureSelection;
 const VideoCapture = @import("../video_capture.zig").VideoCapture;
@@ -117,8 +113,7 @@ pub const LinuxPipewireDmaCapture = struct {
         }
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
+    pub fn deinit(self: *Self) void {
         if (self.pipewire) |pipewire| {
             pipewire.deinit();
             self.pipewire = null;
@@ -138,7 +133,6 @@ pub const LinuxPipewireDmaCapture = struct {
                 .wait_for_frame = wait_for_frame,
                 .size = size,
                 .stop = stop,
-                .deinit = deinit,
             },
         };
     }

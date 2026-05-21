@@ -77,8 +77,7 @@ pub const WindowsVideoCapture = struct {
         _ = self;
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
+    pub fn deinit(self: *Self) void {
         self.allocator.destroy(self);
     }
 
@@ -94,7 +93,6 @@ pub const WindowsVideoCapture = struct {
                 .wait_for_frame = wait_for_frame,
                 .size = size,
                 .stop = stop,
-                .deinit = deinit,
             },
         };
     }

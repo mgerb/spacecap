@@ -78,8 +78,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         return .init(allocator, &shortcut_ids, &shortcut_actions);
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
+    pub fn deinit(self: *Self) void {
         stop(self);
         self.close();
 
@@ -558,7 +557,6 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 .stop = stop,
                 .open = open,
                 .register_shortcut_handler = register_shortcut_handler,
-                .deinit = deinit,
             },
         };
     }

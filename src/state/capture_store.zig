@@ -177,8 +177,8 @@ pub const CaptureStore = struct {
         allocator: Allocator,
         vulkan: *Vulkan,
         store: *Store,
-        audio_capture: *AudioCapture,
-        video_capture: *VideoCapture,
+        audio_capture: AudioCapture,
+        video_capture: VideoCapture,
     ) !Self {
         return .{
             .vulkan = vulkan,

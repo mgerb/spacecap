@@ -30,7 +30,6 @@ pub const VideoCapture = struct {
         wait_for_frame: *const fn (*anyopaque) ChanError!Arc(VulkanImageBuffer),
         size: *const fn (*anyopaque) ?types.Size,
         stop: *const fn (*anyopaque) anyerror!void,
-        deinit: *const fn (*anyopaque) void,
     };
 
     pub fn select_source(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
@@ -67,9 +66,5 @@ pub const VideoCapture = struct {
 
     pub fn stop(self: *Self) !void {
         return self.vtable.stop(self.ptr);
-    }
-
-    pub fn deinit(self: *Self) void {
-        return self.vtable.deinit(self.ptr);
     }
 };
