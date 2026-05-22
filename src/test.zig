@@ -17,7 +17,7 @@ test {
     _ = @import("./common/linux/token_manager.zig");
     _ = @import("./mutex.zig");
     _ = @import("./string.zig");
-    _ = @import("./state/capture_store.zig");
+    _ = @import("./store/capture_store.zig");
     _ = @import("./arc.zig");
 }
 

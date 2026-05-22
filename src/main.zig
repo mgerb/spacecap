@@ -10,7 +10,7 @@ const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig
 const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
 const PlatformFilePicker = @import("./file_picker/platform_file_picker.zig").PlatformFilePicker;
 const PlatformGlobalShortcuts = @import("./global_shortcuts/platform_global_shortcuts.zig").PlatformGlobalShortcuts;
-const Store = @import("./state/store.zig").Store;
+const Store = @import("./store/store.zig").Store;
 const ipc_module = @import("./ipc/ipc.zig");
 const IpcCommand = ipc_module.IpcCommand;
 

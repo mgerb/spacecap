@@ -14,7 +14,7 @@ const draw_video_preview = @import("./draw_video_preview.zig").draw_video_previe
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 const AppIcon = @import("./app_icon.zig").AppIcon;
-const Store = @import("../state/store.zig").Store;
+const Store = @import("../store/store.zig").Store;
 
 // TODO: save and restore window size
 const WIDTH = 1600;

@@ -1,11 +1,11 @@
 const std = @import("std");
 const c = @import("imguiz").imguiz;
 const AudioDeviceType = @import("../capture/audio/audio_capture.zig").AudioDeviceType;
-const AUDIO_GAIN_MIN = @import("../state/capture_store.zig").AUDIO_GAIN_MIN;
-const AUDIO_GAIN_MAX = @import("../state/capture_store.zig").AUDIO_GAIN_MAX;
+const AUDIO_GAIN_MIN = @import("../store/capture_store.zig").AUDIO_GAIN_MIN;
+const AUDIO_GAIN_MAX = @import("../store/capture_store.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
-const Store = @import("../state/store.zig").Store;
+const Store = @import("../store/store.zig").Store;
 
 pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
