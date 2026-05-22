@@ -94,11 +94,6 @@ fn add_linux_dependencies(
     // For Zig projects, add the `pipewire` module.
     exe.root_module.addImport("pipewire", pipewire.module("pipewire"));
 
-    const gobject = b.dependency("gobject", .{});
-    exe.root_module.addImport("glib", gobject.module("glib2"));
-    exe.root_module.addImport("gio", gobject.module("gio2"));
-    exe.root_module.addImport("gobject", gobject.module("gobject2"));
-
     exe.root_module.linkSystemLibrary("glib-2.0", .{});
     exe.root_module.linkSystemLibrary("gio-2.0", .{});
     exe.root_module.linkSystemLibrary("gobject-2.0", .{});
