@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const Store = @import("../../state/store.zig").Store;
+const Store = @import("../../store/store.zig").Store;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 
 const SOCKET_FILE_NAME = "spacecap.sock";

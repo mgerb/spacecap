@@ -1,5 +1,5 @@
 const std = @import("std");
-const Store = @import("../../state/store.zig").Store;
+const Store = @import("../../store/store.zig").Store;
 const Ipc = @import("../ipc.zig").Ipc;
 const IpcCommand = @import("../ipc.zig").IpcCommand;
 

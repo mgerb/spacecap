@@ -4,12 +4,12 @@ const Allocator = std.mem.Allocator;
 const vk = @import("vulkan");
 const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const Mutex = @import("../mutex.zig").Mutex;
-const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
+const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const Util = @import("../util.zig");
 const BufferedChan = @import("../channel.zig").BufferedChan;
 const ChanError = @import("../channel.zig").ChanError;
-const Store = @import(".//store.zig").Store;
+const Store = @import("../store/store.zig").Store;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoCaptureError = @import("../capture/video/video_capture.zig").VideoCaptureError;
 

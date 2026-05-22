@@ -12,8 +12,6 @@ const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const GlobalShortcuts = @import("../global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const GlobalShortcutsStore = @import("./global_shortcuts_store.zig").GlobalShortcutsStore;
 
-// All stores have access to the Store. Runtime dependencies should
-// live directly on the store.
 pub const Store = struct {
     const Self = @This();
     const log = std.log.scoped(.store);
@@ -145,7 +143,7 @@ pub const Store = struct {
     /// This will block until the .exit message.
     pub fn run(
         self: *Self,
-        /// These args are currently only used for testing. They allows the processing
+        /// These args are currently only used for testing. They allow the processing
         /// of messages one at a time while also enabling the ability to wait for any effects
         /// that it dispatches.
         comptime args: struct {
