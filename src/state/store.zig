@@ -23,7 +23,7 @@ pub const Store = struct {
     state: Mutex(State),
     effect_thread_pool: std.Thread.Pool = undefined,
     effect_thread_pool_wait_group: std.Thread.WaitGroup = .{},
-    file_picker: *FilePicker,
+    file_picker: FilePicker,
     capture_store: CaptureStore,
     global_shortcuts_store: *GlobalShortcutsStore,
 
@@ -75,10 +75,10 @@ pub const Store = struct {
     pub fn init(
         allocator: Allocator,
         vulkan: *Vulkan,
-        file_picker: *FilePicker,
-        audio_capture: *AudioCapture,
-        video_capture: *VideoCapture,
-        global_shortcuts: *GlobalShortcuts,
+        file_picker: FilePicker,
+        audio_capture: AudioCapture,
+        video_capture: VideoCapture,
+        global_shortcuts: GlobalShortcuts,
     ) !*Self {
         const self = try allocator.create(Self);
 
@@ -342,7 +342,6 @@ pub const TestStore = struct {
         fn run(_: *anyopaque) anyerror!void {}
         fn stop(_: *anyopaque) void {}
         fn open(_: *anyopaque) anyerror!void {}
-        fn deinit(_: *anyopaque) void {}
 
         fn register_shortcut_handler(context: *anyopaque, handler: GlobalShortcuts.ShortcutHandler) void {
             const self: *@This() = @ptrCast(@alignCast(context));
@@ -358,7 +357,6 @@ pub const TestStore = struct {
                     .stop = stop,
                     .open = open,
                     .register_shortcut_handler = register_shortcut_handler,
-                    .deinit = @This().deinit,
                 },
             };
         }
@@ -466,8 +464,6 @@ pub const TestStore = struct {
             self.stopped = true;
         }
 
-        fn deinit(_: *anyopaque) void {}
-
         fn video_capture(self: *@This()) VideoCapture {
             return .{
                 .ptr = self,
@@ -480,13 +476,25 @@ pub const TestStore = struct {
                     .wait_for_frame = wait_for_frame,
                     .size = size,
                     .stop = stop,
-                    .deinit = @This().deinit,
                 },
             };
         }
     };
 
-    pub const TestFilePicker = struct {};
+    pub const TestFilePicker = struct {
+        fn open_directory_picker(_: *anyopaque, allocator: Allocator, _: ?[]const u8) anyerror![]u8 {
+            return allocator.dupe(u8, "/tmp");
+        }
+
+        fn file_picker(self: *@This()) FilePicker {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .open_directory_picker = open_directory_picker,
+                },
+            };
+        }
+    };
 
     // ----------------------------------------------------------------------------
     // TestStore definition starts here.
@@ -529,6 +537,7 @@ pub const TestStore = struct {
         self.audio_capture = self.test_audio_capture.audio_capture();
         self.video_capture = self.test_video_capture.video_capture();
         self.global_shortcuts = self.test_global_shortcuts.global_shortcuts();
+        self.file_picker_interface = self.test_file_picker.file_picker();
 
         self.vulkan.video_encoder = null;
         self.vulkan.video_encode_queue = null;
@@ -540,10 +549,10 @@ pub const TestStore = struct {
         self.store = try .init(
             allocator,
             &self.vulkan,
-            &self.file_picker_interface,
-            &self.audio_capture,
-            &self.video_capture,
-            &self.global_shortcuts,
+            self.file_picker_interface,
+            self.audio_capture,
+            self.video_capture,
+            self.global_shortcuts,
         );
 
         return self;

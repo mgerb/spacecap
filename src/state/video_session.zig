@@ -51,7 +51,7 @@ pub const VideoSession = struct {
     allocator: Allocator,
     vulkan: *Vulkan,
     store: *Store,
-    video_capture: *VideoCapture,
+    video_capture: VideoCapture,
     capture_thread: ?std.Thread = null,
     record_to_disk_thread: ?std.Thread = null,
 
@@ -70,7 +70,7 @@ pub const VideoSession = struct {
         allocator: Allocator,
         vulkan: *Vulkan,
         store: *Store,
-        video_capture: *VideoCapture,
+        video_capture: VideoCapture,
     ) !Self {
         return .{
             .allocator = allocator,

@@ -12,7 +12,7 @@ pub const GlobalShortcutsStore = struct {
     allocator: Allocator,
     store: *Store,
 
-    pub fn init(allocator: Allocator, store: *Store, global_shortcuts: *GlobalShortcuts) !*Self {
+    pub fn init(allocator: Allocator, store: *Store, global_shortcuts: GlobalShortcuts) !*Self {
         const self = try allocator.create(Self);
 
         self.* = .{

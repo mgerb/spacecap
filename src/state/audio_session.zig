@@ -24,7 +24,7 @@ pub const AudioSession = struct {
 
     allocator: Allocator,
     store: *Store,
-    audio_capture: *AudioCapture,
+    audio_capture: AudioCapture,
     audio_replay_buffer: Mutex(?*AudioReplayBuffer) = .init(null),
     audio_recording_timeline: Mutex(?*AudioTimeline) = .init(null),
     capture_thread: ?std.Thread = null,
@@ -34,7 +34,7 @@ pub const AudioSession = struct {
     pub fn init(
         allocator: Allocator,
         store: *Store,
-        audio_capture: *AudioCapture,
+        audio_capture: AudioCapture,
     ) !Self {
         return .{
             .allocator = allocator,

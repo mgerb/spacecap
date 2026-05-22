@@ -34,9 +34,7 @@ pub const WindowsGlobalShortcuts = struct {
         // TODO:
     }
 
-    pub fn deinit(context: *anyopaque) void {
-        const self: *Self = @ptrCast(@alignCast(context));
-        _ = self;
+    pub fn deinit(_: *Self) void {
         // TODO:
     }
 
@@ -55,7 +53,6 @@ pub const WindowsGlobalShortcuts = struct {
                 .stop = stop,
                 .open = open,
                 .register_shortcut_handler = register_shortcut_handler,
-                .deinit = deinit,
             },
         };
     }

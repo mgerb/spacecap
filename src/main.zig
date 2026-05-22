@@ -81,30 +81,27 @@ fn gui_app(allocator: std.mem.Allocator, parsed_args: ?args.Args) !void {
     defer vulkan.deinit();
 
     // TODO: create dropdown selector in UI to select capture method when more are implemented.
-    const _video_capture = try PlatformVideoCapture.init(allocator, vulkan);
-    var video_capture_interface = _video_capture.video_capture();
-    defer video_capture_interface.deinit();
+    const platform_video_capture = try PlatformVideoCapture.init(allocator, vulkan);
+    defer platform_video_capture.deinit();
 
-    const _audio_capture = try PlatformAudioCapture.init(allocator);
-    defer _audio_capture.deinit();
-    var audio_capture_interface = _audio_capture.audio_capture();
+    const platform_audio_capture = try PlatformAudioCapture.init(allocator);
+    defer platform_audio_capture.deinit();
 
     var platform_file_picker = try PlatformFilePicker.init();
     defer platform_file_picker.deinit();
-    var file_picker_interface = platform_file_picker.file_picker();
 
     const platform_global_shortcuts = try PlatformGlobalShortcuts.init(allocator);
+    defer platform_global_shortcuts.deinit();
     var global_shortcuts = platform_global_shortcuts.global_shortcuts();
     try global_shortcuts.run();
-    defer global_shortcuts.deinit();
 
     var store = try Store.init(
         allocator,
         vulkan,
-        &file_picker_interface,
-        &audio_capture_interface,
-        &video_capture_interface,
-        &global_shortcuts,
+        platform_file_picker.file_picker(),
+        platform_audio_capture.audio_capture(),
+        platform_video_capture.video_capture(),
+        global_shortcuts,
     );
     defer store.deinit();
 
