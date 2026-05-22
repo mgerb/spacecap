@@ -6,9 +6,7 @@ const TokenStorage = @import("../../common/linux/token_storage.zig");
 const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
 
-const glib = @import("glib");
-const gobject = @import("gobject");
-const gio = @import("gio");
+const c = @import("../../common/linux/gio.zig").c;
 
 const log = std.log.scoped(.xdg_desktop_portal_global_shortcuts);
 
@@ -23,10 +21,10 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     const Token = [16]u8;
 
     allocator: std.mem.Allocator,
-    dbus: *gio.DBusConnection,
-    main_loop: ?*glib.MainLoop = null,
+    dbus: *c.GDBusConnection,
+    main_loop: ?*c.GMainLoop = null,
     run_thread: ?std.Thread = null,
-    ctx: ?*glib.MainContext = null,
+    ctx: ?*c.GMainContext = null,
     // actions: *Actions,
     actions: Actions,
     session_token: ?[:0]u8 = null,
@@ -48,11 +46,12 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
 
-        const g_error: ?*?*glib.Error = null;
-        const dbus = gio.busGetSync(.session, null, g_error) orelse return error.Dbus;
+        var g_error: ?*c.GError = null;
+        const dbus = c.g_bus_get_sync(c.G_BUS_TYPE_SESSION, null, &g_error) orelse return error.Dbus;
+        defer if (g_error) |err| c.g_error_free(err);
 
         if (g_error) |err| {
-            log.err("{s}\n", .{err.*.?.f_message});
+            log.err("{s}\n", .{err.message.?});
             return error.BusGetSync;
         }
 
@@ -82,7 +81,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         stop(self);
         self.close();
 
-        self.dbus.unref();
+        c.g_object_unref(self.dbus);
 
         if (self.handle) |handle| {
             self.allocator.free(handle);
@@ -105,25 +104,26 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
     fn close(self: *Self) void {
         if (self.response_subscription != 0) {
-            self.dbus.signalUnsubscribe(self.response_subscription);
+            c.g_dbus_connection_signal_unsubscribe(self.dbus, self.response_subscription);
             self.response_subscription = 0;
         }
 
         if (self.activate_subscription != 0) {
-            self.dbus.signalUnsubscribe(self.activate_subscription);
+            c.g_dbus_connection_signal_unsubscribe(self.dbus, self.activate_subscription);
             self.activate_subscription = 0;
         }
 
         if (self.handle) |handle| {
             // Close existing session
-            self.dbus.call(
+            c.g_dbus_connection_call(
+                self.dbus,
                 "org.freedesktop.portal.Desktop",
-                handle,
+                handle.ptr,
                 "org.freedesktop.portal.Session",
                 "Close",
                 null,
                 null,
-                .{},
+                c.G_DBUS_CALL_FLAGS_NONE,
                 -1,
                 null,
                 null,
@@ -149,25 +149,25 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
         const RunThread = struct {
             pub fn run(_self: *Self) void {
-                _self.ctx = glib.MainContext.new();
+                _self.ctx = c.g_main_context_new();
                 defer {
-                    _self.ctx.?.unref();
+                    c.g_main_context_unref(_self.ctx.?);
                     _self.ctx = null;
                 }
-                glib.MainContext.pushThreadDefault(_self.ctx.?);
-                defer glib.MainContext.popThreadDefault(_self.ctx.?);
+                c.g_main_context_push_thread_default(_self.ctx.?);
+                defer c.g_main_context_pop_thread_default(_self.ctx.?);
 
                 _self.request(.{ .create_session = .{ .restore_session = true } }) catch |err| {
                     log.err("create session error: {}\n", .{err});
                 };
 
-                const main_loop = glib.MainLoop.new(_self.ctx.?, 0);
+                const main_loop = c.g_main_loop_new(_self.ctx.?, 0) orelse return;
                 _self.main_loop = main_loop;
                 defer {
-                    main_loop.unref();
+                    c.g_main_loop_unref(main_loop);
                     _self.main_loop = null;
                 }
-                main_loop.run();
+                c.g_main_loop_run(main_loop);
             }
         };
 
@@ -178,8 +178,8 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     pub fn stop(context: *anyopaque) void {
         const self: *Self = @ptrCast(@alignCast(context));
         if (self.main_loop) |main_loop| {
-            if (main_loop.isRunning() != 0) {
-                main_loop.quit();
+            if (c.g_main_loop_is_running(main_loop) != 0) {
+                c.g_main_loop_quit(main_loop);
             }
         }
     }
@@ -190,7 +190,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         // be done in the context of the main loop, otherwise
         // nothing will happen.
         if (self.ctx) |ctx| {
-            glib.MainContext.invoke(ctx, _open_shortcuts, self);
+            c.g_main_context_invoke(ctx, _open_shortcuts, self);
         }
     }
 
@@ -212,33 +212,37 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         // TODO: Need to figure out how to get the activation token;
         const activation_token = "todo";
 
-        const payload = glib.Variant.newParsed(
+        const payload = c.g_variant_new_parsed(
             "(%o, '', {'activation_token': <%s>})",
             handle.ptr,
             activation_token.ptr,
         );
 
-        _ = self.dbus.callSync(
+        const result = c.g_dbus_connection_call_sync(
+            self.dbus,
             "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop",
             "org.freedesktop.portal.GlobalShortcuts",
             "ConfigureShortcuts",
             payload,
             null,
-            .{},
+            c.G_DBUS_CALL_FLAGS_NONE,
             -1,
             null,
             null,
         );
+        if (result) |variant| {
+            c.g_variant_unref(variant);
+        }
     }
 
     fn shortcut_activated(
-        _: *gio.DBusConnection,
-        _: ?[*:0]const u8,
-        _: [*:0]const u8,
-        _: [*:0]const u8,
-        _: [*:0]const u8,
-        params: *glib.Variant,
+        _: ?*c.GDBusConnection,
+        _: [*c]const u8,
+        _: [*c]const u8,
+        _: [*c]const u8,
+        _: [*c]const u8,
+        params: ?*c.GVariant,
         ud: ?*anyopaque,
     ) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(ud));
@@ -246,7 +250,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         // 2nd value in the tuple is the activated shortcut ID
         // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-activated
         var shortcut_idZ: [*:0]const u8 = undefined;
-        params.getChild(1, "&s", &shortcut_idZ);
+        c.g_variant_get_child(params.?, 1, "&s", &shortcut_idZ);
         log.debug("activated={s}", .{shortcut_idZ});
         const shortcut_id = std.mem.span(shortcut_idZ);
 
@@ -284,7 +288,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             self: Method,
             shortcuts: *Self,
             request_token: [:0]const u8,
-        ) ?*glib.Variant {
+        ) ?*c.GVariant {
             switch (self) {
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-createsession
                 .create_session => {
@@ -299,7 +303,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
                     assert(shortcuts.session_token != null);
 
-                    return glib.Variant.newParsed(
+                    return c.g_variant_new_parsed(
                         "({'handle_token': <%s>, 'session_handle_token': <%s>},)",
                         request_token.ptr,
                         shortcuts.session_token.?.ptr,
@@ -309,25 +313,27 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 .bind_shortcuts => {
                     const handle = shortcuts.handle orelse return null;
 
-                    const bind_type = glib.VariantType.new("a(sa{sv})");
-                    defer glib.free(bind_type);
+                    const bind_type = c.g_variant_type_new("a(sa{sv})");
+                    defer c.g_variant_type_free(bind_type);
 
-                    var binds: glib.VariantBuilder = undefined;
-                    glib.VariantBuilder.init(&binds, bind_type);
+                    var binds: c.GVariantBuilder = undefined;
+                    c.g_variant_builder_init(&binds, bind_type);
 
                     var iter = shortcuts.actions.iterator();
                     while (iter.next()) |entry| {
                         const action = shortcuts.actions.get(entry.key_ptr.*).?;
 
                         if (entry.value_ptr.trigger) |trigger| {
-                            binds.addParsed(
+                            c.g_variant_builder_add_parsed(
+                                &binds,
                                 "(%s, {'description': <%s>, 'preferred_trigger': <%s>})",
                                 entry.key_ptr.*.ptr,
                                 action.name.ptr,
                                 trigger.ptr,
                             );
                         } else {
-                            binds.addParsed(
+                            c.g_variant_builder_add_parsed(
+                                &binds,
                                 "(%s, {'description': <%s>})",
                                 entry.key_ptr.*.ptr,
                                 action.name.ptr,
@@ -335,24 +341,26 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                         }
                     }
 
-                    return glib.Variant.newParsed(
+                    return c.g_variant_new_parsed(
                         "(%o, %*, '', {'handle_token': <%s>})",
                         handle.ptr,
-                        binds.end(),
+                        c.g_variant_builder_end(&binds),
                         request_token.ptr,
                     );
                 },
             }
         }
 
-        fn on_response(self: Method, shortcuts: *Self, vardict: *glib.Variant) void {
+        fn on_response(self: Method, shortcuts: *Self, vardict: *c.GVariant) void {
             switch (self) {
                 .create_session => {
                     var handle: ?[*:0]u8 = null;
-                    if (vardict.lookup("session_handle", "&s", &handle) == 0) {
+                    if (c.g_variant_lookup(vardict, "session_handle", "&s", &handle) == 0) {
+                        const response = c.g_variant_print(vardict, 1);
+                        defer c.g_free(response);
                         log.err(
                             "session handle not found in response={s}",
-                            .{vardict.print(@intFromBool(true))},
+                            .{response},
                         );
                         return;
                     }
@@ -365,13 +373,14 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                     log.debug("session_handle={?s}", .{handle});
 
                     // Subscribe to keybind activations
-                    shortcuts.activate_subscription = shortcuts.dbus.signalSubscribe(
+                    shortcuts.activate_subscription = c.g_dbus_connection_signal_subscribe(
+                        shortcuts.dbus,
                         null,
                         "org.freedesktop.portal.GlobalShortcuts",
                         "Activated",
                         "/org/freedesktop/portal/desktop",
                         handle,
-                        .{ .match_arg0_path = true },
+                        c.G_DBUS_SIGNAL_FLAGS_MATCH_ARG0_PATH,
                         shortcut_activated,
                         shortcuts,
                         null,
@@ -385,20 +394,20 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 },
                 .bind_shortcuts => {
                     log.info("bind_shortcuts done\n", .{});
-                    var sc: ?*glib.Variant = null;
-                    assert(vardict.lookup("shortcuts", "@a(sa{sv})", &sc) == 1);
+                    var sc: ?*c.GVariant = null;
+                    assert(c.g_variant_lookup(vardict, "shortcuts", "@a(sa{sv})", &sc) == 1);
                     assert(sc != null);
 
-                    defer sc.?.unref();
+                    defer c.g_variant_unref(sc.?);
 
-                    var iter = sc.?.iterNew();
-                    defer iter.free();
+                    const iter = c.g_variant_iter_new(sc.?);
+                    defer c.g_variant_iter_free(iter);
 
                     var id: [*:0]const u8 = undefined;
-                    var props: *glib.Variant = undefined;
-                    while (iter.loop("(&s@a{sv})", &id, &props) != 0) {
+                    var props: *c.GVariant = undefined;
+                    while (c.g_variant_iter_loop(iter, "(&s@a{sv})", &id, &props) != 0) {
                         var trigger: [*:0]const u8 = undefined;
-                        assert(props.lookup("trigger_description", "&s", &trigger) == 1);
+                        assert(c.g_variant_lookup(props, "trigger_description", "&s", &trigger) == 1);
 
                         // NOTE: No longer used. See description of Actions.
                         // shortcuts.actions.updateTrigger(std.mem.span(id), std.mem.span(trigger)) catch unreachable;
@@ -449,23 +458,23 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
         const callbacks = struct {
             fn got_response_handle(
-                source: ?*gobject.Object,
-                res: *gio.AsyncResult,
+                source: [*c]c.GObject,
+                res: ?*c.GAsyncResult,
                 _: ?*anyopaque,
             ) callconv(.c) void {
-                const dbus_ = gobject.ext.cast(gio.DBusConnection, source.?).?;
+                const dbus_: *c.GDBusConnection = @ptrCast(@alignCast(source));
 
-                var err: ?*glib.Error = null;
-                defer if (err) |err_| err_.free();
+                var err: ?*c.GError = null;
+                defer if (err) |err_| c.g_error_free(err_);
 
-                const params_ = dbus_.callFinish(res, &err) orelse {
-                    if (err) |err_| log.err("request failed={s} ({})", .{
-                        err_.f_message orelse "(unknown)",
-                        err_.f_code,
-                    });
+                const params_ = c.g_dbus_connection_call_finish(dbus_, res.?, &err) orelse {
+                    if (err) |err_| {
+                        const message: [*c]const u8 = if (err_.message != null) err_.message else @ptrCast("(unknown)".ptr);
+                        log.err("request failed={s} ({})", .{ message, err_.code });
+                    }
                     return;
                 };
-                defer params_.unref();
+                defer c.g_variant_unref(params_);
 
                 // TODO: XDG recommends updating the signal subscription if the actual
                 // returned request path is not the same as the expected request
@@ -476,25 +485,26 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
             // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Request.html#org-freedesktop-portal-request-response
             fn responded(
-                dbus: *gio.DBusConnection,
-                _: ?[*:0]const u8,
-                _: [*:0]const u8,
-                _: [*:0]const u8,
-                _: [*:0]const u8,
-                params_: *glib.Variant,
+                dbus: ?*c.GDBusConnection,
+                _: [*c]const u8,
+                _: [*c]const u8,
+                _: [*c]const u8,
+                _: [*c]const u8,
+                params_: ?*c.GVariant,
                 ud: ?*anyopaque,
             ) callconv(.c) void {
                 const self_: *Self = @ptrCast(@alignCast(ud));
 
                 // Unsubscribe from the response signal
                 if (self_.response_subscription != 0) {
-                    dbus.signalUnsubscribe(self_.response_subscription);
+                    c.g_dbus_connection_signal_unsubscribe(dbus.?, self_.response_subscription);
                     self_.response_subscription = 0;
                 }
 
                 var response: u32 = 0;
-                var vardict: ?*glib.Variant = null;
-                params_.get("(u@a{sv})", &response, &vardict);
+                var vardict: ?*c.GVariant = null;
+                c.g_variant_get(params_.?, "(u@a{sv})", &response, &vardict);
+                defer if (vardict) |dict| c.g_variant_unref(dict);
 
                 switch (response) {
                     0 => {
@@ -512,30 +522,32 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         defer self.allocator.free(request_token);
 
         const payload = method.make_payload(self, request_token) orelse return;
-        var unique_name = std.mem.span(self.dbus.getUniqueName().?);
+        const unique_name = std.mem.span(c.g_dbus_connection_get_unique_name(self.dbus).?);
         const request_path = try TokenManager.get_request_path(self.allocator, unique_name[1..], request_token);
         defer self.allocator.free(request_path);
 
-        self.response_subscription = self.dbus.signalSubscribe(
+        self.response_subscription = c.g_dbus_connection_signal_subscribe(
+            self.dbus,
             null,
             "org.freedesktop.portal.Request",
             "Response",
             request_path,
             null,
-            .{},
+            c.G_DBUS_SIGNAL_FLAGS_NONE,
             callbacks.responded,
             self,
             null,
         );
 
-        self.dbus.call(
+        c.g_dbus_connection_call(
+            self.dbus,
             "org.freedesktop.portal.Desktop",
             "/org/freedesktop/portal/desktop",
             "org.freedesktop.portal.GlobalShortcuts",
             method.name(),
             payload,
             null,
-            .{},
+            c.G_DBUS_CALL_FLAGS_NONE,
             -1,
             null,
             callbacks.got_response_handle,
