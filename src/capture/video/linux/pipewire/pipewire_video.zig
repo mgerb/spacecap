@@ -20,6 +20,26 @@ pub const PipewireVideo = struct {
     const log = std.log.scoped(.PipewireVideo);
     const Self = @This();
 
+    /// The spa_pod_builder requires a buffer and a params list
+    /// that maintain the same lifetime.
+    const SpaPodParams = struct {
+        allocator: Allocator,
+        // This should be plenty of room.
+        buffer: [8192]u8 = .{0} ** 8192,
+        params: std.ArrayList(*pw.spa_pod),
+
+        fn init(allocator: Allocator) !@This() {
+            return .{
+                .allocator = allocator,
+                .params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0),
+            };
+        }
+
+        fn deinit(self: *@This()) void {
+            self.params.deinit(self.allocator);
+        }
+    };
+
     allocator: Allocator,
     io: std.Io,
     portal: *Portal,
@@ -49,6 +69,8 @@ pub const PipewireVideo = struct {
     // We only want to log the source a few times when the
     // stream starts.
     timestamp_source_log_count: u32 = 0,
+    negotiation_failed: bool = false,
+    negotiation_error_code: i32 = 0,
 
     pub fn init(
         allocator: Allocator,
@@ -136,6 +158,8 @@ pub const PipewireVideo = struct {
 
         self.has_format = false;
         self.info = null;
+        self.negotiation_failed = false;
+        self.negotiation_error_code = 0;
 
         self.thread_loop = pw.pw_thread_loop_new(
             "spacecap-pipewire-capture-video",
@@ -158,6 +182,7 @@ pub const PipewireVideo = struct {
         }
 
         pw.pw_thread_loop_lock(self.thread_loop);
+        defer pw.pw_thread_loop_unlock(self.thread_loop);
 
         self.core = pw.pw_context_connect_fd(
             self.context,
@@ -166,7 +191,7 @@ pub const PipewireVideo = struct {
             0,
         ) orelse return error.PwContextConnectFd;
 
-        _ = pw.pw_core_add_listener(self.core, &self.core_listener, &core_events, null);
+        _ = pw.pw_core_add_listener(self.core, &self.core_listener, &core_events, self);
 
         self.stream = pw.pw_stream_new(self.core, "Spacecap (host)", pw.pw_properties_new(
             pw.PW_KEY_MEDIA_TYPE,
@@ -185,10 +210,12 @@ pub const PipewireVideo = struct {
         try self.start_stream(pipewire_node, fps);
 
         while (!self.has_valid_info()) {
+            if (self.negotiation_failed) {
+                log.err("[select_source] stream negotiation failed with pipewire error code {}", .{self.negotiation_error_code});
+                return error.PipewireFormatNegotiationFailed;
+            }
             pw.pw_thread_loop_wait(self.thread_loop);
         }
-
-        pw.pw_thread_loop_unlock(self.thread_loop);
 
         self.worker_thread = try std.Thread.spawn(.{}, worker_main, .{self});
     }
@@ -203,7 +230,7 @@ pub const PipewireVideo = struct {
 
     fn build_format(
         self: *const Self,
-        b: ?*pw.spa_pod_builder,
+        spa_pod_builder: ?*pw.spa_pod_builder,
         format: u32,
         modifiers: []const u64,
         fps: u32,
@@ -211,30 +238,30 @@ pub const PipewireVideo = struct {
         _ = self;
         var format_frame = std.mem.zeroes(pw.spa_pod_frame);
 
-        _ = pw.spa_pod_builder_push_object(b, @ptrCast(&format_frame), pw.SPA_TYPE_OBJECT_Format, pw.SPA_PARAM_EnumFormat);
-        _ = pw.spa_pod_builder_add(b, @as(i32, pw.SPA_FORMAT_mediaType), "I", @as(i32, pw.SPA_MEDIA_TYPE_video), @as(i32, 0));
-        _ = pw.spa_pod_builder_add(b, @as(u32, pw.SPA_FORMAT_mediaSubtype), "I", @as(i32, pw.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
-        _ = pw.spa_pod_builder_add(b, @as(u32, pw.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
+        _ = pw.spa_pod_builder_push_object(spa_pod_builder, @ptrCast(&format_frame), pw.SPA_TYPE_OBJECT_Format, pw.SPA_PARAM_EnumFormat);
+        _ = pw.spa_pod_builder_add(spa_pod_builder, @as(i32, pw.SPA_FORMAT_mediaType), "I", @as(i32, pw.SPA_MEDIA_TYPE_video), @as(i32, 0));
+        _ = pw.spa_pod_builder_add(spa_pod_builder, @as(u32, pw.SPA_FORMAT_mediaSubtype), "I", @as(i32, pw.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
+        _ = pw.spa_pod_builder_add(spa_pod_builder, @as(u32, pw.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
 
         // TODO: Need to update this to handle single modifiers - see fixate example.
         if (modifiers.len > 0) {
             var modifier_frame = std.mem.zeroes(pw.spa_pod_frame);
 
-            _ = pw.spa_pod_builder_prop(b, pw.SPA_FORMAT_VIDEO_modifier, pw.SPA_POD_PROP_FLAG_MANDATORY | pw.SPA_POD_PROP_FLAG_DONT_FIXATE);
-            _ = pw.spa_pod_builder_push_choice(b, &modifier_frame, pw.SPA_CHOICE_Enum, 0);
+            _ = pw.spa_pod_builder_prop(spa_pod_builder, pw.SPA_FORMAT_VIDEO_modifier, pw.SPA_POD_PROP_FLAG_MANDATORY | pw.SPA_POD_PROP_FLAG_DONT_FIXATE);
+            _ = pw.spa_pod_builder_push_choice(spa_pod_builder, &modifier_frame, pw.SPA_CHOICE_Enum, 0);
 
             for (modifiers) |mod| {
-                _ = c_def.spa_pod_builder_long(b, @intCast(mod));
+                _ = c_def.spa_pod_builder_long(spa_pod_builder, @intCast(mod));
             }
 
-            _ = c_def.spa_pod_builder_pop(b, &modifier_frame);
+            _ = c_def.spa_pod_builder_pop(spa_pod_builder, &modifier_frame);
         }
 
         const default_fps = pw.SPA_FRACTION(fps, 1);
         const min_fps = pw.SPA_FRACTION(0, 1);
         const max_fps = pw.SPA_FRACTION(500, 1);
         _ = pw.spa_pod_builder_add(
-            b,
+            spa_pod_builder,
             @as(u32, pw.SPA_FORMAT_VIDEO_size),
             "?rR",
             @as(u32, 3),
@@ -250,7 +277,7 @@ pub const PipewireVideo = struct {
             @as(i32, 0),
         );
 
-        const ptr = c_def.spa_pod_builder_pop(b, &format_frame);
+        const ptr = c_def.spa_pod_builder_pop(spa_pod_builder, &format_frame);
 
         if (ptr != null) {
             return @ptrCast(@alignCast(ptr));
@@ -259,19 +286,19 @@ pub const PipewireVideo = struct {
         return null;
     }
 
-    fn start_stream(self: *const Self, node: u32, fps: u32) !void {
+    fn start_stream(self: *Self, node: u32, fps: u32) !void {
         log.debug("[start_stream] starting stream for node: {}", .{node});
 
-        var params = try self.build_stream_format_params(self.allocator, fps);
-        defer params.deinit(self.allocator);
+        var spa_pod_params = try self.build_stream_format_params(self.allocator, fps);
+        defer spa_pod_params.deinit();
 
         const status = pw.pw_stream_connect(
             self.stream,
             pw.PW_DIRECTION_INPUT,
             node,
             pw.PW_STREAM_FLAG_AUTOCONNECT | pw.PW_STREAM_FLAG_MAP_BUFFERS,
-            @ptrCast(params.items.ptr),
-            @intCast(params.items.len),
+            @ptrCast(spa_pod_params.params.items.ptr),
+            @intCast(spa_pod_params.params.items.len),
         );
 
         if (status < 0) {
@@ -283,32 +310,38 @@ pub const PipewireVideo = struct {
         const stream = self.stream orelse return;
         const thread_loop = self.thread_loop orelse return;
 
-        var params = try self.build_stream_format_params(self.allocator, fps);
-        defer params.deinit(self.allocator);
+        var spa_pod_params = try self.build_stream_format_params(self.allocator, fps);
+        defer spa_pod_params.deinit();
 
-        if (params.items.len == 0) {
+        if (spa_pod_params.params.items.len == 0) {
             return error.PwStreamUpdateParamsNoFormats;
         }
 
         pw.pw_thread_loop_lock(thread_loop);
         defer pw.pw_thread_loop_unlock(thread_loop);
 
-        const status = pw.pw_stream_update_params(stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
+        const status = pw.pw_stream_update_params(
+            stream,
+            @ptrCast(spa_pod_params.params.items.ptr),
+            @intCast(spa_pod_params.params.items.len),
+        );
+
         if (status < 0) {
             return error.PwStreamUpdateParams;
         }
     }
 
-    /// Caller owns memory and must deinit.
+    /// Caller owns the memory.
     fn build_stream_format_params(
-        self: *const Self,
+        self: *Self,
         allocator: Allocator,
         fps: u32,
-    ) !std.ArrayList(*pw.spa_pod) {
-        var buffer = std.mem.zeroes([4096]u8);
+    ) !SpaPodParams {
+        var spa_pod_params = try SpaPodParams.init(allocator);
+        errdefer spa_pod_params.deinit();
         var builder = pw.spa_pod_builder{
-            .data = buffer[0..].ptr,
-            .size = buffer.len,
+            .data = spa_pod_params.buffer[0..].ptr,
+            .size = @intCast(spa_pod_params.buffer[0..].len),
         };
 
         const formats = [_]u32{
@@ -326,20 +359,19 @@ pub const PipewireVideo = struct {
             pw.SPA_VIDEO_FORMAT_ABGR_210LE,
         };
 
-        var params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0);
-        errdefer params.deinit(allocator);
         for (formats) |format| {
-            var modifiers = try self.vulkan.query_format_modifiers(self.allocator, pipewire_util.spa_to_vk_format(format));
+            const vk_format = pipewire_util.spa_to_vk_format(format);
+            var modifiers = try self.vulkan.query_format_modifiers(self.allocator, vk_format);
             defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;
             }
             if (self.build_format(&builder, format, modifiers.items, fps)) |spa_pod| {
-                try params.append(self.allocator, spa_pod);
+                try spa_pod_params.params.append(self.allocator, spa_pod);
             }
         }
 
-        return params;
+        return spa_pod_params;
     }
 
     fn stream_process_callback(data: ?*anyopaque) callconv(.c) void {
@@ -505,7 +537,6 @@ pub const PipewireVideo = struct {
         error_: [*c]const u8,
     ) callconv(.c) void {
         const self: *Self = @ptrCast(@alignCast(data));
-        _ = self;
 
         log.debug("[stream_state_changed_callback] pipewire stream state change: {s} -> {s}", .{
             pw.pw_stream_state_as_string(old_state),
@@ -514,6 +545,11 @@ pub const PipewireVideo = struct {
 
         if (new_state == pw.PW_STREAM_STATE_ERROR) {
             log.debug("[stream_state_changed_callback] pipewire stream error: {s}", .{error_});
+            self.negotiation_failed = true;
+            self.negotiation_error_code = -1;
+            if (self.thread_loop) |thread_loop| {
+                pw.pw_thread_loop_signal(thread_loop, false);
+            }
         }
 
         if (new_state == pw.PW_STREAM_STATE_STREAMING) {
@@ -567,18 +603,18 @@ pub const PipewireVideo = struct {
     }
 
     fn send_stream_params(self: *Self) void {
-        var buffer = std.mem.zeroes([1024]u8);
-
+        var spa_pod_params = SpaPodParams.init(self.allocator) catch |err| {
+            log.err("[send_stream_params] failed to allocate SpaPodParams: {}", .{err});
+            return;
+        };
+        defer spa_pod_params.deinit();
         var builder = pw.spa_pod_builder{
-            .data = @ptrCast(&buffer),
-            .size = 1024,
+            .data = spa_pod_params.buffer[0..].ptr,
+            .size = @intCast(spa_pod_params.buffer[0..].len),
         };
 
-        var params = std.ArrayList(*pw.struct_spa_pod).initCapacity(self.allocator, 0) catch unreachable;
-        defer params.deinit(self.allocator);
-
         // This allows us to get the frame timestamp.
-        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
+        spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_ParamMeta,
             pw.SPA_PARAM_Meta,
@@ -593,7 +629,7 @@ pub const PipewireVideo = struct {
         )))) catch unreachable;
 
         // damage
-        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
+        spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_ParamMeta,
             pw.SPA_PARAM_Meta,
@@ -611,7 +647,7 @@ pub const PipewireVideo = struct {
         )))) catch unreachable;
 
         // cursor
-        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
+        spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_ParamMeta,
             pw.SPA_PARAM_Meta,
@@ -628,13 +664,17 @@ pub const PipewireVideo = struct {
             },
         )))) catch unreachable;
 
-        params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, pw.SPA_TYPE_OBJECT_ParamBuffers, pw.SPA_PARAM_Buffers, .{
+        spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, pw.SPA_TYPE_OBJECT_ParamBuffers, pw.SPA_PARAM_Buffers, .{
             pw.SPA_PARAM_BUFFERS_dataType,
             "i",
             @as(i32, 1 << pw.SPA_DATA_DmaBuf),
         })))) catch unreachable;
 
-        _ = pw.pw_stream_update_params(self.stream, @ptrCast(params.items.ptr), @intCast(params.items.len));
+        _ = pw.pw_stream_update_params(
+            self.stream,
+            @ptrCast(spa_pod_params.params.items.ptr),
+            @intCast(spa_pod_params.params.items.len),
+        );
     }
 
     fn stream_add_buffer_callback(data: ?*anyopaque, pwb: [*c]pw.struct_pw_buffer) callconv(.c) void {
@@ -674,7 +714,6 @@ pub const PipewireVideo = struct {
         res: i32,
         message: [*c]const u8,
     ) callconv(.c) void {
-        _ = opaque_;
         log.err(
             "[core_error_callback] pipewire error: id {}, seq: {}, res: {}: {s}",
             .{
@@ -684,5 +723,11 @@ pub const PipewireVideo = struct {
                 message,
             },
         );
+        const self: *Self = @ptrCast(@alignCast(opaque_ orelse return));
+        self.negotiation_failed = true;
+        self.negotiation_error_code = res;
+        if (self.thread_loop) |thread_loop| {
+            pw.pw_thread_loop_signal(thread_loop, false);
+        }
     }
 };
