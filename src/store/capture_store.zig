@@ -295,6 +295,20 @@ pub const CaptureStore = struct {
         }
     }
 
+    // ----------------------------------------------------------------------------
+    // Public effects.
+    // ----------------------------------------------------------------------------
+    pub fn effect_update_video_capture_fps(store: *Store, fps: u32) !void {
+        var self = &store.capture_store;
+        try self.video_session.video_capture.update_fps(fps);
+    }
+
+    pub fn effect_sync_replay_buffer_with_user_settings(store: *Store, replay_seconds: u32) void {
+        store.capture_store.audio_session.set_replay_buffer_seconds(replay_seconds);
+        store.capture_store.video_session.set_replay_buffer_seconds(replay_seconds);
+    }
+    // ----------------------------------------------------------------------------
+
     fn effect_load_system_audio_devices(store: *Store, _: anytype) !void {
         var user_settings = blk: {
             const state_locked = store.state.lock();
@@ -563,11 +577,6 @@ pub const CaptureStore = struct {
         try self.stop_recording_to_disk();
 
         store.dispatch(.{ .capture = .stop_recording_to_disk_success });
-    }
-
-    pub fn effect_sync_replay_buffer_with_user_settings(store: *Store, replay_seconds: u32) void {
-        store.capture_store.audio_session.set_replay_buffer_seconds(replay_seconds);
-        store.capture_store.video_session.set_replay_buffer_seconds(replay_seconds);
     }
 
     fn effect_save_replay(store: *Store, _: anytype) !void {
@@ -858,6 +867,6 @@ test "CaptureStore - update_replay_buffer_size" {
 }
 
 // ----------------------------------------------------------------------------
-// TODO: Start here. Still need to write tests for the rest of the message types.
+// TODO: Still need to write tests for the rest of the message types.
 // ----------------------------------------------------------------------------
 test "CaptureStore - start_replay_buffer" {}
