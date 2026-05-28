@@ -253,7 +253,7 @@ pub const Store = struct {
                 }
 
                 inline for (effect_fns) |effect_fn| {
-                    self.effect_io_group.async(self.io, struct {
+                    self.effect_io_group.concurrent(self.io, struct {
                         fn run(store: *Store, effect_payload: @TypeOf(payload)) void {
 
                             // NOTE: If compiler error here - payload in effect must match
@@ -281,7 +281,9 @@ pub const Store = struct {
                                 },
                             }
                         }
-                    }.run, .{ self, payload });
+                    }.run, .{ self, payload }) catch |err| {
+                        log.err("[execute_registered_effects] self.effect_io_group.concurrent error: {}", .{err});
+                    };
                 }
             },
         }
