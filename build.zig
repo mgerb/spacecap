@@ -61,6 +61,7 @@ fn add_shared_dependencies(
     const imguiz = b.dependency("imguiz", .{
         .target = target,
         .optimize = optimize,
+        .freetype = true,
     }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 

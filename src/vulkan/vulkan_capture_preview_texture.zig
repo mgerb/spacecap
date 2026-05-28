@@ -30,9 +30,8 @@ pub const VulkanCapturePreviewTexture = struct {
             .unnormalized_coordinates = .false,
         }, null);
 
-        const s: imguiz.VkSampler = @ptrFromInt(@intFromEnum(sampler));
         const i: imguiz.VkImageView = @ptrFromInt(@intFromEnum(image_view));
-        const descriptor_set = imguiz.cImGui_ImplVulkan_AddTexture(s, i, imguiz.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL).?;
+        const descriptor_set = imguiz.cImGui_ImplVulkan_AddTexture(i, imguiz.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL).?;
         const im_texture_ref = imguiz.ImTextureRef{
             ._TexID = @intFromPtr(descriptor_set),
         };

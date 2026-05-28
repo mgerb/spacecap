@@ -78,8 +78,8 @@
             .hash = "vulkan-0.0.0-r7Ytx7N9AwD7IZt5_XNHtkJ4G9qY0pCH-cpcOsbL8wzD",
         },
         .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#1c118ba37343de32f7a4db6715af914651ca7b9b",
-            .hash = "imguiz-0.0.0-sI63z6dxbgRbddJlMni21SmsxFtoO2AT0ZpmCNkm_Zro",
+            .url = "git+https://github.com/mgerb/imguiz#787e7937f7e3751a65ccd298a75250d3b1692c50",
+            .hash = "imguiz-0.0.0-sI63z1SJegRl31Pyxlt9AJI_bpklXzL-HM7hosFVbQsP",
         },
         .ffmpeg = .{
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",

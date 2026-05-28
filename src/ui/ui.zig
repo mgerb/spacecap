@@ -21,7 +21,100 @@ const WIDTH = 1600;
 const HEIGHT = 1000;
 
 const MIN_IMAGE_COUNT = 2;
+const IMGUI_FREETYPE_LOADER_FLAGS_LIGHT_HINTING = 1 << 3;
 var g_PipelineCache: c.VkPipelineCache = std.mem.zeroes(c.VkPipelineCache);
+
+fn setup_imgui_style() void {
+    c.ImGui_StyleColorsDark(null);
+
+    const style = c.ImGui_GetStyle();
+
+    style.*.Alpha = 1.0;
+    style.*.DisabledAlpha = 0.6;
+    style.*.WindowPadding = c.ImVec2{ .x = 8.0, .y = 8.0 };
+    style.*.WindowRounding = 1.0;
+    style.*.WindowBorderSize = 1.0;
+    style.*.WindowMinSize = c.ImVec2{ .x = 32.0, .y = 32.0 };
+    style.*.WindowTitleAlign = c.ImVec2{ .x = 0.0, .y = 0.5 };
+    style.*.WindowMenuButtonPosition = c.ImGuiDir_Left;
+    style.*.ChildRounding = 1.0;
+    style.*.ChildBorderSize = 1.0;
+    style.*.PopupRounding = 1.0;
+    style.*.PopupBorderSize = 1.0;
+    style.*.FramePadding = c.ImVec2{ .x = 4.0, .y = 3.0 };
+    style.*.FrameRounding = 1.0;
+    style.*.FrameBorderSize = 0.0;
+    style.*.ItemSpacing = c.ImVec2{ .x = 8.0, .y = 4.0 };
+    style.*.ItemInnerSpacing = c.ImVec2{ .x = 4.0, .y = 4.0 };
+    style.*.CellPadding = c.ImVec2{ .x = 4.0, .y = 2.0 };
+    style.*.IndentSpacing = 21.0;
+    style.*.ColumnsMinSpacing = 6.0;
+    style.*.ScrollbarSize = 14.0;
+    style.*.ScrollbarRounding = 4.0;
+    style.*.GrabMinSize = 10.0;
+    style.*.GrabRounding = 4.0;
+    style.*.TabRounding = 4.0;
+    style.*.TabBorderSize = 0.0;
+    style.*.TabCloseButtonMinWidthSelected = 0.0;
+    style.*.TabCloseButtonMinWidthUnselected = 0.0;
+    style.*.ColorButtonPosition = c.ImGuiDir_Right;
+    style.*.ButtonTextAlign = c.ImVec2{ .x = 0.5, .y = 0.5 };
+    style.*.SelectableTextAlign = c.ImVec2{ .x = 0.0, .y = 0.0 };
+
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Text))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextDisabled))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.5064378 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_WindowBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ChildBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PopupBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Border))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_BorderShadow))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgCollapsed))] = c.ImVec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.51 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_MenuBarBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrab))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabHovered))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabActive))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckMark))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrab))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrabActive))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Button))] = c.ImVec4{ .x = 0.16470589, .y = 0.4862745, .z = 0.7176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonActive))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Header))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Separator))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGrip))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Tab))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabActive))] = c.ImVec4{ .x = 0.16470589, .y = 0.4862745, .z = 0.7176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocused))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocusedActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLines))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLinesHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogram))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogramHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableHeaderBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderStrong))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderLight))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBgAlt))] = c.ImVec4{ .x = 1.0, .y = 0.99999, .z = 0.99999, .w = 0.06 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextSelectedBg))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_DragDropTarget))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavHighlight))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingHighlight))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19607843 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingDimBg))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19742489 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ModalWindowDimBg))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19742489 };
+}
 
 pub const UI = struct {
     const log = std.log.scoped(.ui);
@@ -185,14 +278,7 @@ pub const UI = struct {
         // io.*.ConfigFlags |= c.ImGuiConfigFlags_ViewportsEnable;
 
         // Setup Dear ImGui style
-        c.ImGui_StyleColorsDark(null);
-
-        const style = c.ImGui_GetStyle();
-        if (io.*.ConfigFlags & c.ImGuiConfigFlags_ViewportsEnable > 0) {
-            const window_bg_index: usize = @intCast(c.ImGuiCol_WindowBg);
-            const window_bg = &(style.*.Colors[0][window_bg_index]);
-            window_bg.w = 1.0;
-        }
+        setup_imgui_style();
 
         // Setup Platform/Renderer backends
         if (!c.cImGui_ImplSDL3_InitForVulkan(self.window.?)) {
@@ -200,10 +286,21 @@ pub const UI = struct {
         }
         errdefer c.cImGui_ImplSDL3_Shutdown();
 
-        const pool_size = vk.DescriptorPoolSize{
-            .type = .combined_image_sampler,
-            .descriptor_count = 1,
+        const pool_sizes = [_]vk.DescriptorPoolSize{
+            .{
+                .type = .sampled_image,
+                .descriptor_count = c.IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE,
+            },
+            .{
+                .type = .sampler,
+                .descriptor_count = c.IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE,
+            },
         };
+
+        var max_descriptor_sets: u32 = 0;
+        for (pool_sizes) |pool_size| {
+            max_descriptor_sets += pool_size.descriptor_count;
+        }
 
         const pool_info = vk.DescriptorPoolCreateInfo{
             .flags = .{
@@ -211,9 +308,9 @@ pub const UI = struct {
             },
             // NOTE: If we create more textures then this number
             // needs to increase, otherwise we'll get segfaults.
-            .max_sets = 10,
-            .p_pool_sizes = @ptrCast(&pool_size),
-            .pool_size_count = 1,
+            .max_sets = max_descriptor_sets,
+            .p_pool_sizes = @ptrCast(&pool_sizes),
+            .pool_size_count = pool_sizes.len,
         };
 
         // used for imgui/vulkan/sdl
@@ -257,7 +354,11 @@ pub const UI = struct {
         //IM_ASSERT(font != nullptr);
         const font_data = @embedFile("../fonts/LilexNerdFontMono-Regular.ttf");
         const font_cfg: c.ImFontConfig = .{
+            .PixelSnapH = false,
+            .OversampleH = 0,
+            .OversampleV = 0,
             .GlyphMaxAdvanceX = std.math.floatMax(f32),
+            .FontLoaderFlags = IMGUI_FREETYPE_LOADER_FLAGS_LIGHT_HINTING,
             .RasterizerMultiply = 1.0,
             .RasterizerDensity = 1.0,
             .ExtraSizeScale = 1.0,
