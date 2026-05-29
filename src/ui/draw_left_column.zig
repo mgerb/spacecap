@@ -6,8 +6,8 @@ const AUDIO_GAIN_MAX = @import("../store/capture_store.zig").AUDIO_GAIN_MAX;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const Store = @import("../store/store.zig").Store;
+const dockspace = @import("./dockspace.zig");
 
-pub const COLUMN_WIDTH = 380;
 const CONTROL_HEIGHT: f32 = 30;
 const GROUP_SPACING: f32 = 6;
 const GAIN_LABEL_WIDTH: f32 = 36.0;
@@ -168,21 +168,7 @@ fn draw_selected_audio_source_gain_sliders(allocator: std.mem.Allocator, store: 
 }
 
 pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Store.State) !void {
-    // Get viewport size
-    const viewport_pos = c.ImGui_GetMainViewport().*.Pos;
-    const viewport_size = c.ImGui_GetMainViewport().*.Size;
-
-    // Set position and size for the left panel window
-    c.ImGui_SetNextWindowPos(viewport_pos, 0);
-    c.ImGui_SetNextWindowSize(c.ImVec2{
-        .x = COLUMN_WIDTH,
-        .y = viewport_size.y,
-    }, 0);
-
-    _ = c.ImGui_Begin("left column", null, c.ImGuiWindowFlags_NoTitleBar |
-        c.ImGuiWindowFlags_NoResize |
-        c.ImGuiWindowFlags_NoMove |
-        c.ImGuiWindowFlags_NoCollapse);
+    _ = c.ImGui_Begin(dockspace.LEFT_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
     defer c.ImGui_End();
 
     if (c.ImGui_BeginTabBar("MainTabBar", 0)) {
@@ -506,7 +492,9 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
         c.ImGui_PopTextWrapPos();
     }
 
+    c.ImGui_PushTextWrapPos(0);
     c.ImGui_Text("Restore capture source on startup");
+    c.ImGui_PopTextWrapPos();
     c.ImGui_SameLine();
     imgui_util.help_marker("Try to restore the last capture source when Spacecap starts.");
     if (c.ImGui_Checkbox("##restore_capture_source_on_startup", &restore_capture_source_on_startup)) {
@@ -516,7 +504,9 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
     }
 
     {
+        c.ImGui_PushTextWrapPos(0);
         c.ImGui_Text("Start replay buffer on startup");
+        c.ImGui_PopTextWrapPos();
         c.ImGui_SameLine();
         imgui_util.help_marker("Start the replay buffer when Spacecap starts. Requires 'Restore capture source on startup'.");
         c.ImGui_BeginDisabled(!restore_capture_source_on_startup);
