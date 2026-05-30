@@ -9,12 +9,15 @@ const Arc = @import("../arc.zig").Arc;
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
+const draw_dockspace = @import("./dockspace.zig").draw_dockspace;
 const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
 const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
+const draw_bottom_panel = @import("./draw_bottom_panel.zig").draw_bottom_panel;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 const AppIcon = @import("./app_icon.zig").AppIcon;
 const Store = @import("../store/store.zig").Store;
+const util = @import("../util.zig");
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -132,6 +135,7 @@ pub const UI = struct {
     descriptor_pool: ?vk.DescriptorPool = null,
     swapchain_rebuild: bool = false,
     wayland_present_gate: ?WaylandPresentGate = null,
+    imgui_ini_path: ?[:0]u8 = null,
     app_icon: AppIcon,
 
     /// Init SDL and return new UI instance.
@@ -175,8 +179,16 @@ pub const UI = struct {
         }
 
         self.app_icon.deinit();
+        if (self.imgui_ini_path) |imgui_ini_path| {
+            c.ImGui_SaveIniSettingsToDisk(imgui_ini_path.ptr);
+        }
         c.cImGui_ImplVulkan_Shutdown();
         c.cImGui_ImplSDL3_Shutdown();
+        c.ImGui_DestroyContext(null);
+        if (self.imgui_ini_path) |imgui_ini_path| {
+            // Must be freed after ImGui_DestroyContext.
+            self.allocator.free(imgui_ini_path);
+        }
         if (self.wayland_present_gate) |*wayland_present_gate| {
             wayland_present_gate.deinit();
         }
@@ -274,8 +286,22 @@ pub const UI = struct {
         const io = c.ImGui_GetIO();
         io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
         io.*.ConfigFlags |= c.ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
-        // io.*.ConfigFlags |= c.ImGuiConfigFlags_DockingEnable;
+        io.*.ConfigFlags |= c.ImGuiConfigFlags_DockingEnable;
         // io.*.ConfigFlags |= c.ImGuiConfigFlags_ViewportsEnable;
+
+        // ----------------------------------------------------------------------------
+        // Save the ImGui .ini config file in the Spacecap config directory.
+        // ----------------------------------------------------------------------------
+        const app_data_dir = try util.get_app_data_dir(self.allocator, self.io);
+        defer self.allocator.free(app_data_dir);
+        const imgui_ini_path = try std.fs.path.join(self.allocator, &.{ app_data_dir, "imgui.ini" });
+        defer self.allocator.free(imgui_ini_path);
+        self.imgui_ini_path = try self.allocator.dupeZ(u8, imgui_ini_path);
+        errdefer {
+            self.allocator.free(self.imgui_ini_path.?);
+            self.imgui_ini_path = null;
+        }
+        io.*.IniFilename = self.imgui_ini_path.?.ptr;
 
         // Setup Dear ImGui style
         setup_imgui_style();
@@ -485,6 +511,8 @@ pub const UI = struct {
                         }
                     }
 
+                    draw_dockspace();
+
                     try draw_left_column(self.allocator, self.store, state);
 
                     if (!state.capture.is_video_capture_supprted) {
@@ -503,7 +531,11 @@ pub const UI = struct {
                                 } });
                             }
                         }
+                    } else {
+                        try draw_video_preview(.empty);
                     }
+
+                    draw_bottom_panel();
                 }
 
                 // Rendering while preview locks are held.
