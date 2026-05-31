@@ -3,7 +3,7 @@ const ChanError = @import("../../channel.zig").ChanError;
 const VulkanImageBuffer = @import("../../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const Arc = @import("../../arc.zig").Arc;
 
-pub const VideoCaptureSourceType = enum { window, desktop };
+pub const VideoCaptureSourceType = enum { window, desktop, all };
 
 pub const VideoCaptureSelection = union(enum) {
     source_type: VideoCaptureSourceType,

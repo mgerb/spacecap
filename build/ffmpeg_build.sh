@@ -72,7 +72,7 @@ case "$target" in
     ;;
 esac
 
-./configure \
+CFLAGS="-Wno-unused-function" ./configure \
   --prefix="$install_prefix" \
   "${common_configure_flags[@]}" \
   "${target_configure_flags[@]}"

@@ -71,7 +71,7 @@ pub fn export_replay_buffers(
     if (audio_replay_buffer) |_audio_replay_buffer| {
         if (audio_sample_window) |sample_window| {
             muxer.set_audio_sample_window(sample_window);
-            try muxer.write_audio_packets(&_audio_replay_buffer.packets);
+            _ = try muxer.write_audio_packets(&_audio_replay_buffer.packets);
         }
     }
 

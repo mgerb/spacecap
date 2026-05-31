@@ -111,6 +111,12 @@ pub const VideoReplayBuffer = struct {
         return 0;
     }
 
+    pub fn get_start_time(self: *const Self) ?std.Io.Timestamp {
+        const first = self.frames.first orelse return null;
+        const first_node: *VideoReplayBufferNode = @alignCast(@fieldParentPtr("node", first));
+        return .{ .nanoseconds = @intCast(first_node.data.timestamp_ns) };
+    }
+
     /// Remove and deallocate first frame
     fn remove_first_frame(self: *Self) void {
         if (self.frames.popFirst()) |first| {

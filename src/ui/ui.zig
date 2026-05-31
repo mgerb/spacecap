@@ -18,6 +18,7 @@ const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentG
 const AppIcon = @import("./app_icon.zig").AppIcon;
 const Store = @import("../store/store.zig").Store;
 const util = @import("../util.zig");
+const theme = @import("./theme.zig");
 
 // TODO: save and restore window size
 const WIDTH = 1600;
@@ -64,59 +65,60 @@ fn setup_imgui_style() void {
     style.*.ButtonTextAlign = c.ImVec2{ .x = 0.5, .y = 0.5 };
     style.*.SelectableTextAlign = c.ImVec2{ .x = 0.0, .y = 0.0 };
 
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Text))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextDisabled))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.5064378 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_WindowBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ChildBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PopupBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Border))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_BorderShadow))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgCollapsed))] = c.ImVec4{ .x = 0.0, .y = 0.0, .z = 0.0, .w = 0.51 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_MenuBarBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrab))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabHovered))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabActive))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckMark))] = c.ImVec4{ .x = 0.9490196, .y = 0.9019608, .z = 0.8117647, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrab))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrabActive))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Button))] = c.ImVec4{ .x = 0.16470589, .y = 0.4862745, .z = 0.7176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonActive))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Header))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Separator))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGrip))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripHovered))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Tab))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabActive))] = c.ImVec4{ .x = 0.16470589, .y = 0.4862745, .z = 0.7176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocused))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocusedActive))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLines))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLinesHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogram))] = c.ImVec4{ .x = 0.88235295, .y = 0.8, .z = 0.6784314, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogramHovered))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableHeaderBg))] = c.ImVec4{ .x = 0.12941177, .y = 0.12941177, .z = 0.12941177, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderStrong))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderLight))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBg))] = c.ImVec4{ .x = 0.039215688, .y = 0.039215688, .z = 0.039215688, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBgAlt))] = c.ImVec4{ .x = 1.0, .y = 0.99999, .z = 0.99999, .w = 0.06 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextSelectedBg))] = c.ImVec4{ .x = 0.21176471, .y = 0.21176471, .z = 0.21176471, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_DragDropTarget))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavHighlight))] = c.ImVec4{ .x = 0.21568628, .y = 0.5686275, .z = 0.8235294, .w = 1.0 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingHighlight))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19607843 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingDimBg))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19742489 };
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ModalWindowDimBg))] = c.ImVec4{ .x = 0.98039216, .y = 0.95686275, .z = 0.92156863, .w = 0.19742489 };
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Text))] = theme.text.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextDisabled))] = theme.text.as_vec4_with_alpha(0.5);
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_WindowBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ChildBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PopupBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Border))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_BorderShadow))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBg))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgHovered))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgCollapsed))] = theme.dark_1.as_vec4_with_alpha(0.5);
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_MenuBarBg))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrab))] = theme.accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabHovered))] = theme.light_accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabActive))] = theme.light_accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckMark))] = theme.light_accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckboxSelectedBg))] = theme.dark_blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrab))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrabActive))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Button))] = theme.dark_blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonHovered))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonActive))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Header))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderHovered))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Separator))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorHovered))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGrip))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripHovered))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Tab))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabHovered))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabActive))] = theme.dark_blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocused))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocusedActive))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLines))] = theme.accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLinesHovered))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogram))] = theme.accent.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogramHovered))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableHeaderBg))] = theme.dark_2.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderStrong))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderLight))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBg))] = theme.dark_1.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBgAlt))] = theme.text.as_vec4_with_alpha(0.06);
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextSelectedBg))] = theme.dark_3.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_DragDropTarget))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavHighlight))] = theme.blue.as_vec4();
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingHighlight))] = theme.text.as_vec4_with_alpha(0.19607843);
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingDimBg))] = theme.text.as_vec4_with_alpha(0.19742489);
+    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ModalWindowDimBg))] = theme.text.as_vec4_with_alpha(0.19742489);
 }
 
 pub const UI = struct {
@@ -378,7 +380,7 @@ pub const UI = struct {
         //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
         //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
         //IM_ASSERT(font != nullptr);
-        const font_data = @embedFile("../fonts/LilexNerdFontMono-Regular.ttf");
+        const font_data = @embedFile("../fonts/LilexNerdFont-Regular.ttf");
         const font_cfg: c.ImFontConfig = .{
             .PixelSnapH = false,
             .OversampleH = 0,
@@ -516,7 +518,7 @@ pub const UI = struct {
                     try draw_left_column(self.allocator, self.store, state);
 
                     if (!state.capture.is_video_capture_supprted) {
-                        try draw_video_preview(.vulkan_video_not_supported);
+                        try draw_video_preview(self.store, .vulkan_video_not_supported);
                     } else if (state.capture.video_capture_active) {
                         const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
                         defer capture_preview_ring_buffer_locked.unlock();
@@ -524,7 +526,7 @@ pub const UI = struct {
                             if (capture_preview_ring_buffer.get_most_recent_buffer()) |buffer| {
                                 capture_preview_buffer = buffer;
                                 capture_preview_texture = try self.vulkan.get_capture_preview_texture(buffer.as_ptr());
-                                try draw_video_preview(.{ .capture_preview = .{
+                                try draw_video_preview(self.store, .{ .capture_preview = .{
                                     .capture_preview_buffer = capture_preview_texture.?.as_ptr(),
                                     .width = buffer.as_ptr().width,
                                     .height = buffer.as_ptr().height,
@@ -532,10 +534,10 @@ pub const UI = struct {
                             }
                         }
                     } else {
-                        try draw_video_preview(.empty);
+                        try draw_video_preview(self.store, .empty);
                     }
 
-                    draw_bottom_panel();
+                    try draw_bottom_panel(self.allocator, self.store, state);
                 }
 
                 // Rendering while preview locks are held.

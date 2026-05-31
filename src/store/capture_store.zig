@@ -58,8 +58,8 @@ pub const CaptureStore = struct {
         start_audio_capture_thread,
 
         update_replay_buffer_size: union(enum) {
-            audio_size: u64,
-            video: struct { size: u64, seconds: u32 },
+            audio_bytes: u64,
+            video: struct { bytes: u64, start_time: ?std.Io.Timestamp },
         },
 
         start_replay_buffer,
@@ -74,11 +74,12 @@ pub const CaptureStore = struct {
         save_replay_fail,
 
         start_recording_to_disk,
-        start_recording_to_disk_success,
+        start_recording_to_disk_success: std.Io.Timestamp,
         start_recording_to_disk_fail,
         stop_recording_to_disk,
         stop_recording_to_disk_success,
         stop_recording_to_disk_fail,
+        update_recording_bytes: union(enum) { audio: u64, video: u64 },
 
         // Video
         select_video_source: VideoCaptureSelection,
@@ -141,30 +142,54 @@ pub const CaptureStore = struct {
             }
         } = .{},
 
-        replay_buffer: struct {
-            video_size: u64 = 0,
-            audio_size: u64 = 0,
-            seconds: u64 = 0,
+        recording_metrics: CaptureMetrics,
+        replay_buffer_metrics: CaptureMetrics,
+
+        /// Stores size and duration.
+        const CaptureMetrics = struct {
+            audio_bytes: u64 = 0,
+            video_bytes: u64 = 0,
+            start_time: ?std.Io.Timestamp = null,
+
+            pub fn total_bytes(self: *const @This()) u64 {
+                return self.audio_bytes + self.video_bytes;
+            }
+
+            pub fn total_in_mb(self: *const @This()) f64 {
+                return @as(f64, @floatFromInt(self.total_bytes())) / (1024.0 * 1024.0);
+            }
 
             pub fn size_in_mb(self: *const @This(), size_type: enum { total, audio, video }) f64 {
                 return switch (size_type) {
-                    .total => _size_in_mb(self.audio_size + self.video_size),
-                    .audio => _size_in_mb(self.audio_size),
-                    .video => _size_in_mb(self.video_size),
+                    .total => self.total_in_mb(),
+                    .audio => bytes_in_mb(self.audio_bytes),
+                    .video => bytes_in_mb(self.video_bytes),
                 };
             }
 
-            fn _size_in_mb(size: u64) f64 {
-                const mb = @as(f64, @floatFromInt(size)) / (1024.0 * 1024.0);
-                return mb;
+            pub fn duration_seconds(self: *const @This(), io: std.Io) ?u64 {
+                if (self.start_time) |start| {
+                    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
+                    const elapsed_ns = now - start.nanoseconds;
+                    if (elapsed_ns < 0) {
+                        return 0;
+                    }
+                    return @intCast(@divTrunc(elapsed_ns, std.time.ns_per_s));
+                }
+                return null;
             }
-        },
+
+            fn bytes_in_mb(bytes: u64) f64 {
+                return @as(f64, @floatFromInt(bytes)) / (1024.0 * 1024.0);
+            }
+        };
 
         pub fn init(allocator: Allocator) !@This() {
             return .{
                 .allocator = allocator,
                 .audio_devices = try .init(allocator),
-                .replay_buffer = .{},
+                .replay_buffer_metrics = .{},
+                .recording_metrics = .{},
             };
         }
 
@@ -228,13 +253,21 @@ pub const CaptureStore = struct {
                     },
                     .stop_replay_buffer_success, .start_replay_buffer_fail => {
                         state.capture.replay_buffer_active = false;
-                        state.capture.replay_buffer = .{};
+                        state.capture.replay_buffer_metrics = .{};
                     },
-                    .start_recording_to_disk_success => {
+                    .start_recording_to_disk_success => |start_time| {
                         state.capture.recording_to_disk = true;
+                        state.capture.recording_metrics = .{ .start_time = start_time };
                     },
                     .stop_recording_to_disk_success, .start_recording_to_disk_fail => {
                         state.capture.recording_to_disk = false;
+                        state.capture.recording_metrics = .{};
+                    },
+                    .update_recording_bytes => |b| {
+                        switch (b) {
+                            .audio => |bytes| state.capture.recording_metrics.audio_bytes += bytes,
+                            .video => |bytes| state.capture.recording_metrics.video_bytes += bytes,
+                        }
                     },
                     .start_video_capture_success => {
                         state.capture.video_capture_active = true;
@@ -246,9 +279,10 @@ pub const CaptureStore = struct {
                     .select_video_source_prepared => {
                         // Selecting a new video source always stops the current video capture.
                         state.capture.video_capture_active = false;
-                        state.capture.replay_buffer = .{};
+                        state.capture.replay_buffer_metrics = .{};
                         state.capture.replay_buffer_active = false;
                         state.capture.recording_to_disk = false;
+                        state.capture.recording_metrics = .{};
                     },
                     .load_system_audio_devices_success => |*audio_devices| {
                         defer @constCast(audio_devices).deinit();
@@ -278,12 +312,12 @@ pub const CaptureStore = struct {
                     },
                     .update_replay_buffer_size => |payload| {
                         switch (payload) {
-                            .audio_size => |audio_size| {
-                                state.capture.replay_buffer.audio_size = audio_size;
+                            .audio_bytes => |audio_bytes| {
+                                state.capture.replay_buffer_metrics.audio_bytes = audio_bytes;
                             },
                             .video => |video| {
-                                state.capture.replay_buffer.video_size = video.size;
-                                state.capture.replay_buffer.seconds = video.seconds;
+                                state.capture.replay_buffer_metrics.video_bytes = video.bytes;
+                                state.capture.replay_buffer_metrics.start_time = video.start_time;
                             },
                         }
                     },
@@ -544,7 +578,13 @@ pub const CaptureStore = struct {
             local_state.video_output_directory.bytes,
         ));
 
-        store.dispatch(.{ .capture = .start_recording_to_disk_success });
+        store.dispatch(
+            .{
+                .capture = .{
+                    .start_recording_to_disk_success = std.Io.Timestamp.now(store.io, .awake),
+                },
+            },
+        );
     }
 
     fn stop_recording_to_disk(self: *Self) !void {
@@ -846,24 +886,25 @@ test "CaptureStore - update_replay_buffer_size" {
 
     const size = 1024 * 1024 * 10; // 10MB
 
-    store.dispatch(.{ .capture = .{ .update_replay_buffer_size = .{ .audio_size = size } } });
+    store.dispatch(.{ .capture = .{ .update_replay_buffer_size = .{ .audio_bytes = size } } });
     store.run(.{ .once = true, .wait_for_effects = true });
+    const start_time = std.Io.Timestamp.now(std.testing.io, .awake);
     store.dispatch(.{
         .capture = .{
             .update_replay_buffer_size = .{
                 .video = .{
-                    .seconds = 1,
-                    .size = size,
+                    .bytes = size,
+                    .start_time = start_time,
                 },
             },
         },
     });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    try std.testing.expectEqual(1, state.capture.replay_buffer.seconds);
-    try std.testing.expectEqual(10, state.capture.replay_buffer.size_in_mb(.audio));
-    try std.testing.expectEqual(10, state.capture.replay_buffer.size_in_mb(.video));
-    try std.testing.expectEqual(20, state.capture.replay_buffer.size_in_mb(.total));
+    try std.testing.expectEqual(start_time.nanoseconds, state.capture.replay_buffer_metrics.start_time.?.nanoseconds);
+    try std.testing.expectEqual(10, state.capture.replay_buffer_metrics.size_in_mb(.audio));
+    try std.testing.expectEqual(10, state.capture.replay_buffer_metrics.size_in_mb(.video));
+    try std.testing.expectEqual(20, state.capture.replay_buffer_metrics.size_in_mb(.total));
 }
 
 // ----------------------------------------------------------------------------

@@ -1,8 +1,10 @@
 const c = @import("imguiz").imguiz;
 const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const dockspace = @import("./dockspace.zig");
+const Store = @import("../store/store.zig").Store;
 
 pub fn draw_video_preview(
+    store: *Store,
     args: union(enum) {
         // The empty state is for rendering a balck background even when
         // a capture source isn't available.
@@ -30,7 +32,16 @@ pub fn draw_video_preview(
     const container_height = container_size.y;
 
     switch (args) {
-        .empty => {},
+        .empty => {
+            const button_width: f32 = 200;
+            const button_height = c.ImGui_GetFrameHeight();
+            const cursor_x = (container_width - button_width) / 2;
+            const cursor_y = (container_height - button_height) / 2;
+            c.ImGui_SetCursorPos(.{ .x = cursor_x, .y = cursor_y });
+            if (c.ImGui_ButtonEx("󰦳 Select Source", .{ .x = button_width, .y = button_height })) {
+                store.dispatch(.{ .capture = .{ .select_video_source = .{ .source_type = .all } } });
+            }
+        },
         .capture_preview => |capture_preview| {
             const capture_width: f32 = @floatFromInt(capture_preview.width);
             const capture_height: f32 = @floatFromInt(capture_preview.height);
