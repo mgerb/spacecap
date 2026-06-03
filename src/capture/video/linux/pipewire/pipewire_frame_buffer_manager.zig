@@ -141,14 +141,6 @@ pub const PipewireFrameBufferManager = struct {
     }
 
     fn destroy_buffer_image(self: *Self, buffer_image: *PipewireFrameBufferImage) void {
-        const did_wait = self.vulkan.wait_for_all_graphics_fences_begin();
-        defer {
-            if (did_wait) {
-                self.vulkan.wait_for_all_graphics_fences_end();
-            } else |err| {
-                log.err("[destroy_buffer_image] waitForAllGraphicsFencesBegin error: {}", .{err});
-            }
-        }
         self.vulkan.device.destroyImageView(buffer_image.image_view, null);
         self.vulkan.device.destroyImage(buffer_image.image, null);
         self.vulkan.device.freeMemory(buffer_image.device_memory, null);

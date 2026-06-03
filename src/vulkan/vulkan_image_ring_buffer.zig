@@ -4,13 +4,16 @@ const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
 const Arc = @import("../arc.zig").Arc;
 
+const BUFFER_SIZE = 3;
+
 pub const VulkanImageRingBuffer = struct {
     const Self = @This();
+    const log = std.log.scoped(.vulkan_image_ring_buffer);
+
     allocator: std.mem.Allocator,
     io: std.Io,
-    // TODO: Make ring buffer size variable at comptime.
-    // TODO: Wrap in mutex.
-    buffers: [3]Arc(VulkanImageBuffer) = undefined,
+    // TODO: We may want to wrap this in a Mutex.
+    buffers: [BUFFER_SIZE]Arc(VulkanImageBuffer) = undefined,
     vulkan: *Vulkan,
     most_recent_index: ?u32 = null,
     mutex: std.Io.Mutex = .init,
@@ -41,6 +44,25 @@ pub const VulkanImageRingBuffer = struct {
         defer self.allocator.destroy(self);
         for (self.buffers) |buffer| {
             buffer.deinit();
+        }
+    }
+
+    pub fn wait_for_fences(self: *Self) void {
+        var wait_fences: [BUFFER_SIZE]vk.Fence = undefined;
+        for (self.buffers, 0..) |buffer, i| {
+            wait_fences[i] = buffer.as_ptr().fence;
+        }
+
+        const result = self.vulkan.device.waitForFences(
+            wait_fences[0..],
+            .true,
+            std.math.maxInt(u64),
+        ) catch |err| {
+            log.err("[wait_for_fences] wait for capture ring buffer fences error: {}", .{err});
+            return;
+        };
+        if (result != .success) {
+            log.err("[wait_for_fences] wait for capture ring buffer fences result: {}", .{result});
         }
     }
 
