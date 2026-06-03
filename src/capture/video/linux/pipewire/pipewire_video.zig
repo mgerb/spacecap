@@ -627,7 +627,10 @@ pub const PipewireVideo = struct {
                 "i",
                 @as(i32, @intCast(@sizeOf(pw.spa_meta_header))),
             },
-        )))) catch unreachable;
+        )))) catch |err| {
+            log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
+            return;
+        };
 
         // damage
         spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
@@ -645,7 +648,10 @@ pub const PipewireVideo = struct {
                 @as(i32, @sizeOf(pw.spa_meta_region) * 1),
                 @as(i32, @sizeOf(pw.spa_meta_region) * 16),
             },
-        )))) catch unreachable;
+        )))) catch |err| {
+            log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
+            return;
+        };
 
         // cursor
         spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
@@ -663,13 +669,19 @@ pub const PipewireVideo = struct {
                 @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1 + 1 * 4),
                 @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1024 + 1024 * 4),
             },
-        )))) catch unreachable;
+        )))) catch |err| {
+            log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
+            return;
+        };
 
         spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(&builder, pw.SPA_TYPE_OBJECT_ParamBuffers, pw.SPA_PARAM_Buffers, .{
             pw.SPA_PARAM_BUFFERS_dataType,
             "i",
             @as(i32, 1 << pw.SPA_DATA_DmaBuf),
-        })))) catch unreachable;
+        })))) catch |err| {
+            log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
+            return;
+        };
 
         _ = pw.pw_stream_update_params(
             self.stream,

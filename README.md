@@ -1,7 +1,7 @@
-<h1 align="center">Spacecap</h1>
 <p align="center">
     <img align="center" src="./packaging/logo_blue.png"/>
 </p>
+<h1 align="center">Spacecap</h1>
 
 A hardware accelerated screen recording/replay application focused on performance.
 Currently only supports Linux. Still in early development (see roadmap below).
@@ -84,3 +84,21 @@ nix develop -c zig build run -Dnix
 # Test
 nix develop -c zig build test -Dnix
 ```
+
+### Logging
+
+By default, Spacecap only writes error logs to `error.log`. Set the
+`SPACECAP_LOG_LEVEL` environment variable to one of the following to change this
+behavior:
+
+- debug
+- info
+- warning
+- error
+
+Crash logs are written to `crash.log`. This happens when a panic occurs.
+
+#### Log Location
+
+- **Linux**: `$XDG_CONFIG_HOME/spacecap`, or `$HOME/.config/spacecap`
+- **Windows**: `%APPDATA%\spacecap`.

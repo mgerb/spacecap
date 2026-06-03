@@ -83,7 +83,7 @@ jobs:
           echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
 
       - name: Build Release Binaries
-        run: nix develop -c zig build ${{ steps.version.outputs.release_build_args }} -Dappimage -Doptimize=ReleaseFast
+        run: nix develop -c zig build ${{ steps.version.outputs.release_build_args }} -Dappimage -Doptimize=ReleaseSafe
 
       # - name: Package Linux
       #   run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux

@@ -286,8 +286,6 @@ pub const VideoSession = struct {
             const next_projected_frame_start_time = previous_frame_start_time + @as(u64, @intFromFloat(ns_per_frame));
 
             if (previous_frame_start_time > 0 and next_projected_frame_start_time > now) {
-                // TODO: add to state
-                Util.print_elapsed(self.io, previous_frame_start_time, "previous_frame_start_time");
                 try std.Io.sleep(self.store.io, .fromNanoseconds(@intCast(next_projected_frame_start_time - now)), .awake);
             }
 

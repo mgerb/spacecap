@@ -103,7 +103,7 @@ pub const VideoReplayBuffer = struct {
 
                 if (first_node != last_node) {
                     const total_time = last_node.data.timestamp_ns - first_node.data.timestamp_ns;
-                    const total_seconds: u32 = @intCast(std.math.divCeil(i128, total_time, std.time.ns_per_s) catch unreachable);
+                    const total_seconds: u32 = @intCast(std.math.divCeil(i128, total_time, std.time.ns_per_s) catch @panic("divCeil error"));
                     return total_seconds;
                 }
             }

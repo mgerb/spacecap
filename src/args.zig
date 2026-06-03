@@ -50,14 +50,13 @@ pub fn parse(init: std.process.Init) ?Args {
     } else if (comptime Util.is_windows()) {
         return parse_windows(init);
     } else {
-        log.err("unsupported platform", .{});
-        unreachable;
+        @compileError("unsupported platform");
     }
 }
 
 fn print_version(io: std.Io) void {
     var stdout = std.Io.File.stdout().writer(io, &.{});
-    stdout.interface.print("{s}\n", .{build_options.version}) catch unreachable;
+    stdout.interface.print("{s}\n", .{build_options.version}) catch @panic("print_version error");
 }
 
 fn parse_linux(init: std.process.Init) ?Args {

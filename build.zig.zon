@@ -85,13 +85,13 @@
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",
             .hash = "N-V-__8AAH4RHQXHEafp_hkUel3EMeK1wjHBfaIYYxYsKdiM",
         },
-        .pipewire = .{
-            .url = "https://github.com/mgerb/pipewire/archive/refs/heads/zig-0.16.0.tar.gz",
-            .hash = "pipewire-1.6.3-tKslQ_-KAQBG5PNtHtIRFe7BbdJBHKamvj_ySBC1TDFE",
-        },
         .clap = .{
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
             .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
+        },
+        .pipewire = .{
+            .url = "git+https://github.com/mgerb/pipewire#80b7f695e14d2726ba59f2ad03cbc7cdd6066d12",
+            .hash = "pipewire-1.6.3-tKslQ1aLAQAzbaWMWTqfvQKzzUaKx34CBpE6hWT4HRNY",
         },
     },
 

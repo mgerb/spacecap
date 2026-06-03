@@ -188,7 +188,8 @@ pub const PipewireFrameBufferManager = struct {
 
         var import_fd_info = vk.ImportMemoryFdInfoKHR{
             .handle_type = .{ .dma_buf_bit_ext = true },
-            .fd = c.fcntl(@intCast(fd), c.F_DUPFD_CLOEXEC, @as(u32, 0)),
+            // TODO: This could error (-1). We should probably handle this scenario.
+            .fd = @intCast(std.os.linux.fcntl(@intCast(fd), std.os.linux.F.DUPFD_CLOEXEC, 0)),
         };
 
         // NOTE: This is critical for Nvidia cards. Causes buffer to be empty without it.

@@ -199,7 +199,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         const self: *Self = @ptrCast(@alignCast(args));
         // NOTE: This is not implemented in most xdg desktop portal implementations yet.
         // We'll revisit this later.
-        self.configure_shortcuts() catch unreachable;
+        self.configure_shortcuts();
         return 0;
     }
 
@@ -207,8 +207,8 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     // It currently does not work in my KDE Plasma 6 desktop environment. Need to revisit
     // this later.
     // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.impl.portal.GlobalShortcuts.html#org-freedesktop-impl-portal-globalshortcuts-configureshortcuts
-    fn configure_shortcuts(self: *Self) !void {
-        const handle = self.handle orelse return error.NoSession;
+    fn configure_shortcuts(self: *Self) void {
+        const handle = self.handle orelse @panic("handle should never be null");
 
         // TODO: Need to figure out how to get the activation token;
         const activation_token = "todo";
@@ -294,12 +294,21 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-createsession
                 .create_session => {
                     if (self.create_session.restore_session) {
-                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, shortcuts.io, "session_token") catch unreachable;
+                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, shortcuts.io, "session_token") catch |err| {
+                            log.err("[make_payload] TokenStorage.load_token_z error: {}", .{err});
+                            return null;
+                        };
                     }
 
                     if (shortcuts.session_token == null) {
-                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator, shortcuts.io) catch unreachable);
-                        TokenStorage.save_token(shortcuts.allocator, shortcuts.io, "session_token", shortcuts.session_token.?) catch unreachable;
+                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator, shortcuts.io) catch |err| {
+                            log.err("[make_payload] TokenStorage.generate_token error: {}", .{err});
+                            return null;
+                        });
+                        TokenStorage.save_token(shortcuts.allocator, shortcuts.io, "session_token", shortcuts.session_token.?) catch |err| {
+                            log.err("[make_payload] TokenStorage.save_token error: {}", .{err});
+                            return null;
+                        };
                     }
 
                     assert(shortcuts.session_token != null);
