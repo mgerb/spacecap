@@ -13,15 +13,13 @@ Currently only supports Linux. Still in early development (see roadmap below).
 
 ---
 
-![screenshot2](./screenshots/screenshot_3.png)
-
-<p align="center">(very early screenshot - UI still in development)</p>
+![screenshot2](./docs/screenshot_4.png)
 
 ## Features
 
 - Desktop/window capture.
-- Record.
-- Replay - save last n seconds of video (buffered in memory).
+- Screen recording.
+- Replay buffer - save last n seconds of video (buffered in memory).
 - Capture preview.
 - Global keybinds.
 
@@ -32,7 +30,7 @@ Currently only supports Linux. Still in early development (see roadmap below).
   - Simple video editor (trim start/end).
   - File browser to select videos to edit.
 - Additional video output formats (mp4, mov, mkv, gif, etc.).
-- Windows capture.
+- Windows support.
 
 ## Requirements
 

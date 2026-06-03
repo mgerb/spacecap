@@ -240,9 +240,14 @@ pub const Muxer = struct {
         self.previous_pts = current_pts;
     }
 
-    pub fn write_audio_packets(self: *Self, packets: *std.DoublyLinkedList) !void {
-        if (self.audio_stream == null) return;
-        const start_sample = self.audio_start_sample orelse return;
+    pub fn write_audio_packets(self: *Self, packets: *std.DoublyLinkedList) !u64 {
+        var total_bytes: u64 = 0;
+
+        if (self.audio_stream == null) {
+            return 0;
+        }
+
+        const start_sample = self.audio_start_sample orelse return 0;
 
         var pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
         defer ffmpeg.av_packet_free(&pkt);
@@ -256,7 +261,9 @@ pub const Muxer = struct {
                 if (packet_start >= end_sample) break;
             }
             try self.write_audio_packet(pkt, packet_node, start_sample);
+            total_bytes += @as(u64, @intCast(packet_node.data.*.size));
         }
+        return total_bytes;
     }
 
     pub fn flush_video(self: *Self) !void {

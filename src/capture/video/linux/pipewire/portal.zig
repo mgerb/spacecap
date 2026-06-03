@@ -143,6 +143,7 @@ pub const Portal = struct {
             .source_type => |source_type| switch (source_type) {
                 .desktop => c.XDP_OUTPUT_MONITOR,
                 .window => c.XDP_OUTPUT_WINDOW,
+                .all => c.XDP_OUTPUT_MONITOR | c.XDP_OUTPUT_WINDOW,
             },
         };
 

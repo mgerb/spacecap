@@ -177,23 +177,38 @@ pub const VideoSession = struct {
     }
 
     pub fn stop_replay_buffer(self: *Self) !void {
-        self.video_record_mutex.lockUncancelable(self.io);
-        defer self.video_record_mutex.unlock(self.io);
-        var video_replay_buffer_locked = self.video_replay_buffer.lock();
-        defer video_replay_buffer_locked.unlock();
-        if (video_replay_buffer_locked.unwrap()) |video_replay_buffer| {
-            video_replay_buffer.deinit();
-            video_replay_buffer_locked.set(null);
-        }
-        const is_recording_to_disk = blk: {
-            const muxer_locked = self.store.capture_store.muxer.lock();
-            defer muxer_locked.unlock();
-            const muxer_ptr = muxer_locked.unwrap_ptr();
-            break :blk muxer_ptr.* != null;
-        };
+        var video_replay_buffer: ?*VideoReplayBuffer = null;
 
-        if (!is_recording_to_disk) {
-            self.vulkan.deinit_video_encoder();
+        defer {
+            if (video_replay_buffer) |vrb| {
+                // NOTE: It is important that this deinits outside the
+                // video_record_mutex, because it deallocates every frame in
+                // the buffer, which can be slow. It may clause a blip in
+                // recording, especially if the buffer is very big.
+                vrb.deinit();
+            }
+        }
+
+        {
+            self.video_record_mutex.lockUncancelable(self.io);
+            defer self.video_record_mutex.unlock(self.io);
+            var video_replay_buffer_locked = self.video_replay_buffer.lock();
+            defer video_replay_buffer_locked.unlock();
+            if (video_replay_buffer_locked.unwrap()) |vrb| {
+                video_replay_buffer_locked.set(null);
+                video_replay_buffer = vrb;
+            }
+
+            const is_recording_to_disk = blk: {
+                const muxer_locked = self.store.capture_store.muxer.lock();
+                defer muxer_locked.unlock();
+                const muxer_ptr = muxer_locked.unwrap_ptr();
+                break :blk muxer_ptr.* != null;
+            };
+
+            if (!is_recording_to_disk) {
+                self.vulkan.deinit_video_encoder();
+            }
         }
     }
 
@@ -344,9 +359,6 @@ pub const VideoSession = struct {
             defer self.video_record_mutex.unlock(self.io);
 
             const video_encoder = self.vulkan.video_encoder orelse continue;
-            const video_locked = self.video_replay_buffer.lock();
-            defer video_locked.unlock();
-            const video_replay_buffer = video_locked.unwrap();
 
             try video_encoder.prepare_encode(.{
                 .image = &image_slc,
@@ -359,6 +371,11 @@ pub const VideoSession = struct {
             });
 
             const encode_result = try video_encoder.encode(0);
+
+            const video_locked = self.video_replay_buffer.lock();
+            defer video_locked.unlock();
+            const video_replay_buffer = video_locked.unwrap();
+
             const encoded_packet = try video_encoder.finish_encode(
                 encode_result,
                 video_replay_buffer,
@@ -385,7 +402,10 @@ pub const VideoSession = struct {
                 self.store.dispatch(.{
                     .capture = .{
                         .update_replay_buffer_size = .{
-                            .video = .{ .size = _video_replay_buffer.size, .seconds = _video_replay_buffer.get_seconds() },
+                            .video = .{
+                                .bytes = _video_replay_buffer.size,
+                                .start_time = _video_replay_buffer.get_start_time(),
+                            },
                         },
                     },
                 });
@@ -417,6 +437,9 @@ pub const VideoSession = struct {
                         } else {
                             data.deinit();
                         }
+                        self.store.dispatch(.{ .capture = .{
+                            .update_recording_bytes = .{ .video = data.data.len },
+                        } });
                     },
                 }
             } else {

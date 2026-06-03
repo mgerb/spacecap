@@ -134,7 +134,7 @@ pub const AudioSession = struct {
                 try replay_buffer.add_data(data.clone());
                 self.store.dispatch(.{
                     .capture = .{
-                        .update_replay_buffer_size = .{ .audio_size = replay_buffer.size },
+                        .update_replay_buffer_size = .{ .audio_bytes = replay_buffer.size },
                     },
                 });
             }
@@ -197,7 +197,7 @@ pub const AudioSession = struct {
             var packets = _timeline.take_ready_packets();
             defer deinitPacketList(&packets);
             if (muxer) |_muxer| {
-                try mux_audio_packets(&packets, _timeline, _muxer);
+                _ = try mux_audio_packets(&packets, _timeline, _muxer);
             }
         }
     }
@@ -225,14 +225,15 @@ pub const AudioSession = struct {
 
         var packets = timeline.take_ready_packets();
         defer deinitPacketList(&packets);
-        try mux_audio_packets(&packets, timeline, muxer);
+        const audio_bytes = try mux_audio_packets(&packets, timeline, muxer);
+        self.store.dispatch(.{ .capture = .{ .update_recording_bytes = .{ .audio = audio_bytes } } });
     }
 
     fn mux_audio_packets(
         packets: *std.DoublyLinkedList,
         timeline: *AudioTimeline,
         muxer: *Muxer,
-    ) !void {
+    ) !u64 {
         // TODO: Move this logic to the muxer?
         if (muxer.needs_audio_start_sample()) {
             if (muxer.video_start_time_ns()) |start_ns| {
@@ -242,7 +243,7 @@ pub const AudioSession = struct {
             }
         }
 
-        try muxer.write_audio_packets(packets);
+        return muxer.write_audio_packets(packets);
     }
 
     /// Finalize the current replay buffer, take ownership, and create a new replay buffer.
