@@ -143,6 +143,7 @@ pub const PipewireVideo = struct {
             self.thread_loop = null;
         }
 
+        self.vulkan.wait_for_capture_ring_buffer_fences();
         if (self.pipewire_frame_buffer_manager) |frame_buffer_manager| {
             frame_buffer_manager.deinit();
         }

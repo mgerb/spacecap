@@ -370,20 +370,19 @@ pub const Vulkan = struct {
     }
 
     pub fn destroy_capture_ring_buffer(self: *Self) void {
-        const did_wait = self.wait_for_all_graphics_fences_begin();
-        defer {
-            if (did_wait) {
-                self.wait_for_all_graphics_fences_end();
-            } else |err| {
-                log.err("[destroy_capture_ring_buffer] wait for fence error: {}", .{err});
-            }
+        const capture_ring_buffer = blk: {
+            var capture_ring_buffer_locked = self.capture_ring_buffer.lock();
+            defer capture_ring_buffer_locked.unlock();
+
+            const capture_ring_buffer = capture_ring_buffer_locked.unwrap();
+            capture_ring_buffer_locked.set(null);
+            break :blk capture_ring_buffer;
+        };
+
+        if (capture_ring_buffer) |_capture_ring_buffer| {
+            _capture_ring_buffer.wait_for_fences();
+            _capture_ring_buffer.deinit();
         }
-        const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
-        defer capture_ring_buffer_locked.unlock();
-        if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
-            capture_ring_buffer.deinit();
-        }
-        capture_ring_buffer_locked.unwrap_ptr().* = null;
     }
 
     /// Caller owns the memory - must free
@@ -715,6 +714,15 @@ pub const Vulkan = struct {
                     log.err("[wait_for_ui_fences] err: {}", .{err});
                 };
             }
+        }
+    }
+
+    pub fn wait_for_capture_ring_buffer_fences(self: *Self) void {
+        const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
+        defer capture_ring_buffer_locked.unlock();
+
+        if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
+            capture_ring_buffer.wait_for_fences();
         }
     }
 
