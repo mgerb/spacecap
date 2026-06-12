@@ -33,7 +33,7 @@ const BuildZonFile = struct {
     version: []const u8,
 };
 
-pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version: bool) !PackageVersion {
+pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version_check: bool) !PackageVersion {
     const manifest_source = try b.build_root.handle.readFileAllocOptions(
         b.graph.io,
         "build.zig.zon",
@@ -59,7 +59,7 @@ pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version: 
         allocator,
         release_version,
         semantic_version,
-        ignore_version,
+        ignore_version_check,
     );
     errdefer allocator.free(nightly_version);
 
@@ -82,7 +82,7 @@ fn get_nightly_version(
     allocator: Allocator,
     release_version: []const u8,
     semantic_version: std.SemanticVersion,
-    ignore_version: bool,
+    ignore_version_check: bool,
 ) ![]const u8 {
     if (!std.process.can_spawn) {
         return allocator.dupe(u8, release_version);
@@ -151,7 +151,7 @@ fn get_nightly_version(
         return allocator.dupe(u8, release_version);
     };
 
-    if (!ignore_version and semantic_version.order(ancestor_ver) != .gt) {
+    if (!ignore_version_check and semantic_version.order(ancestor_ver) != .gt) {
         log.err(
             \\Spacecap version '{f}' must be greater than the latest tag '{f}'.
             \\You probably need to bump the version in build.zig.zon.
