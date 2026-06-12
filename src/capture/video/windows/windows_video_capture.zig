@@ -108,11 +108,11 @@ pub fn windows_capture(allocator: std.mem.Allocator) ![]u8 {
     const width: i32 = c.GetSystemMetrics(c.SM_CXSCREEN);
     const height: i32 = c.GetSystemMetrics(c.SM_CYSCREEN);
 
-    const hScreenDC: c.HDC = c.GetDC(null) orelse unreachable;
+    const hScreenDC: c.HDC = c.GetDC(null) orelse @panic("c.GetDC error");
     defer _ = c.DeleteObject(@ptrCast(hScreenDC));
     const hMemoryDC: c.HDC = c.CreateCompatibleDC(hScreenDC);
     defer _ = c.DeleteObject(@ptrCast(hMemoryDC));
-    const hBitmap: c.HBITMAP = c.CreateCompatibleBitmap(hScreenDC, width, height) orelse unreachable;
+    const hBitmap: c.HBITMAP = c.CreateCompatibleBitmap(hScreenDC, width, height) orelse @panic("c.CreateCompatibleBitmap error");
     defer _ = c.DeleteObject(hBitmap);
 
     _ = c.SelectObject(hMemoryDC, hBitmap);

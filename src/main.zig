@@ -14,13 +14,32 @@ const Store = @import("./store/store.zig").Store;
 const ipc_module = @import("./ipc/ipc.zig");
 const IpcCommand = ipc_module.IpcCommand;
 const Env = @import("./env.zig");
+const Logger = @import("./logger.zig");
 
 const log = std.log.scoped(.main);
 
+// ----------------------------------------------------------------------------
+// Configure logging.
+// ----------------------------------------------------------------------------
+pub const std_options = std.Options{
+    .log_level = .debug,
+    .logFn = Logger.logFn,
+};
+pub const panic = std.debug.FullPanic(Logger.panicFn);
+
+/// ----------------------------------------------------------------------------
+/// Main entrypoint.
+/// ----------------------------------------------------------------------------
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
+    // NOTE: Must be initialized before the logger.
     Env.init(init.io, init.environ_map);
+
+    try Logger.init(allocator, init.io);
+    // NOTE: Any calls to the logger before this point will be handled by the
+    // default logger. This includes logger invocations within Logger.init.
+    defer Logger.deinit();
 
     const parsed_args: ?args.Args = args.parse(init);
 

@@ -216,7 +216,9 @@ fn on_registry_global(
         .node_name = node_name_copy,
         .node_desc = node_desc_copy,
     };
-    list_data.devices.append(allocator, device) catch unreachable;
+    list_data.devices.append(allocator, device) catch |err| {
+        log.err("[on_registry_global] list_data.devices.append error: {}", .{err});
+    };
 }
 
 fn name_matches(name: ?[]const u8, node_name: []const u8) bool {
@@ -252,7 +254,9 @@ fn on_metadata_property(
     }
 
     const value_slice = std.mem.span(value);
-    list_data.set_default(key_slice, value_slice) catch unreachable;
+    list_data.set_default(key_slice, value_slice) catch |err| {
+        log.err("[on_metadata_property] list_data.set_default error: {}", .{err});
+    };
     return 0;
 }
 

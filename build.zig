@@ -63,6 +63,11 @@ fn add_shared_dependencies(
         .optimize = optimize,
         .freetype = true,
     }).module("imguiz");
+    if (target.result.os.tag == .windows) {
+        // MinGW fortify emits inline wcscat_s/wcscpy_s wrappers that Zig 0.16
+        // currently translates with unused local constants in ReleaseSafe.
+        imguiz.addCMacro("_FORTIFY_SOURCE", "0");
+    }
     exe.root_module.addImport("imguiz", imguiz);
 
     // zig-clap
@@ -167,6 +172,8 @@ fn build_windows(
         .optimize = optimize,
         .link_libc = true,
     });
+    // See comment above where this macro is added.
+    module.addCMacro("_FORTIFY_SOURCE", "0");
     module.addOptions("build_options", options);
 
     const exe = b.addExecutable(.{
@@ -351,7 +358,7 @@ pub fn build(b: *std.Build) !void {
 
     const optimize = b.standardOptimizeOption(.{});
     if (appimage_option and optimize == .Debug) {
-        std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseFast, -Doptimize=ReleaseSafe, or -Doptimize=ReleaseSmall.", .{});
+        std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseSafe, -Doptimize=ReleaseFast, or -Doptimize=ReleaseSmall.", .{});
         return error.InvalidBuildConfig;
     }
 
