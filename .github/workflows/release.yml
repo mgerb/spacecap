@@ -50,8 +50,8 @@ jobs:
 
             release_tag="${actual_tag}"
             prerelease="false"
-            test_build_args="-Dnix -Drelease-version"
-            release_build_args="-Drelease-version"
+            test_build_args="-Dnix -Drelease-version -Dignore-version-check"
+            release_build_args="-Drelease-version -Dignore-version-check"
           else
             release_tag="nightly"
             prerelease="true"

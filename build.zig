@@ -338,9 +338,16 @@ pub fn build(b: *std.Build) !void {
     const nix_option = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
     const appimage_option = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
     const release_version_option = b.option(bool, "release-version", "Build the stable Spacecap version from build.zig.zon instead of a git-derived dev version.") orelse false;
-    const ignore_version = b.option(bool, "ignore-version", "Ignore version constraints based on git tags.") orelse false;
+    const ignore_version_check = b.option(
+        bool,
+        "ignore-version-check",
+        \\Ignore version check based on git tags. By default, Spacecap compares the latest git tag to the version in
+        \\build.zig.zon. It will fail the build if they match. This is done so that we don't accidentally build pre-release
+        \\builds for a version that has already been released. This option should only be used on the automated release build.
+        ,
+    ) orelse false;
 
-    var package_version = try version.get_package_version(b, allocator, ignore_version);
+    var package_version = try version.get_package_version(b, allocator, ignore_version_check);
     defer package_version.deinit();
 
     const resolved_version = if (release_version_option)
