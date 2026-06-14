@@ -49,12 +49,12 @@ pub const Portal = struct {
     io: std.Io,
     portal: *c.XdpPortal,
     session: ?*c.XdpSession = null,
-    restore_token: ?[]u8 = null,
+    restore_token: ?[:0]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !*Self {
         const portal = c.xdp_portal_new() orelse return error.XdpPortalNewFailed;
 
-        const restore_token = TokenStorage.load_token(allocator, io, "restore_token") catch null;
+        const restore_token = TokenStorage.load_token_z(allocator, io, "restore_token") catch null;
 
         const self = try allocator.create(Self);
         errdefer allocator.destroy(self);
@@ -344,7 +344,7 @@ pub const Portal = struct {
             return;
         }
 
-        const duped = try self.allocator.dupe(u8, std.mem.span(token_ptr));
+        const duped = try self.allocator.dupeZ(u8, std.mem.span(token_ptr));
 
         if (self.restore_token) |restore_token| {
             self.allocator.free(restore_token);
