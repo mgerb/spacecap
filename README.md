@@ -102,3 +102,25 @@ Crash logs are written to `crash.log`. This happens when a panic occurs.
 
 - **Linux**: `$XDG_CONFIG_HOME/spacecap`, or `$HOME/.config/spacecap`
 - **Windows**: `%APPDATA%\spacecap`.
+
+## Troubleshooting
+
+### Linux restore capture source stops working
+
+Spacecap uses the XDG desktop portal screencast permission store to restore the
+previous capture source. If the portal permission database gets corrupted,
+restore may stop working even after selecting a source again. This has happened
+to me after my main disk filled up unexpectedly.
+
+To reset only the screencast portal permissions, delete the database and then
+reboot.
+
+```sh
+# Delete
+rm ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
+
+# OR move it to a backup
+mv ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
+
+reboot
+```

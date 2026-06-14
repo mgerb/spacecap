@@ -13,7 +13,7 @@ LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" linuxdeploy \
   --appdir AppDir \
   --executable zig-out/linux/spacecap \
   --desktop-file packaging/linux/spacecap.desktop \
-  --icon-file packaging/logo_blue.png \
+  --icon-file packaging/spacecap.png \
   --exclude-library libvulkan.so.1 \
   --library "$GTK3_LIB" \
   --library "$APPINDICATOR_LIB"
