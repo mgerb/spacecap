@@ -15,6 +15,22 @@ Currently only supports Linux. Still in early development (see roadmap below).
 
 ![screenshot2](./docs/screenshot_4.png)
 
+## Install
+
+**WARNING:** The 'stable' version is still pre-alpha. You may encounter bugs (please
+create a new issue).
+
+```sh
+# Install stable version
+curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh
+
+# Install nightly version (main branch)
+curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh -s -- --nightly
+
+# Uninstall
+curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh -s -- --uninstall
+```
+
 ## Features
 
 - Desktop/window capture.
@@ -85,7 +101,7 @@ nix develop -c zig build run -Dnix
 nix develop -c zig build test -Dnix
 ```
 
-### Logging
+## Logging
 
 By default, Spacecap only writes error logs to `error.log`. Set the
 `SPACECAP_LOG_LEVEL` environment variable to one of the following to change this
@@ -102,3 +118,25 @@ Crash logs are written to `crash.log`. This happens when a panic occurs.
 
 - **Linux**: `$XDG_CONFIG_HOME/spacecap`, or `$HOME/.config/spacecap`
 - **Windows**: `%APPDATA%\spacecap`.
+
+## Troubleshooting
+
+### Linux restore capture source stops working
+
+Spacecap uses the XDG desktop portal screencast permission store to restore the
+previous capture source. If the portal permission database gets corrupted,
+restore may stop working even after selecting a source again. This has happened
+to me after my main disk filled up unexpectedly.
+
+To reset only the screencast portal permissions, delete the database and then
+reboot.
+
+```sh
+# Delete
+rm ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
+
+# OR move it to a backup
+mv ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
+
+reboot
+```
