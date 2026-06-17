@@ -39,6 +39,10 @@ pub const AudioMixer = struct {
                 const input_start_sample: usize = @intCast(overlap_start_sample - chunk_start_sample);
                 const output_start_sample: usize = @intCast(overlap_start_sample - start_sample);
                 const data_ptr = chunk_node.data.as_ptr();
+                // No need to iterate if the device gain is 0.
+                if (data_ptr.gain == 0.0) {
+                    continue;
+                }
                 const src_channels: usize = @intCast(data_ptr.channels);
 
                 for (0..sample_positions_to_mix) |sample_idx| {
