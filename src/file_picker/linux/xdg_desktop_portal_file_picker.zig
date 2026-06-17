@@ -4,7 +4,7 @@ const TokenManager = @import("../../common/linux/token_manager.zig");
 const FilePicker = @import("../file_picker.zig").FilePicker;
 const FilePickerError = @import("../file_picker.zig").FilePickerError;
 
-const c = @import("../../tmp_bindings/gio_bindings.zig");
+const c = @import("libportal");
 
 const log = std.log.scoped(.xdg_desktop_portal_file_picker);
 

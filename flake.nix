@@ -102,7 +102,6 @@
             vulkan-validation-layers
             vulkan-tools
             wayland
-            libportal
             zlib
             glib
 
@@ -135,7 +134,6 @@
             pkgs.gtk3
             pkgs.libayatana-appindicator
 
-            pkgs.libportal
             # SDL runtime backends (don't rely on ffmpeg closure for these).
             pkgs.wayland
             pkgs.libxkbcommon

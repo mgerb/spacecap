@@ -6,7 +6,7 @@ const TokenStorage = @import("../../common/linux/token_storage.zig");
 const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
 
-const c = @import("../../tmp_bindings/gio_bindings.zig");
+const c = @import("libportal");
 
 const log = std.log.scoped(.xdg_desktop_portal_global_shortcuts);
 

@@ -93,6 +93,10 @@
             .url = "git+https://github.com/mgerb/pipewire#80b7f695e14d2726ba59f2ad03cbc7cdd6066d12",
             .hash = "pipewire-1.6.3-tKslQ1aLAQAzbaWMWTqfvQKzzUaKx34CBpE6hWT4HRNY",
         },
+        .libportal_zig = .{
+            .url = "git+https://github.com/mgerb/libportal-zig#60f9de1ede1847d2c5cbc1c66a0fb71dada8921c",
+            .hash = "libportal_zig-0.10.0-G2meOw8fAACBQ9TE_YkpiSA6_5i1R5bvQWmX-pHJH8LR",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.
