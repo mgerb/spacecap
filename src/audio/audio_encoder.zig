@@ -4,6 +4,9 @@ const Allocator = std.mem.Allocator;
 const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
 const checkErr = @import("../ffmpeg.zig").check_err;
 
+// TODO: Make this a user setting.
+const AUDIO_BIT_RATE: i64 = 320_000;
+
 pub const EncodedAudioPacketNode = struct {
     data: [*c]const ffmpeg.AVPacket,
     node: std.DoublyLinkedList.Node = .{},
@@ -38,6 +41,7 @@ pub const AudioEncoder = struct {
     // Absolute sample position of the first sample in `pending_samples`.
     pending_start_sample: ?i64 = null,
     is_flushed: bool = false,
+    frame: *ffmpeg.AVFrame,
 
     pub fn init(
         allocator: Allocator,
@@ -53,7 +57,7 @@ pub const AudioEncoder = struct {
         audio_codec_ctx.*.sample_rate = @intCast(sample_rate);
         _ = ffmpeg.av_channel_layout_default(&audio_codec_ctx.*.ch_layout, @intCast(channels));
         audio_codec_ctx.*.time_base = ffmpeg.AVRational{ .num = 1, .den = @intCast(sample_rate) };
-        audio_codec_ctx.*.bit_rate = 320_000;
+        audio_codec_ctx.*.bit_rate = AUDIO_BIT_RATE;
 
         // Prefer floating-point formats so the replay mixer can hand PCM to the
         // encoder without an extra sample conversion stage.
@@ -79,20 +83,34 @@ pub const AudioEncoder = struct {
         audio_codec_ctx.*.sample_fmt = chosen_fmt;
         audio_codec_ctx.*.profile = ffmpeg.AV_PROFILE_AAC_LOW;
 
+        _ = ffmpeg.av_opt_set(audio_codec_ctx.*.priv_data, "aac_coder", "fast", 0);
         _ = ffmpeg.av_opt_set_int(audio_codec_ctx.*.priv_data, "aac_pns", 0, 0);
-        _ = ffmpeg.av_opt_set_int(audio_codec_ctx.*.priv_data, "vbr", 4, 0);
 
-        const ret = ffmpeg.avcodec_open2(audio_codec_ctx, audio_codec, null);
+        var ret = ffmpeg.avcodec_open2(audio_codec_ctx, audio_codec, null);
+        try checkErr(ret);
+
+        // We can reuse the same frame for the whole session.
+        var frame = ffmpeg.av_frame_alloc() orelse return error.FFmpegErrorAvFrameAlloc;
+        errdefer ffmpeg.av_frame_free(@ptrCast(&frame));
+        frame.*.format = audio_codec_ctx.*.sample_fmt;
+        frame.*.ch_layout = audio_codec_ctx.*.ch_layout;
+        frame.*.sample_rate = audio_codec_ctx.*.sample_rate;
+        assert(audio_codec_ctx.*.frame_size > 0);
+        frame.*.nb_samples = @intCast(audio_codec_ctx.*.frame_size);
+
+        ret = ffmpeg.av_frame_get_buffer(frame, 0);
         try checkErr(ret);
 
         return .{
             .audio_codec_ctx = audio_codec_ctx,
             .channels = channels,
             .pending_samples = try .initCapacity(allocator, 0),
+            .frame = frame,
         };
     }
 
     pub fn deinit(self: *Self, allocator: Allocator) void {
+        ffmpeg.av_frame_free(@ptrCast(&self.frame));
         self.pending_samples.deinit(allocator);
         ffmpeg.avcodec_free_context(&self.audio_codec_ctx);
     }
@@ -137,19 +155,7 @@ pub const AudioEncoder = struct {
         var audio_packets: std.DoublyLinkedList = .{};
         errdefer deinit_packet_list(&audio_packets);
 
-        assert(self.audio_codec_ctx.*.frame_size > 0);
         const codec_samples_per_packet: usize = @intCast(self.audio_codec_ctx.*.frame_size);
-
-        var frame = ffmpeg.av_frame_alloc() orelse return error.FFmpegError;
-        defer ffmpeg.av_frame_free(&frame);
-
-        frame.*.format = self.audio_codec_ctx.*.sample_fmt;
-        frame.*.ch_layout = self.audio_codec_ctx.*.ch_layout;
-        frame.*.sample_rate = self.audio_codec_ctx.*.sample_rate;
-        frame.*.nb_samples = @intCast(codec_samples_per_packet);
-
-        const ret = ffmpeg.av_frame_get_buffer(frame, 0);
-        try checkErr(ret);
 
         while (true) {
             const buffered_samples = self.pending_samples.items.len / self.channels;
@@ -164,7 +170,7 @@ pub const AudioEncoder = struct {
             try self.send_frame(
                 allocator,
                 &audio_packets,
-                frame,
+                self.frame,
                 self.pending_start_sample.?,
                 codec_samples_per_packet,
                 submitted_samples,
