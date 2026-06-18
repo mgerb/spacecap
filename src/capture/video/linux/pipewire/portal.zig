@@ -5,7 +5,7 @@ const TokenStorage = @import("../../../../common/linux/token_storage.zig");
 
 const log = std.log.scoped(.portal);
 
-const c = @import("../../../../tmp_bindings/libportal_bindings.zig");
+const c = @import("libportal");
 
 fn free_maybe(ptr: ?*anyopaque) void {
     if (ptr != null) {

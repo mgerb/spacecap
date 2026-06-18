@@ -100,10 +100,13 @@ fn add_linux_dependencies(
     // For Zig projects, add the `pipewire` module.
     exe.root_module.addImport("pipewire", pipewire.module("pipewire"));
 
-    exe.root_module.linkSystemLibrary("glib-2.0", .{});
-    exe.root_module.linkSystemLibrary("gio-2.0", .{});
-    exe.root_module.linkSystemLibrary("gobject-2.0", .{});
-    exe.root_module.linkSystemLibrary("portal", .{});
+    const libportal = b.dependency("libportal_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("libportal", libportal.module("libportal"));
+    exe.root_module.addObjectFile(libportal.namedLazyPath("portal"));
+
     exe.root_module.linkSystemLibrary("wayland-client", .{});
 
     // Vulkan is linked directly, because it is required that the

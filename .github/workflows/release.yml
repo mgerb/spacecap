@@ -85,15 +85,15 @@ jobs:
       - name: Build Release Binaries
         run: nix develop -c zig build ${{ steps.version.outputs.release_build_args }} -Dappimage -Doptimize=ReleaseSafe
 
-      # - name: Package Linux
-      #   run: tar -czf spacecap-linux-x86_64.tar.gz -C zig-out linux
+      - name: Package Linux Binary
+        run: mv zig-out/linux/spacecap zig-out/linux/spacecap-linux-x86_64
 
       # - name: Package Windows
       #   run: zip -r spacecap-windows-x86_64.zip zig-out/windows
 
       - name: Generate Checksums
         run: |
-          # sha256sum spacecap-linux-x86_64.tar.gz > SHA256SUMS.txt
+          sha256sum zig-out/linux/spacecap-linux-x86_64 > SHA256SUMS.txt
           # sha256sum spacecap-windows-x86_64.zip >> SHA256SUMS.txt
           sha256sum zig-out/linux/spacecap-linux-x86_64.AppImage >> SHA256SUMS.txt
 
@@ -101,9 +101,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: spacecap-release-assets
-          # spacecap-linux-x86_64.tar.gz is currently disabled.
           # spacecap-windows-x86_64.zip is currently disabled.
           path: |
+            zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
             SHA256SUMS.txt
 
@@ -139,8 +139,8 @@ jobs:
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: ${{ github.ref_type != 'tag' || steps.existing_release.outputs.exists != 'true' }}
           append_body: false
-          # spacecap-linux-x86_64.tar.gz is currently disabled.
           # spacecap-windows-x86_64.zip is currently disabled.
           files: |
+            zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
             SHA256SUMS.txt
