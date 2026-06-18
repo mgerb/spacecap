@@ -88,20 +88,16 @@ jobs:
       - name: Package Linux Binary
         run: mv zig-out/linux/spacecap zig-out/linux/spacecap-linux-x86_64
 
-      # - name: Package Windows
-      #   run: zip -r spacecap-windows-x86_64.zip zig-out/windows
 
       - name: Generate Checksums
         run: |
           sha256sum zig-out/linux/spacecap-linux-x86_64 > SHA256SUMS.txt
-          # sha256sum spacecap-windows-x86_64.zip >> SHA256SUMS.txt
           sha256sum zig-out/linux/spacecap-linux-x86_64.AppImage >> SHA256SUMS.txt
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: spacecap-release-assets
-          # spacecap-windows-x86_64.zip is currently disabled.
           path: |
             zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
@@ -139,8 +135,45 @@ jobs:
           prerelease: ${{ steps.version.outputs.prerelease }}
           generate_release_notes: ${{ github.ref_type != 'tag' || steps.existing_release.outputs.exists != 'true' }}
           append_body: false
-          # spacecap-windows-x86_64.zip is currently disabled.
           files: |
             zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
             SHA256SUMS.txt
+
+      - name: Test Install Script
+        env:
+          EXPECTED_VERSION: ${{ steps.built_version.outputs.release_version }}
+        run: |
+          set -euo pipefail
+
+          install_home="$(mktemp -d)"
+          trap 'rm -rf "$install_home"' EXIT
+
+          install_args=""
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            install_args="--nightly"
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            rm -rf "$install_home"
+            mkdir -p "$install_home"
+            install_path="$install_home/.local/bin/spacecap"
+
+            if install_output="$(HOME="$install_home" APPIMAGE_EXTRACT_AND_RUN=1 sh ./install.sh $install_args)"; then
+              echo "$install_output"
+              expected_install_output="Installed spacecap version $EXPECTED_VERSION to $install_path."
+              if ! printf '%s\n' "$install_output" | grep -Fqx "$expected_install_output"; then
+                echo "Install output mismatch on attempt $attempt. Expected line: $expected_install_output" >&2
+                continue
+              fi
+
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 5 ]; then
+              echo "install.sh did not install the expected version after $attempt attempts" >&2
+              exit 1
+            fi
+
+            sleep 10
+          done

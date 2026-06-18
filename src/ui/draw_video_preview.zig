@@ -67,7 +67,7 @@ pub fn draw_video_preview(
             c.ImGui_Image(capture_preview.capture_preview_buffer.im_texture_ref, .{ .x = render_width, .y = render_height });
         },
         .vulkan_video_not_supported => {
-            const message = "Vulkan video is not supported on your current hardware. Video recording will be disabled.";
+            const message = "Video capture is disabled. Vulkan video is not supported on your current hardware, or your video drivers may be out of date.";
             const wrap_width = container_width * 0.8;
             const text_size = c.ImGui_CalcTextSizeEx(message, null, false, wrap_width);
             const cursor_x = (container_width - text_size.x) / 2;
