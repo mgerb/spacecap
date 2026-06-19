@@ -72,6 +72,10 @@ DESKTOP_DIR="$DATA_DIR/applications"
 DESKTOP_PATH="$DESKTOP_DIR/$APP_NAME.desktop"
 ICON_DIR="$DATA_DIR/icons/hicolor/scalable/apps"
 ICON_PATH="$ICON_DIR/$APP_NAME.svg"
+WAS_INSTALLED=0
+if [ -e "$INSTALL_PATH" ] || [ -L "$INSTALL_PATH" ]; then
+    WAS_INSTALLED=1
+fi
 
 if [ "$MODE" = "uninstall" ]; then
     REMOVED=0
@@ -137,7 +141,12 @@ mv "$APPIMAGE_TMP" "$INSTALL_PATH"
 mv "$DESKTOP_TMP" "$DESKTOP_PATH"
 mv "$ICON_TMP" "$ICON_PATH"
 
-echo "Installed $APP_NAME to $INSTALL_PATH."
+VERSION="$("$INSTALL_PATH" --version)"
+if [ "$WAS_INSTALLED" -eq 1 ]; then
+    echo "Updated $APP_NAME to version $VERSION at $INSTALL_PATH."
+else
+    echo "Installed $APP_NAME version $VERSION to $INSTALL_PATH."
+fi
 echo "Installed the desktop entry to $DESKTOP_PATH."
 echo "Installed the app icon to $ICON_PATH."
 

@@ -68,9 +68,11 @@ pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.Stat
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 const video_source_button_label = if (state.capture.video_capture_active) "󰦳 New Source" else "󰦳 Select Source";
+                c.ImGui_BeginDisabled(!state.capture.is_video_capture_supprted);
                 if (c.ImGui_ButtonEx(video_source_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
                     store.dispatch(.{ .capture = .{ .select_video_source = .{ .source_type = .all } } });
                 }
+                c.ImGui_EndDisabled();
 
                 const video_capture_ready = state.capture.is_video_capture_supprted and state.capture.video_capture_active;
 
