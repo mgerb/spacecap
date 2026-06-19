@@ -15,20 +15,14 @@ Currently only supports Linux. Still in early development (see roadmap below).
 
 ![screenshot2](./docs/screenshot_4.png)
 
-## Install
-
-**WARNING:** The 'stable' version is still pre-alpha. You may encounter bugs (please
-create a new issue).
+## Installation
 
 ```sh
-# Install stable version
-curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh
-
-# Install nightly version (main branch)
-curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh -s -- --nightly
+# Install
+curl -LsSf https://spacecap.org/install | sh
 
 # Uninstall
-curl -LsSf https://raw.githubusercontent.com/mgerb/spacecap/main/install.sh | sh -s -- --uninstall
+curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 ```
 
 ## Features
