@@ -9,7 +9,7 @@ RELEASES_URL="https://github.com/mgerb/spacecap/releases"
 RAW_URL="https://raw.githubusercontent.com/mgerb/spacecap/main"
 DESKTOP_URL="$RAW_URL/packaging/linux/spacecap.desktop"
 ICON_URL="$RAW_URL/packaging/spacecap.svg"
-CHANNEL="stable"
+CHANNEL="nightly"
 MODE="install"
 
 err() {
@@ -40,8 +40,11 @@ verify_checksum() {
 
 for arg in "$@"; do
     case "$arg" in
-        --nightly)
+        nightly|--nightly)
             CHANNEL="nightly"
+            ;;
+        stable|--stable)
+            CHANNEL="stable"
             ;;
         --uninstall)
             MODE="uninstall"
@@ -149,14 +152,3 @@ else
 fi
 echo "Installed the desktop entry to $DESKTOP_PATH."
 echo "Installed the app icon to $ICON_PATH."
-
-case ":$PATH:" in
-    *:"$INSTALL_DIR":*)
-        ;;
-    *)
-        echo
-        echo "$INSTALL_DIR is not on your PATH."
-        echo "Add it to your shell profile, then restart your shell:"
-        echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-        ;;
-esac
