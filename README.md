@@ -3,21 +3,21 @@
 </p>
 <h1 align="center">Spacecap</h1>
 
-A hardware accelerated screen recording/replay application focused on performance.
-Currently only supports Linux. Still in early development (see roadmap below).
+A hardware accelerated screen recording tool for Linux. _Still in development
+(see features/roadmap below)_.
 
-- Written in [Zig](https://ziglang.org/).
+- Written in [Zig](https://ziglang.org/) (0.16.0).
 - Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
 - UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
 - Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/).
-
----
 
 ![screenshot2](./docs/screenshot_4.png)
 
 ## Installation
 
 ```sh
+# Spacecap will be installed to ~/.local/bin/spacecap
+
 # Install
 curl -LsSf https://spacecap.org/install | sh
 
@@ -39,27 +39,44 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 - Video player/editor.
   - Simple video editor (trim start/end).
   - File browser to select videos to edit.
-- Additional video output formats (mp4, mov, mkv, gif, etc.).
 - Windows support.
 
 ## Requirements
 
-- A GPU that supports Vulkan Video.
+- A GPU that supports Vulkan Video encoding.
 
-**NOTE:** Only tested on an Nvidia GPU (RTX 3080) so far. AMD will be supported, I just
-have no way of testing at this time.
+**NOTE:** So far this has only been tested on an Nvidia GPU (RTX 3080). AMD will
+be supported, I just have no way of testing at this time.
 
 ### Linux
 
-- vulkan
-- pipewire
-- pipewire-pulse
+- Wayland
+- Pipewire
 
-#### Global Keybinds
+### Windows
 
-If your version of Linux supports [xdg-desktop-portal global shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
-then they can be configured that way. Alternatively, Spacecap runs an IPC
-server, which can be communicated with via Spacecap CLI.
+- Windows is not yet supported. Spacecap is architected in such a way that it
+  can be cross platform. For Windows support, the audio/video capture interfaces
+  need to be implemented. It's on the roadmap, but is not currently a priority.
+
+## Global Keybinds
+
+### Linux
+
+[xdg-desktop-portal global
+shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
+can be used if your desktop environment supports it, otherwise the Spacecap CLI
+can be used to send commands.
+
+e.g.
+
+```sh
+# Save replay
+spacecap -s save-replay
+
+# List available commands
+spacecap -h
+```
 
 For example, here is what a config in [niri](https://github.com/YaLTeR/niri) would look like:
 
@@ -69,20 +86,9 @@ binds {
 }
 ```
 
-Use `spacecap -h` to see available commands.
-
-### Windows
-
-Windows is not yet supported. Spacecap is architected in such a way
-that it can be cross platform. For Windows support, the audio/video capture
-interfaces need to be implemented. It's on the roadmap, but is not currently
-a priority.
-
 ## Development
 
-[Nix](https://nixos.org/download/#download-nix) is required for development,
-unless you want to install all dependencies manually. See `flake.nix` if you'd
-like to do so.
+[Nix](https://nixos.org/download/#download-nix) is required for development.
 
 ```sh
 # Build
@@ -98,15 +104,10 @@ nix develop -c zig build test -Dnix
 ## Logging
 
 By default, Spacecap only writes error logs to `error.log`. Set the
-`SPACECAP_LOG_LEVEL` environment variable to one of the following to change this
-behavior:
+`SPACECAP_LOG_LEVEL` environment variable to `debug`, `info`, `warning`, or
+`error`.
 
-- debug
-- info
-- warning
-- error
-
-Crash logs are written to `crash.log`. This happens when a panic occurs.
+Crash logs are written to `crash.log`, which happens when a panic occurs.
 
 #### Log Location
 

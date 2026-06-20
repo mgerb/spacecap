@@ -26,6 +26,8 @@ pub const VulkanImageBuffer = struct {
 
     width: u32,
     height: u32,
+    /// This should be true until the image buffer has been released from the
+    /// encode pipeline.
     in_use: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub const InitArgs = struct {

@@ -30,6 +30,7 @@ pub const VulkanImageBufferChan = struct {
 
     /// Increment the buffer ref count, set to in use, then send on the channel.
     /// On send error, release the buffer and return the error.
+    /// Takes ownership of vulkan_image_buffer. Clone before passing in.
     pub fn send(self: *Self, vulkan_image_buffer: Arc(VulkanImageBuffer)) ChanError!void {
         defer vulkan_image_buffer.deinit();
         errdefer vulkan_image_buffer.as_ptr().in_use.store(false, .release);

@@ -152,3 +152,14 @@ else
 fi
 echo "Installed the desktop entry to $DESKTOP_PATH."
 echo "Installed the app icon to $ICON_PATH."
+
+case ":$PATH:" in
+    *:"$INSTALL_DIR":*)
+        ;;
+    *)
+        echo
+        echo "$INSTALL_DIR is not on your PATH."
+        echo "To use the Spacecap CLI, add it to your shell profile, then restart your shell:"
+        echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+        ;;
+esac
