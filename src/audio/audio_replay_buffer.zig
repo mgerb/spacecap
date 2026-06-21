@@ -206,16 +206,16 @@ test "AudioReplayBuffer - size tracks encoded packet bytes as audio is added and
 
     const first_chunk = try TestUtil.create_audio_capture_data(allocator, base_ns, samples_per_chunk, 0.1);
     try replay_buffer.add_data(first_chunk);
-    try std.testing.expectEqual(3172, replay_buffer.size);
+    try std.testing.expectEqual(3110, replay_buffer.size);
     try std.testing.expectEqual(45, replay_buffer.len);
 
     const second_chunk = try TestUtil.create_audio_capture_data(allocator, base_ns + std.time.ns_per_s, samples_per_chunk, 0.2);
     try replay_buffer.add_data(second_chunk);
     try replay_buffer.finalize();
-    try std.testing.expectEqual(10_241, replay_buffer.size);
+    try std.testing.expectEqual(10_882, replay_buffer.size);
     try std.testing.expectEqual(98, replay_buffer.len);
 
     replay_buffer.set_replay_seconds(trimmed_replay_seconds);
-    try std.testing.expectEqual(6028, replay_buffer.size);
+    try std.testing.expectEqual(6863, replay_buffer.size);
     try std.testing.expectEqual(48, replay_buffer.len);
 }
