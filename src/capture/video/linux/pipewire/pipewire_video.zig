@@ -464,7 +464,11 @@ pub const PipewireVideo = struct {
         if (copy_data.vulkan_image_buffer) |vulkan_image_buffer| {
             self.vulkan_image_buffer_chan.drain();
             self.vulkan_image_buffer_chan.send(vulkan_image_buffer.clone()) catch |err| {
-                log.err("[stream_process_callback] vulkan image buffer chan send err: {}", .{err});
+                if (err == ChanError.Closed) {
+                    log.debug("[stream_process_callback] vulkan image buffer chan closed", .{});
+                } else {
+                    log.err("[stream_process_callback] vulkan image buffer chan send err: {}", .{err});
+                }
             };
         }
     }

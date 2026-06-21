@@ -5,7 +5,7 @@ const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
 const checkErr = @import("../ffmpeg.zig").check_err;
 
 // TODO: Make this a user setting.
-const AUDIO_BIT_RATE: i64 = 320_000;
+const AUDIO_BIT_RATE: i64 = 128_000;
 
 pub const EncodedAudioPacketNode = struct {
     data: [*c]const ffmpeg.AVPacket,
