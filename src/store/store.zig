@@ -46,6 +46,17 @@ pub const Store = struct {
         global_shortcuts: GlobalShortcutsStore.Message,
 
         pub const effects = .{};
+
+        // WARNING: Any messages with allocations must contain a `deinit` method
+        // and it must be accounted for here. This allows leftover messages in the
+        // queue to be cleaned up when the app closes.
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                .capture => |*capture_msg| capture_msg.deinit(),
+                .user_settings => |*user_settings_msg| user_settings_msg.deinit(),
+                .global_shortcuts, .show_demo, .exit => {},
+            }
+        }
     };
 
     pub const State = struct {
@@ -110,14 +121,20 @@ pub const Store = struct {
         self.effect_io_group.await(self.io) catch |err| {
             log.err("[deinit] await error: {}", .{err});
         };
+
+        // Deinit stores here before the state deinit.
+        self.capture_store.deinit();
+        self.global_shortcuts_store.deinit();
+
         {
             const state_locked = self.state.lock();
             defer state_locked.unlock();
             var state = state_locked.unwrap_ptr();
             state.deinit();
         }
-        self.capture_store.deinit();
-        self.global_shortcuts_store.deinit();
+
+        // Drain to clean up any messages that contain allocations.
+        self.message_queue.close(.{ .drain = true });
         self.message_queue.deinit();
     }
 
@@ -321,7 +338,9 @@ pub const Store = struct {
 
     /// Dispatch a message to the queue. Thread safe and non-blocking.
     pub fn dispatch(self: *Self, msg: Message) void {
-        self.message_queue.send(msg) catch |err| {
+        var _msg = msg;
+        self.message_queue.send(_msg) catch |err| {
+            _msg.deinit();
             log.err("[dispatch] {}", .{err});
         };
     }

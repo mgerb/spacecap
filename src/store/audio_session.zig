@@ -31,7 +31,7 @@ pub const AudioSession = struct {
     audio_replay_buffer: Mutex(?*AudioReplayBuffer),
     audio_recording_timeline: Mutex(?*AudioTimeline),
     capture_thread: ?std.Thread = null,
-    /// A lookup map to get the device gain by ID.
+    /// A lookup map to get the linear device gain multiplier by ID.
     device_gain_map: Mutex(std.StringHashMap(f32)),
 
     pub fn init(
@@ -125,6 +125,14 @@ pub const AudioSession = struct {
                 log.err("[capture_thread_handler] Unable to find device ({s}) in available devices. This should never happen.", .{data.as_ptr().id});
                 continue;
             };
+
+            self.store.dispatch(.{ .capture = .{
+                .update_audio_device_level = try .init(self.allocator, .{
+                    .device_id = data.as_ptr().id,
+                    .level = data.as_ptr().peak_level * data.as_ptr().gain,
+                    .updated_at = std.Io.Timestamp.now(self.io, .awake).nanoseconds,
+                }),
+            } });
 
             try self.write_audio_packets_to_disk(data.clone());
 
@@ -371,7 +379,11 @@ pub const AudioDevice = struct {
     device_type: AudioDeviceType,
     is_default: bool,
     selected: bool = false,
+    /// Linear gain multiplier.
     gain: f32 = 1.0,
+    /// Latest raw audio level reported by capture.
+    audio_level: f32 = 0.0,
+    audio_level_updated_at: ?i128 = null,
 
     pub fn init(allocator: Allocator, args: struct {
         id: []const u8,
@@ -405,6 +417,8 @@ pub const AudioDevice = struct {
             .is_default = self.is_default,
             .selected = self.selected,
             .gain = self.gain,
+            .audio_level = self.audio_level,
+            .audio_level_updated_at = self.audio_level_updated_at,
         };
     }
 

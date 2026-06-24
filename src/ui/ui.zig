@@ -13,6 +13,7 @@ const draw_dockspace = @import("./dockspace.zig").draw_dockspace;
 const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
 const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
 const draw_bottom_panel = @import("./draw_bottom_panel.zig").draw_bottom_panel;
+const UIStorage = @import("./ui_storage.zig").UIStorage;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
 const AppIcon = @import("./app_icon.zig").AppIcon;
@@ -139,6 +140,7 @@ pub const UI = struct {
     wayland_present_gate: ?WaylandPresentGate = null,
     imgui_ini_path: ?[:0]u8 = null,
     app_icon: AppIcon,
+    ui_storage: UIStorage,
 
     /// Init SDL and return new UI instance.
     pub fn init(
@@ -156,6 +158,7 @@ pub const UI = struct {
             .store = store,
             .vulkan = vulkan,
             .app_icon = .init(),
+            .ui_storage = .init(allocator),
         };
 
         try sdl.init();
@@ -181,6 +184,7 @@ pub const UI = struct {
         }
 
         self.app_icon.deinit();
+        self.ui_storage.deinit();
         if (self.imgui_ini_path) |imgui_ini_path| {
             c.ImGui_SaveIniSettingsToDisk(imgui_ini_path.ptr);
         }
@@ -537,7 +541,7 @@ pub const UI = struct {
                         try draw_video_preview(self.store, .empty);
                     }
 
-                    try draw_bottom_panel(self.allocator, self.store, state);
+                    try draw_bottom_panel(self.allocator, &self.ui_storage, self.store, state);
                 }
 
                 // Rendering while preview locks are held.

@@ -12,6 +12,7 @@ pub const UserSettings = struct {
     pub const AudioDeviceSettings = struct {
         id: []const u8,
         selected: bool = false,
+        /// Linear device gain multiplier.
         gain: f32 = 1.0,
     };
 

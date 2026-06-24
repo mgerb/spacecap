@@ -266,6 +266,8 @@ pub const AudioTimeline = struct {
                 if (chunk_node.end_frame <= self.encoded_until_sample) {
                     entry.value_ptr.chunks.remove(current);
                     chunk_node.deinit();
+                } else {
+                    break;
                 }
                 node = next;
             }
@@ -373,8 +375,7 @@ test "AudioTimeline - addData smooths small timestamp jitter between chunks" {
     const first = [_]f32{ 1.0, 1.0, 2.0, 2.0, 3.0, 3.0 };
     const second = [_]f32{ 4.0, 4.0, 5.0, 5.0, 6.0, 6.0 };
 
-    var first_data = try AudioCaptureData.init(allocator, "mic", &first, start_ns, 48_000, 2);
-    errdefer first_data.deinit();
+    const first_data = try AudioCaptureData.init(allocator, "mic", &first, start_ns, 48_000, 2);
     const chunk1 = try Arc(AudioCaptureData).init(allocator, first_data);
     defer chunk1.deinit();
     try timeline.add_data(chunk1.clone());
@@ -384,8 +385,7 @@ test "AudioTimeline - addData smooths small timestamp jitter between chunks" {
         @as(i128, 8) * std.time.ns_per_s + @as(i128, 48_000) - 1,
         @as(i128, 48_000),
     );
-    var second_data = try AudioCaptureData.init(allocator, "mic", &second, start_ns + second_delta_ns, 48_000, 2);
-    errdefer second_data.deinit();
+    const second_data = try AudioCaptureData.init(allocator, "mic", &second, start_ns + second_delta_ns, 48_000, 2);
     const chunk2 = try Arc(AudioCaptureData).init(allocator, second_data);
     defer chunk2.deinit();
     try timeline.add_data(chunk2.clone());

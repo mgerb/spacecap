@@ -279,6 +279,49 @@ pub fn LinkedListIterator(comptime T: type) type {
     };
 }
 
+/// Convert a linear audio level or gain to decibels.
+pub fn audio_linear_to_db(value: f32, args: struct { min: f32, max: f32 }) f32 {
+    if (value <= 0.0) {
+        return args.min;
+    }
+    return std.math.clamp(20.0 * @log10(value), args.min, args.max);
+}
+
+/// Convert decibel audio to linear.
+pub fn audio_db_to_linear(db: f32) f32 {
+    return std.math.pow(f32, 10.0, db / 20.0);
+}
+
+test "Util - audio_linear_to_db" {
+    try std.testing.expectApproxEqAbs(-60.0, audio_linear_to_db(0.0, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(-60.0, audio_linear_to_db(-1.0, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(-6.0206, audio_linear_to_db(0.5, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(0.0, audio_linear_to_db(1.0, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(6.0206, audio_linear_to_db(2.0, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(12.0, audio_linear_to_db(10.0, .{ .min = -60.0, .max = 12.0 }), 0.0001);
+
+    try std.testing.expectApproxEqAbs(6.0, audio_linear_to_db(2.0, .{ .min = -24.0, .max = 6.0 }), 0.0001);
+    try std.testing.expectApproxEqAbs(-24.0, audio_linear_to_db(0.01, .{ .min = -24.0, .max = 6.0 }), 0.0001);
+}
+
+test "Util - audio_db_to_linear" {
+    try std.testing.expectApproxEqAbs(0.001, audio_db_to_linear(-60.0), 0.000001);
+    try std.testing.expectApproxEqAbs(0.5, audio_db_to_linear(-6.0206), 0.00001);
+    try std.testing.expectApproxEqAbs(1.0, audio_db_to_linear(0.0), 0.000001);
+    try std.testing.expectApproxEqAbs(2.0, audio_db_to_linear(6.0206), 0.00001);
+    try std.testing.expectApproxEqAbs(3.9810717, audio_db_to_linear(12.0), 0.000001);
+    try std.testing.expectApproxEqAbs(15.848932, audio_db_to_linear(24.0), 0.00001);
+}
+
+test "Util - audio db and linear conversions round trip within range" {
+    const gains = [_]f32{ 0.001, 0.25, 0.5, 1.0, 2.0, 3.9810717 };
+
+    for (gains) |gain| {
+        const db = audio_linear_to_db(gain, .{ .min = -60.0, .max = 12.0 });
+        try std.testing.expectApproxEqAbs(gain, audio_db_to_linear(db), 0.00001);
+    }
+}
+
 test "Util - format_duration_label formats compact duration strings" {
     const allocator = std.testing.allocator;
     const cases = [_]struct {

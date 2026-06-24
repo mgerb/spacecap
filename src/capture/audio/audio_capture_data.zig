@@ -5,10 +5,12 @@ allocator: std.mem.Allocator,
 /// e.g. speaker/mic id
 id: []const u8,
 pcm_data: []const f32,
+/// Largest finite absolute sample value in `pcm_data`, before gain is applied.
+peak_level: f32,
 timestamp: i128,
 sample_rate: u32,
 channels: u32,
-/// A number between 0 and 2. The gain is adjusted in the user settings
+/// Linear gain multiplier.
 gain: f32 = 1.0,
 /// Required so this can be used in a linked list.
 node: std.DoublyLinkedList.Node = .{},
@@ -22,10 +24,26 @@ pub fn init(
     sample_rate: u32,
     channels: u32,
 ) !@This() {
+    const id_copy = try allocator.dupe(u8, id);
+    errdefer allocator.free(id_copy);
+
+    const pcm_copy = try allocator.alloc(f32, pcm_data.len);
+    errdefer allocator.free(pcm_copy);
+
+    var peak_level: f32 = 0.0;
+    for (pcm_data, pcm_copy) |sample, *dest| {
+        dest.* = sample;
+        if (!std.math.isFinite(sample)) {
+            continue;
+        }
+        peak_level = @max(peak_level, @abs(sample));
+    }
+
     return .{
         .allocator = allocator,
-        .id = try allocator.dupe(u8, id),
-        .pcm_data = try allocator.dupe(f32, pcm_data),
+        .id = id_copy,
+        .pcm_data = pcm_copy,
+        .peak_level = peak_level,
         .timestamp = timestamp,
         .sample_rate = sample_rate,
         .channels = channels,
@@ -38,14 +56,21 @@ pub fn deinit(self: *const @This()) void {
 }
 
 pub fn clone(self: *const @This(), allocator: std.mem.Allocator) !@This() {
-    const cloned_self = try .init(
-        allocator,
-        self.id,
-        self.pcm_data,
-        self.timestamp,
-        self.sample_rate,
-        self.channels,
-    );
+    const id_copy = try allocator.dupe(u8, self.id);
+    errdefer allocator.free(id_copy);
+
+    const pcm_copy = try allocator.dupe(f32, self.pcm_data);
+    errdefer allocator.free(pcm_copy);
+
+    var cloned_self = @This(){
+        .allocator = allocator,
+        .id = id_copy,
+        .pcm_data = pcm_copy,
+        .peak_level = self.peak_level,
+        .timestamp = self.timestamp,
+        .sample_rate = self.sample_rate,
+        .channels = self.channels,
+    };
     cloned_self.gain = self.gain;
     return cloned_self;
 }
@@ -90,4 +115,27 @@ test "AudioCaptureData - end_ns mono" {
     const expected_frames: usize = pcm.len / @as(usize, @intCast(channels));
     const expected_end = start_timestamp_ns + (@as(i128, @intCast(expected_frames)) * ns_per_sample);
     try std.testing.expectEqual(expected_end, data.end_ns());
+}
+
+test "AudioCaptureData - init stores peak level" {
+    const allocator = std.testing.allocator;
+    const pcm = [_]f32{ 0.1, -0.75, std.math.inf(f32), 0.5 };
+
+    const data = try @This().init(allocator, "mic", &pcm, 0, 48_000, 1);
+    defer data.deinit();
+
+    try std.testing.expectEqual(@as(f32, 0.75), data.peak_level);
+}
+
+test "AudioCaptureData - clone preserves peak level" {
+    const allocator = std.testing.allocator;
+    const pcm = [_]f32{ 0.25, -0.5 };
+
+    const data = try @This().init(allocator, "mic", &pcm, 0, 48_000, 1);
+    defer data.deinit();
+
+    const cloned = try data.clone(allocator);
+    defer cloned.deinit();
+
+    try std.testing.expectEqual(data.peak_level, cloned.peak_level);
 }
