@@ -25,7 +25,10 @@ pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.Stat
     if (c.ImGui_CollapsingHeader("Video", c.ImGuiTreeNodeFlags_DefaultOpen)) {
         const replay_buffer_duration_label = try util.format_duration_label(
             allocator,
-            @intCast(state.capture.replay_buffer_metrics.duration_seconds(store.io) orelse 0),
+            .{
+                .seconds = state.capture.replay_buffer_metrics.duration(store.io) orelse 0,
+                .max = state.user_settings.user_settings.replay_seconds,
+            },
         );
         defer allocator.free(replay_buffer_duration_label);
 
@@ -132,7 +135,9 @@ pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.Stat
 
                 _ = c.ImGui_TableNextColumn();
                 if (state.capture.recording_to_disk) {
-                    const recording_duration_label = try util.format_duration_label(allocator, @intCast(state.capture.recording_metrics.duration_seconds(store.io) orelse 0));
+                    const recording_duration_label = try util.format_duration_label(allocator, .{
+                        .seconds = state.capture.recording_metrics.duration(store.io) orelse 0,
+                    });
                     defer allocator.free(recording_duration_label);
                     c.ImGui_TextUnformatted(recording_duration_label);
                 } else {

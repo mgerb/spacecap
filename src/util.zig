@@ -20,7 +20,22 @@ pub fn print_elapsed(io: std.Io, start_time: i128, prefix: []const u8) void {
     log.debug("[{s}] time elapsed {}ms\n", .{ prefix, total_time });
 }
 
-pub fn format_duration_label(allocator: std.mem.Allocator, total_seconds: u32) ![:0]u8 {
+pub fn format_duration_label(allocator: std.mem.Allocator, args: struct {
+    seconds: f64,
+    max: ?u32 = null,
+}) ![:0]u8 {
+    const input_seconds = @max(args.seconds, 0.0);
+    // If max is provided, round seconds up and then take
+    // the min of the two. This prevents any flicker on the UI
+    // when a number changes from 9.9 to 10.0 for example.
+    const total_seconds: u64 = if (args.max) |max_seconds|
+        @min(
+            @as(u64, @intFromFloat(@ceil(input_seconds))),
+            max_seconds,
+        )
+    else
+        @intFromFloat(@trunc(input_seconds));
+
     const hours = total_seconds / 3600;
     const minutes = (total_seconds % 3600) / 60;
     const seconds = total_seconds % 60;
@@ -281,7 +296,27 @@ test "Util - format_duration_label formats compact duration strings" {
     };
 
     for (cases) |case| {
-        const label = try format_duration_label(allocator, case.seconds);
+        const label = try format_duration_label(allocator, .{ .seconds = @floatFromInt(case.seconds) });
+        defer allocator.free(label);
+
+        try std.testing.expectEqualStrings(case.expected, label);
+    }
+
+    const replay_cases = [_]struct {
+        seconds: f64,
+        max: u32,
+        expected: []const u8,
+    }{
+        .{ .seconds = 8.9, .max = 10, .expected = "9s" },
+        .{ .seconds = 9.1, .max = 10, .expected = "10s" },
+        .{ .seconds = 10.2, .max = 10, .expected = "10s" },
+    };
+
+    for (replay_cases) |case| {
+        const label = try format_duration_label(allocator, .{
+            .seconds = case.seconds,
+            .max = case.max,
+        });
         defer allocator.free(label);
 
         try std.testing.expectEqualStrings(case.expected, label);

@@ -234,7 +234,9 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
             replay_seconds_local = null;
         }
 
-        const replay_duration_label = try util.format_duration_label(allocator, @intCast(replay_seconds));
+        const replay_duration_label = try util.format_duration_label(allocator, .{
+            .seconds = @floatFromInt(replay_seconds),
+        });
         defer allocator.free(replay_duration_label);
         c.ImGui_PushTextWrapPos(0);
         c.ImGui_TextDisabled("Duration: %s", replay_duration_label.ptr);

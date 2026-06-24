@@ -167,14 +167,15 @@ pub const CaptureStore = struct {
                 };
             }
 
-            pub fn duration_seconds(self: *const @This(), io: std.Io) ?u64 {
+            pub fn duration(self: *const @This(), io: std.Io) ?f64 {
                 if (self.start_time) |start| {
                     const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
-                    const elapsed_ns = now - start.nanoseconds;
+                    const elapsed_ns: f64 = @floatFromInt(now - start.nanoseconds);
                     if (elapsed_ns < 0) {
                         return 0;
                     }
-                    return @intCast(@divTrunc(elapsed_ns, std.time.ns_per_s));
+
+                    return elapsed_ns / @as(f64, @floatFromInt(std.time.ns_per_s));
                 }
                 return null;
             }
