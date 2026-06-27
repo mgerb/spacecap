@@ -55,6 +55,14 @@ pub const Message = union(enum) {
         .set_start_replay_buffer_on_startup = .{effect_sync_settings_to_file},
         .select_output_directory = .{effect_select_output_directory},
     };
+
+    pub fn deinit(self: *@This()) void {
+        switch (self.*) {
+            .set_video_output_directory => |payload| payload.deinit(),
+            .set_audio_device_settings => |payload| payload.deinit(),
+            else => {},
+        }
+    }
 };
 
 pub const State = struct {

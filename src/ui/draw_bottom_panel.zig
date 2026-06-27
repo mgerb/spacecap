@@ -3,19 +3,18 @@ const Allocator = std.mem.Allocator;
 const c = @import("imguiz").imguiz;
 const dockspace = @import("./dockspace.zig");
 const Store = @import("../store/store.zig").Store;
-const AUDIO_GAIN_MIN = @import("../store/capture_store.zig").AUDIO_GAIN_MIN;
-const AUDIO_GAIN_MAX = @import("../store/capture_store.zig").AUDIO_GAIN_MAX;
 const AudioDevice = @import("../store/audio_session.zig").AudioDevice;
+const UIStorage = @import("./ui_storage.zig").UIStorage;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const theme = @import("./theme.zig");
 
 const log = std.log.scoped(.draw_bottom_panel);
 
-var val: f32 = 50;
-var enabled: bool = false;
+const AUDIO_GAIN_DB_MIN: f32 = -60.0;
+const AUDIO_GAIN_DB_MAX: f32 = 12.0;
 
-pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.State) !void {
+pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
     _ = c.ImGui_Begin(dockspace.BOTTOM_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
     defer c.ImGui_End();
 
@@ -178,26 +177,32 @@ pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.Stat
     // Audio collapsing header.
     // ----------------------------------------------------------------------------
     if (c.ImGui_CollapsingHeader("Audio", c.ImGuiTreeNodeFlags_DefaultOpen)) {
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, .{ .x = 0, .y = 5 });
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, .{ .x = 8, .y = 5 });
         defer c.ImGui_PopStyleVar();
 
-        if (c.ImGui_BeginTable("##audio_devices", 2, c.ImGuiTableFlags_BordersInnerH)) {
+        if (c.ImGui_BeginTable("##audio_devices", 3, c.ImGuiTableFlags_BordersInnerH)) {
             defer c.ImGui_EndTable();
 
             c.ImGui_TableSetupColumnEx("audio device", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
-            c.ImGui_TableSetupColumnEx("gain", c.ImGuiTableColumnFlags_WidthFixed, 300, 0);
+            c.ImGui_TableSetupColumnEx("level", c.ImGuiTableColumnFlags_WidthFixed, 160, 0);
+            c.ImGui_TableSetupColumnEx("gain", c.ImGuiTableColumnFlags_WidthFixed, 160, 0);
 
             c.ImGui_TableNextRow();
             _ = c.ImGui_TableNextColumn();
             c.ImGui_Text("Audio Device");
             _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text("Level");
+            _ = c.ImGui_TableNextColumn();
             c.ImGui_Text("Gain");
 
+            const now_ns = std.Io.Timestamp.now(store.io, .awake).nanoseconds;
             for (state.capture.audio_devices.list.items, 0..) |*audio_device, i| {
                 if (audio_device.selected) {
                     c.ImGui_PushIDInt(@intCast(i));
                     defer c.ImGui_PopID();
-                    try draw_audio_device(allocator, store, audio_device);
+                    try draw_audio_device(allocator, ui_storage, store, audio_device, now_ns);
+                } else {
+                    ui_storage.clear_audio_level_display(audio_device.id);
                 }
             }
 
@@ -245,7 +250,7 @@ pub fn draw_bottom_panel(allocator: Allocator, store: *Store, state: *Store.Stat
 }
 
 /// Draw an audio device in the table.
-fn draw_audio_device(allocator: Allocator, store: *Store, audio_device: *AudioDevice) !void {
+fn draw_audio_device(allocator: Allocator, ui_storage: *UIStorage, store: *Store, audio_device: *AudioDevice, now_ns: i128) !void {
     c.ImGui_TableNextRow();
 
     _ = c.ImGui_TableNextColumn();
@@ -267,16 +272,80 @@ fn draw_audio_device(allocator: Allocator, store: *Store, audio_device: *AudioDe
     c.ImGui_TextUnformatted(name);
     imgui_util.item_tooltip(name);
 
-    var gain_copy = audio_device.gain;
+    _ = c.ImGui_TableNextColumn();
+    try draw_audio_device_audio_level(ui_storage, audio_device, now_ns);
+
+    var gain_db = util.audio_linear_to_db(audio_device.gain, .{
+        .min = AUDIO_GAIN_DB_MIN,
+        .max = AUDIO_GAIN_DB_MAX,
+    });
 
     _ = c.ImGui_TableNextColumn();
     c.ImGui_SetNextItemWidth(c.ImGui_GetContentRegionAvail().x);
-    if (c.ImGui_SliderFloatEx("", &gain_copy, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX, "%.2fx", 0)) {
+    if (c.ImGui_SliderFloatEx("", &gain_db, AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX, "%.0f dB", 0)) {
+        gain_db = @round(gain_db);
         store.dispatch(.{ .capture = .{
             .set_audio_device_gain = try .init(allocator, .{
                 .device_id = audio_device.id,
-                .gain = gain_copy,
+                .gain = util.audio_db_to_linear(gain_db),
             }),
         } });
     }
+}
+
+/// Draw the audio device level meter for one device. This handles smoothing, decay, etc.
+fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDevice, now_ns: i128) !void {
+    // Load the previous display level so the meter can animate between frames.
+    // ----------------------------------------------------------------------------
+    const previous_audio_level_display = try ui_storage.get_audio_level_display(audio_device.id) orelse 0;
+
+    // Decay old capture levels so the meter falls back to zero when updates stop.
+    // ----------------------------------------------------------------------------
+    const target_level = blk: {
+        const updated_at = audio_device.audio_level_updated_at orelse break :blk 0.0;
+        const age_ns = @max(now_ns - updated_at, 0);
+        // Decay to 0 over 500ms.
+        const decay = 1.0 - std.math.clamp(
+            @as(f32, @floatFromInt(age_ns)) / @as(f32, @floatFromInt(500 * std.time.ns_per_ms)),
+            0.0,
+            1.0,
+        );
+        const next = audio_device.audio_level * decay;
+        break :blk if (next < 0.0001) 0.0 else next;
+    };
+
+    // Smooth the display level with a fast attack and slower release.
+    // ----------------------------------------------------------------------------
+    const audio_level_linear = blk: {
+        const duration: f32 = if (target_level > previous_audio_level_display) 0.04 else 0.18;
+        const alpha = std.math.clamp(c.ImGui_GetIO().*.DeltaTime / duration, 0.0, 1.0);
+        break :blk previous_audio_level_display + ((target_level - previous_audio_level_display) * alpha);
+    };
+
+    try ui_storage.put_audio_level_display(audio_device.id, audio_level_linear);
+
+    // Convert the smoothed linear level to dB.
+    // ----------------------------------------------------------------------------
+    const audio_level_db = blk: {
+        if (audio_level_linear <= 0.0) break :blk 0.0;
+        // NOTE: The meter goes from -60 to 0, even though the gain goes up to +12.
+        const db = util.audio_linear_to_db(audio_level_linear, .{ .min = AUDIO_GAIN_DB_MIN, .max = 0.0 });
+        break :blk std.math.clamp((db - AUDIO_GAIN_DB_MIN) / -AUDIO_GAIN_DB_MIN, 0.0, 1.0);
+    };
+
+    // Pick the meter color and draw the progress bar.
+    // ----------------------------------------------------------------------------
+    const color = if (audio_level_linear >= 0.9)
+        theme.red.as_vec4()
+    else if (audio_level_linear >= 0.75)
+        theme.accent.as_vec4()
+    else
+        theme.green.as_vec4();
+    const size = c.ImVec2{
+        .x = c.ImGui_GetContentRegionAvail().x,
+        .y = c.ImGui_GetFrameHeight(),
+    };
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_PlotHistogram, color);
+    defer c.ImGui_PopStyleColor();
+    c.ImGui_ProgressBar(audio_level_db, size, "");
 }

@@ -54,7 +54,9 @@ pub fn ActionPayload(T: anytype) type {
 
         pub fn init(allocator: std.mem.Allocator, args: InitArgs) !*@This() {
             const arena = try allocator.create(std.heap.ArenaAllocator);
+            errdefer allocator.destroy(arena);
             arena.* = .init(allocator);
+            errdefer arena.deinit();
 
             const self = try arena.allocator().create(@This());
             self.* = .{

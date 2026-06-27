@@ -21,7 +21,7 @@ const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const Arc = @import("../arc.zig").Arc;
 
 pub const AUDIO_GAIN_MIN: f32 = 0.0;
-pub const AUDIO_GAIN_MAX: f32 = 2.0;
+pub const AUDIO_GAIN_MAX: f32 = 4.0;
 
 pub const CaptureStore = struct {
     const Self = @This();
@@ -47,6 +47,23 @@ pub const CaptureStore = struct {
                 };
             }
         });
+        const UpdateAudioDeviceLevelPayload = *ActionPayload(struct {
+            device_id: []const u8,
+            level: f32,
+            updated_at: i128,
+
+            pub fn init(arena: *ArenaAllocator, args: struct {
+                device_id: []const u8,
+                level: f32,
+                updated_at: i128,
+            }) !@This() {
+                return .{
+                    .device_id = try arena.allocator().dupe(u8, args.device_id),
+                    .level = args.level,
+                    .updated_at = args.updated_at,
+                };
+            }
+        });
 
         load_system_audio_devices,
         load_system_audio_devices_success: AudioDevices,
@@ -55,6 +72,7 @@ pub const CaptureStore = struct {
         /// Toggle recording on an audio device by device ID.
         toggle_audio_device: String,
         set_audio_device_gain: SetAudioDeviceGainPayload,
+        update_audio_device_level: UpdateAudioDeviceLevelPayload,
         start_audio_capture_thread,
 
         update_replay_buffer_size: union(enum) {
@@ -121,6 +139,16 @@ pub const CaptureStore = struct {
             .select_video_source_prepared = .{effect_select_video_source_prepared},
             .save_replay = .{effect_save_replay},
         };
+
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                .load_system_audio_devices_success => |*audio_devices| audio_devices.deinit(),
+                .toggle_audio_device => |*device_id| device_id.deinit(),
+                .set_audio_device_gain => |payload| payload.deinit(),
+                .update_audio_device_level => |payload| payload.deinit(),
+                else => {},
+            }
+        }
     };
 
     pub const State = struct {
@@ -301,6 +329,10 @@ pub const CaptureStore = struct {
                                 continue;
                             }
                             device.selected = !device.selected;
+                            if (!device.selected) {
+                                device.audio_level = 0.0;
+                                device.audio_level_updated_at = null;
+                            }
                             break;
                         }
                     },
@@ -308,6 +340,26 @@ pub const CaptureStore = struct {
                         for (state.capture.audio_devices.list.items) |*device| {
                             if (!std.mem.eql(u8, device.id, payload.payload.device_id)) continue;
                             device.gain = std.math.clamp(payload.payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
+                            break;
+                        }
+                    },
+                    .update_audio_device_level => |payload| {
+                        defer payload.deinit();
+                        const data = payload.payload;
+                        const clamped_level = std.math.clamp(data.level, 0.0, 1.0);
+
+                        for (state.capture.audio_devices.list.items) |*device| {
+                            if (!std.mem.eql(u8, device.id, data.device_id)) {
+                                continue;
+                            }
+
+                            if (device.selected) {
+                                device.audio_level = clamped_level;
+                                device.audio_level_updated_at = data.updated_at;
+                            } else {
+                                device.audio_level = 0.0;
+                                device.audio_level_updated_at = null;
+                            }
                             break;
                         }
                     },
@@ -804,40 +856,78 @@ test "CaptureStore - set_audio_device_gain" {
     store.dispatch(.{ .capture = .{
         .set_audio_device_gain = try .init(std.testing.allocator, .{
             .device_id = "test1",
-            .gain = 0.84,
+            .gain = 1.25,
         }),
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 0.84);
-    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 0.84);
+    try std.testing.expectEqual(@as(f32, 1.25), state.capture.audio_devices.list.items[0].gain);
+    try std.testing.expectEqual(@as(f32, 1.25), store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
 
-    // Should clamp to 2.0
+    // Should clamp to the maximum linear gain.
     store.dispatch(.{ .capture = .{
         .set_audio_device_gain = try .init(std.testing.allocator, .{
             .device_id = "test1",
-            .gain = 2.5,
+            .gain = 5.0,
         }),
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 2.00);
-    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 2.00);
+    try std.testing.expectEqual(AUDIO_GAIN_MAX, state.capture.audio_devices.list.items[0].gain);
+    try std.testing.expectEqual(AUDIO_GAIN_MAX, store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
 
-    // Should clamp to 0
+    // Should clamp to the minimum linear gain.
     store.dispatch(.{ .capture = .{
         .set_audio_device_gain = try .init(std.testing.allocator, .{
             .device_id = "test1",
-            .gain = -1.5,
+            .gain = 0,
         }),
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    try std.testing.expect(state.capture.audio_devices.list.items[0].gain == 0);
-    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 0);
+    try std.testing.expectEqual(AUDIO_GAIN_MIN, state.capture.audio_devices.list.items[0].gain);
+    try std.testing.expectEqual(AUDIO_GAIN_MIN, store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
+}
+
+test "CaptureStore - update_audio_device_level" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    store.dispatch(.{ .capture = .load_system_audio_devices });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    store.dispatch(.{ .capture = .{
+        .update_audio_device_level = try .init(std.testing.allocator, .{
+            .device_id = "test1",
+            .level = 0.42,
+            .updated_at = 123,
+        }),
+    } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expectEqual(@as(f32, 0.42), state.capture.audio_devices.list.items[0].audio_level);
+    try std.testing.expectEqual(@as(?i128, 123), state.capture.audio_devices.list.items[0].audio_level_updated_at);
+
+    state.capture.audio_devices.list.items[0].selected = false;
+    store.dispatch(.{ .capture = .{
+        .update_audio_device_level = try .init(std.testing.allocator, .{
+            .device_id = "test1",
+            .level = 0.5,
+            .updated_at = 456,
+        }),
+    } });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expectEqual(@as(f32, 0.0), state.capture.audio_devices.list.items[0].audio_level);
+    try std.testing.expectEqual(@as(?i128, null), state.capture.audio_devices.list.items[0].audio_level_updated_at);
 }
 
 test "CaptureStore - start_audio_capture_thread" {
@@ -876,6 +966,9 @@ test "CaptureStore - start_audio_capture_thread" {
     // Sleep so that the thread has a half second to run before store
     // deinit cleans it up.
     std.Io.sleep(std.testing.io, .fromNanoseconds(std.time.ns_per_s / 2), .awake) catch unreachable;
+
+    // Drain the audio level update dispatched by the capture thread.
+    store.run(.{ .once = true, .wait_for_effects = true });
 }
 
 test "CaptureStore - update_replay_buffer_size" {
