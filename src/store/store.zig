@@ -288,7 +288,8 @@ pub const Store = struct {
                                                 effect_fn(store, effect_payload);
                                             },
                                         }
-                                        log.debug("[execute_registered_effects] effect: {s}", .{@typeName(@TypeOf(effect_fn))});
+                                        // This is super chatty - we probably don't want this on anymore.
+                                        // log.debug("[execute_registered_effects] effect: {s}", .{@typeName(@TypeOf(effect_fn))});
                                     } else {
                                         @compileError(@typeName(@TypeOf(effect_fn)) ++ " has no return type");
                                     }

@@ -16,6 +16,7 @@ const Muxer = @import("../video/muxer.zig").Muxer;
 const Mutex = @import("../mutex.zig").Mutex;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
+const AudioReplayBuffer = @import("../audio/audio_replay_buffer.zig");
 const exporter = @import("../exporter.zig");
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const Arc = @import("../arc.zig").Arc;
@@ -75,7 +76,7 @@ pub const CaptureStore = struct {
         update_audio_device_level: UpdateAudioDeviceLevelPayload,
         start_audio_capture_thread,
 
-        update_replay_buffer_size: union(enum) {
+        update_replay_buffer_metrics: union(enum) {
             audio_bytes: u64,
             video: struct { bytes: u64, start_time: ?std.Io.Timestamp },
         },
@@ -86,6 +87,12 @@ pub const CaptureStore = struct {
         stop_replay_buffer,
         stop_replay_buffer_success,
         stop_replay_buffer_fail,
+
+        /// When the video replay buffer state changes, sync the audio replay buffer with it.
+        /// This is really only necessary in the case that the replay length is infinite, but
+        /// the user relies on max bytes to trim the replay buffer. Without this, the audio
+        /// replay buffer would grow infinitely.
+        sync_replay_buffers,
 
         save_replay,
         save_replay_success,
@@ -137,6 +144,7 @@ pub const CaptureStore = struct {
             .stop_video_capture = .{effect_stop_video_capture},
             .select_video_source = .{effect_select_video_source},
             .select_video_source_prepared = .{effect_select_video_source_prepared},
+            .sync_replay_buffers = .{effect_sync_replay_buffers},
             .save_replay = .{effect_save_replay},
         };
 
@@ -363,7 +371,7 @@ pub const CaptureStore = struct {
                             break;
                         }
                     },
-                    .update_replay_buffer_size => |payload| {
+                    .update_replay_buffer_metrics => |payload| {
                         switch (payload) {
                             .audio_bytes => |audio_bytes| {
                                 state.capture.replay_buffer_metrics.audio_bytes = audio_bytes;
@@ -392,7 +400,11 @@ pub const CaptureStore = struct {
 
     pub fn effect_sync_replay_buffer_with_user_settings(store: *Store, replay_seconds: u32) void {
         store.capture_store.audio_session.set_replay_buffer_seconds(replay_seconds);
-        store.capture_store.video_session.set_replay_buffer_seconds(replay_seconds);
+        store.capture_store.video_session.set_replay_buffer_values(.{ .replay_seconds = replay_seconds });
+    }
+
+    pub fn effect_sync_replay_buffer_max_bytes(store: *Store, replay_max_bytes: u64) void {
+        store.capture_store.video_session.set_replay_buffer_values(.{ .replay_max_bytes = replay_max_bytes });
     }
     // ----------------------------------------------------------------------------
 
@@ -557,6 +569,7 @@ pub const CaptureStore = struct {
                 .fps = state.user_settings.user_settings.capture_fps,
                 .bit_rate = state.user_settings.user_settings.capture_bit_rate,
                 .replay_seconds = state.user_settings.user_settings.replay_seconds,
+                .replay_max_bytes = state.user_settings.user_settings.replay_max_bytes,
             };
         };
 
@@ -568,6 +581,7 @@ pub const CaptureStore = struct {
             state_local.fps,
             state_local.bit_rate,
             state_local.replay_seconds,
+            state_local.replay_max_bytes,
         );
         store.dispatch(.{ .capture = .start_replay_buffer_success });
     }
@@ -672,12 +686,33 @@ pub const CaptureStore = struct {
         store.dispatch(.{ .capture = .stop_recording_to_disk_success });
     }
 
+    /// See sync_replay_buffers message type for details.
+    fn effect_sync_replay_buffers(store: *Store, _: anytype) !void {
+        const self = &store.capture_store;
+        const video_start_ns = blk: {
+            var replay_buffer_locked = self.video_session.video_replay_buffer.lock();
+            defer replay_buffer_locked.unlock();
+            const replay_buffer = replay_buffer_locked.unwrap() orelse return;
+            const start_time = replay_buffer.get_start_time() orelse return;
+            break :blk start_time.nanoseconds;
+        };
+        const audio_bytes = blk: {
+            var replay_buffer_locked = self.audio_session.audio_replay_buffer.lock();
+            defer replay_buffer_locked.unlock();
+            const replay_buffer = replay_buffer_locked.unwrap() orelse return;
+            replay_buffer.trim_packets(.{ .oldest_time_ns = video_start_ns });
+            break :blk replay_buffer.size;
+        };
+        store.dispatch(.{ .capture = .{ .update_replay_buffer_metrics = .{ .audio_bytes = audio_bytes } } });
+    }
+
     fn effect_save_replay(store: *Store, _: anytype) !void {
         const self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .save_replay_fail });
 
         var fps: u32 = 0;
         var replay_seconds: u32 = 0;
+        var replay_max_bytes: u64 = 0;
         var video_output_directory: ?String = null;
         defer {
             if (video_output_directory) |*_video_output_directory| _video_output_directory.deinit();
@@ -695,6 +730,7 @@ pub const CaptureStore = struct {
             const settings = state.user_settings.user_settings;
             fps = settings.capture_fps;
             replay_seconds = settings.replay_seconds;
+            replay_max_bytes = settings.replay_max_bytes;
             // video_output_directory should never be null at this point. If so, there is
             // something seriously wrong.
             assert(settings.video_output_directory != null);
@@ -712,6 +748,7 @@ pub const CaptureStore = struct {
 
         const video_replay_buffer: ?*VideoReplayBuffer = (try self.video_session.take_and_swap_replay_buffer(
             replay_seconds,
+            replay_max_bytes,
         ));
         defer if (video_replay_buffer) |_video_replay_buffer| _video_replay_buffer.deinit();
 
@@ -980,12 +1017,12 @@ test "CaptureStore - update_replay_buffer_size" {
 
     const size = 1024 * 1024 * 10; // 10MB
 
-    store.dispatch(.{ .capture = .{ .update_replay_buffer_size = .{ .audio_bytes = size } } });
+    store.dispatch(.{ .capture = .{ .update_replay_buffer_metrics = .{ .audio_bytes = size } } });
     store.run(.{ .once = true, .wait_for_effects = true });
     const start_time = std.Io.Timestamp.now(std.testing.io, .awake);
     store.dispatch(.{
         .capture = .{
-            .update_replay_buffer_size = .{
+            .update_replay_buffer_metrics = .{
                 .video = .{
                     .bytes = size,
                     .start_time = start_time,
@@ -999,6 +1036,56 @@ test "CaptureStore - update_replay_buffer_size" {
     try std.testing.expectEqual(10, state.capture.replay_buffer_metrics.size_in_mb(.audio));
     try std.testing.expectEqual(10, state.capture.replay_buffer_metrics.size_in_mb(.video));
     try std.testing.expectEqual(20, state.capture.replay_buffer_metrics.size_in_mb(.total));
+}
+
+test "CaptureStore - sync_replay_buffers - should remove audio frames when the video replay buffer is trimmed" {
+    const TestStore = @import("./store.zig").TestStore;
+    const AudioReplayBufferTestUtil = @import("../audio/audio_replay_buffer.zig").TestUtil;
+    const allocator = std.testing.allocator;
+    const test_store = try TestStore.init(allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    const video_start_ns = (2 * std.time.ns_per_s);
+
+    var audio_replay_buffer = try AudioReplayBuffer.init(allocator, 10);
+    store.capture_store.audio_session.audio_replay_buffer.set(audio_replay_buffer);
+
+    for (0..4) |second| {
+        const chunk = try AudioReplayBufferTestUtil.create_audio_capture_data(
+            allocator,
+            (@as(i128, @intCast(second)) * std.time.ns_per_s),
+            2048,
+            0.1,
+        );
+
+        try audio_replay_buffer.add_data(chunk);
+    }
+    try audio_replay_buffer.finalize();
+    const audio_bytes_before = audio_replay_buffer.size;
+    try std.testing.expect(audio_bytes_before > 0);
+
+    var video_replay_buffer = try VideoReplayBuffer.init(allocator, 10, 0, &.{});
+    store.capture_store.video_session.video_replay_buffer.set(video_replay_buffer);
+
+    try video_replay_buffer.add_frame(&.{1}, video_start_ns, true);
+    try video_replay_buffer.add_frame(&.{2}, video_start_ns + std.time.ns_per_s, false);
+
+    store.dispatch(.{ .capture = .sync_replay_buffers });
+    store.run(.{ .once = true, .wait_for_effects = true });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    try std.testing.expect(audio_replay_buffer.size < audio_bytes_before);
+    try std.testing.expectEqual(audio_replay_buffer.size, state.capture.replay_buffer_metrics.audio_bytes);
+
+    // Ensure that there are no audio packets that occurred before the oldest video frame.
+    const oldest_audio_sample = audio_replay_buffer.timeline.timestamp_to_sample_floor(video_start_ns) orelse return error.ExpectedOldestAudioSample;
+    var iter = audio_replay_buffer.packet_iterator();
+    while (iter.next()) |packet| {
+        const packet_end = packet.data.*.pts + packet.data.*.duration;
+        try std.testing.expect(packet_end > oldest_audio_sample);
+    }
 }
 
 // ----------------------------------------------------------------------------

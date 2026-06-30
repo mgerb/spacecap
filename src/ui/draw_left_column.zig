@@ -13,6 +13,7 @@ const CAPTURE_BIT_RATE_KBPS_MIN: i32 = 100;
 const CAPTURE_BIT_RATE_KBPS_MAX: i32 = 1_000_000;
 const REPLAY_SECONDS_MIN: i32 = 1;
 const REPLAY_SECONDS_MAX: i32 = 60 * 60 * 24;
+const BYTES_PER_MB: u64 = 1024 * 1024;
 const VIDEO_OUTPUT_DIRECTORY_MAX_BYTES = std.fs.max_path_bytes;
 const VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH: f32 = 34;
 
@@ -23,6 +24,7 @@ const VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH: f32 = 34;
 var capture_fps_local: ?i32 = null;
 var capture_bit_rate_local: ?i32 = null;
 var replay_seconds_local: ?i32 = null;
+var replay_max_memory_mb_local: ?i32 = null;
 var fg_fps_local: ?i32 = null;
 var bg_fps_local: ?i32 = null;
 var video_output_directory_local: ?[VIDEO_OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
@@ -143,6 +145,10 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
     const current_capture_fps: i32 = @intCast(settings.capture_fps);
     const current_capture_bit_rate: i32 = @intCast(settings.capture_bit_rate / CAPTURE_BIT_RATE_BPS_PER_KBPS);
     const current_replay_seconds: i32 = @intCast(settings.replay_seconds);
+    const current_replay_max_memory_mb: i32 = @intCast(if (settings.replay_max_bytes == 0)
+        0
+    else
+        std.math.divCeil(u64, settings.replay_max_bytes, BYTES_PER_MB) catch |err| @panic(@errorName(err)));
     var restore_capture_source_on_startup = settings.restore_capture_source_on_startup;
     var start_replay_buffer_on_startup = settings.start_replay_buffer_on_startup;
 
@@ -210,7 +216,9 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
 
     // Replay buffer length
     {
-        c.ImGui_Text("Replay buffer length");
+        c.ImGui_PushTextWrapPos(0);
+        c.ImGui_Text("Replay buffer length (s)");
+        c.ImGui_PopTextWrapPos();
         c.ImGui_SameLine();
         imgui_util.help_marker("Length of video and audio stored in memory (seconds)");
         imgui_util.set_next_item_width_fill();
@@ -241,6 +249,35 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
         c.ImGui_PushTextWrapPos(0);
         c.ImGui_TextDisabled("Duration: %s", replay_duration_label.ptr);
         c.ImGui_PopTextWrapPos();
+    }
+
+    // Replay buffer memory limit
+    {
+        c.ImGui_PushTextWrapPos(0);
+        c.ImGui_Text("Replay video memory limit (MB)");
+        c.ImGui_PopTextWrapPos();
+        c.ImGui_SameLine();
+        imgui_util.help_marker("Maximum size of the replay buffer (Megabytes). 0 disables the memory limit.");
+        imgui_util.set_next_item_width_fill();
+        var replay_max_memory_mb = replay_max_memory_mb_local orelse current_replay_max_memory_mb;
+        if (c.ImGui_InputIntEx(
+            "##replay_buffer_max_memory",
+            &replay_max_memory_mb,
+            5,
+            25,
+            c.ImGuiInputTextFlags_None,
+        )) {
+            replay_max_memory_mb = std.math.clamp(replay_max_memory_mb, 0, std.math.maxInt(i32));
+            replay_max_memory_mb_local = replay_max_memory_mb;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit() and replay_max_memory_mb != current_replay_max_memory_mb) {
+            store.dispatch(.{ .user_settings = .{
+                .set_replay_max_bytes = @as(u64, @intCast(replay_max_memory_mb)) * BYTES_PER_MB,
+            } });
+            replay_max_memory_mb_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            replay_max_memory_mb_local = null;
+        }
     }
 
     c.ImGui_PushTextWrapPos(0);

@@ -6,7 +6,6 @@ const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const Mutex = @import("../mutex.zig").Mutex;
 const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const Util = @import("../util.zig");
 const BufferedChan = @import("../channel.zig").BufferedChan;
 const ChanError = @import("../channel.zig").ChanError;
 const Store = @import("../store/store.zig").Store;
@@ -64,6 +63,8 @@ pub const VideoSession = struct {
     // Init/deinit of record_data_queue must also be behind this lock.
     video_record_mutex: std.Io.Mutex = .init,
     video_replay_buffer: Mutex(?*VideoReplayBuffer),
+    /// Increments every frame (even when not recording/replay buffer is not going).
+    frame_count: u64 = 0,
     // When recording to disk this channel will not be null. There is
     // a separate thread that pulls data off this queue and writes to disk.
     // We do this so that we don't slow the main capture thread by disk IO.
@@ -155,7 +156,13 @@ pub const VideoSession = struct {
         try self.video_capture.stop();
     }
 
-    pub fn start_replay_buffer(self: *Self, fps: u32, capture_bit_rate: u64, replay_seconds: u32) !void {
+    pub fn start_replay_buffer(
+        self: *Self,
+        fps: u32,
+        capture_bit_rate: u64,
+        replay_seconds: u32,
+        replay_max_bytes: u64,
+    ) !void {
         self.video_record_mutex.lockUncancelable(self.io);
         defer self.video_record_mutex.unlock(self.io);
 
@@ -171,6 +178,7 @@ pub const VideoSession = struct {
             video_locked.set(try VideoReplayBuffer.init(
                 self.allocator,
                 replay_seconds,
+                replay_max_bytes,
                 self.vulkan.video_encoder.?.bit_stream_header.items,
             ));
         }
@@ -311,6 +319,7 @@ pub const VideoSession = struct {
                 vulkan_image_buffer.as_ptr().in_use.store(false, .release);
                 vulkan_image_buffer.deinit();
             }
+            self.frame_count += 1;
 
             var image_slc = [_]vk.Image{vulkan_image_buffer.as_ptr().image};
             var image_view_slc = [_]vk.ImageView{vulkan_image_buffer.as_ptr().image_view};
@@ -397,9 +406,13 @@ pub const VideoSession = struct {
             }
 
             if (video_replay_buffer) |_video_replay_buffer| {
+                // Only sync roughly every half second.
+                if (self.frame_count % @max(1, video_encoder.fps / 2) == 0) {
+                    self.store.dispatch(.{ .capture = .sync_replay_buffers });
+                }
                 self.store.dispatch(.{
                     .capture = .{
-                        .update_replay_buffer_size = .{
+                        .update_replay_buffer_metrics = .{
                             .video = .{
                                 .bytes = _video_replay_buffer.size,
                                 .start_time = _video_replay_buffer.get_start_time(),
@@ -446,7 +459,7 @@ pub const VideoSession = struct {
         }
     }
 
-    pub fn take_and_swap_replay_buffer(self: *Self, replay_seconds: u32) !?*VideoReplayBuffer {
+    pub fn take_and_swap_replay_buffer(self: *Self, replay_seconds: u32, replay_max_bytes: u64) !?*VideoReplayBuffer {
         self.video_record_mutex.lockUncancelable(self.io);
         defer self.video_record_mutex.unlock(self.io);
 
@@ -465,17 +478,26 @@ pub const VideoSession = struct {
         video_replay_buffer_locked.set(try .init(
             self.allocator,
             replay_seconds,
+            replay_max_bytes,
             video_encoder.bit_stream_header.items,
         ));
 
         return video_replay_buffer;
     }
 
-    pub fn set_replay_buffer_seconds(self: *Self, replay_seconds: u32) void {
+    pub fn set_replay_buffer_values(self: *Self, args: struct {
+        replay_seconds: ?u32 = null,
+        replay_max_bytes: ?u64 = null,
+    }) void {
         var replay_buffer_locked = self.video_replay_buffer.lock();
         defer replay_buffer_locked.unlock();
         if (replay_buffer_locked.unwrap()) |replay_buffer| {
-            replay_buffer.set_replay_seconds(replay_seconds);
+            if (args.replay_seconds) |replay_seconds| {
+                replay_buffer.set_replay_seconds(replay_seconds);
+            }
+            if (args.replay_max_bytes) |replay_max_bytes| {
+                replay_buffer.set_max_bytes(replay_max_bytes);
+            }
         }
     }
 };

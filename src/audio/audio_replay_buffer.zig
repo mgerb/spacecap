@@ -64,7 +64,7 @@ pub fn add_data(self: *Self, data: Arc(AudioCaptureData)) !void {
     var ready_packets = self.timeline.take_ready_packets();
     defer deinitPacketList(&ready_packets);
     self.append_packets(&ready_packets);
-    self.trim_packets();
+    self.trim_packets(.{});
 }
 
 /// Flush any remaining packets in the timeline.
@@ -74,12 +74,12 @@ pub fn finalize(self: *Self) !void {
     var ready_packets = self.timeline.take_ready_packets();
     defer deinitPacketList(&ready_packets);
     self.append_packets(&ready_packets);
-    self.trim_packets();
+    self.trim_packets(.{});
 }
 
 pub fn set_replay_seconds(self: *Self, replay_seconds: u32) void {
     self.replay_seconds = replay_seconds;
-    self.trim_packets();
+    self.trim_packets(.{});
 }
 
 pub fn packet_iterator(self: *Self) LinkedListIterator(EncodedAudioPacketNode) {
@@ -99,19 +99,36 @@ fn append_packets(self: *Self, packets: *std.DoublyLinkedList) void {
     }
 }
 
-/// Remove packets that are older than the configured replay duration.
-fn trim_packets(self: *Self) void {
-    const retention_samples = self.replay_retention_samples();
-    const oldest_sample = self.timeline.encoded_until_sample - retention_samples;
+fn remove_first_packet(self: *Self) void {
+    if (self.packets.popFirst()) |first| {
+        const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", first);
+        self.size -= @intCast(packet_node.data.*.size);
+        self.len -= 1;
+        packet_node.deinit();
+    }
+}
+
+/// Remove packets that are older than the configured replay duration, or older
+/// than `oldest_time_ns` when provided.
+pub fn trim_packets(self: *Self, args: struct {
+    oldest_time_ns: ?i128 = null,
+}) void {
+    const oldest_sample = if (args.oldest_time_ns) |oldest_time_ns| blk: {
+        break :blk self.timeline.timestamp_to_sample_floor(oldest_time_ns);
+    } else blk: {
+        const retention_samples = self.replay_retention_samples();
+        break :blk self.timeline.encoded_until_sample - retention_samples;
+    };
+
+    if (oldest_sample == null) {
+        return;
+    }
 
     while (self.packets.first) |first| {
         const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", first);
         const packet_end = packet_node.data.*.pts + packet_node.data.*.duration;
-        if (packet_end <= oldest_sample) {
-            _ = self.packets.popFirst();
-            self.len -= 1;
-            self.size -= @intCast(packet_node.data.*.size);
-            packet_node.deinit();
+        if (packet_end <= oldest_sample.?) {
+            self.remove_first_packet();
         } else {
             break;
         }
@@ -122,8 +139,8 @@ fn replay_retention_samples(self: *Self) i64 {
     return self.replay_seconds * SAMPLE_RATE;
 }
 
-const TestUtil = struct {
-    fn create_audio_capture_data(
+pub const TestUtil = struct {
+    pub fn create_audio_capture_data(
         allocator: Allocator,
         timestamp_ns: i128,
         samples_per_channel: usize,
@@ -159,7 +176,7 @@ test "AudioReplayBuffer - add_data - encodes audio before export and exposes pac
     try replay_buffer.finalize();
 
     try std.testing.expect(replay_buffer.has_packets());
-    const packet_window = replay_buffer.timeline.get_sample_window(
+    const packet_window = replay_buffer.timeline.get_unclamped_sample_window(
         std.time.ns_per_s,
         std.time.ns_per_s + std.time.ns_per_s / 10,
     ) orelse return error.ExpectedSampleWindow;

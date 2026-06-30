@@ -6,6 +6,7 @@ const util = @import("../util.zig");
 const log = std.log.scoped(.user_settings);
 
 const SETTINGS_JSON = "settings.json";
+pub const DEFAULT_REPLAY_MAX_BYTES: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// NOTE: This MUST remain JSON serializable.
 pub const UserSettings = struct {
@@ -22,6 +23,8 @@ pub const UserSettings = struct {
     /// In bits per second (bps).
     capture_bit_rate: u64 = 10_000_000,
     replay_seconds: u32 = 30,
+    /// Max bytes in the replay buffer before it discards frames. 0 = unlimited
+    replay_max_bytes: u64 = DEFAULT_REPLAY_MAX_BYTES,
     start_replay_buffer_on_startup: bool = false,
     restore_capture_source_on_startup: bool = true,
     // Doesn't have a default value because an allocator is
@@ -228,6 +231,7 @@ test "UserSettings - load" {
         \\  "capture_fps": 144,
         \\  "capture_bit_rate": 25000000,
         \\  "replay_seconds": 45,
+        \\  "replay_max_bytes": 536870912,
         \\  "start_replay_buffer_on_startup": true,
         \\  "restore_capture_source_on_startup": false,
         \\  "video_output_directory": "/tmp/spacecap-output",
@@ -248,6 +252,7 @@ test "UserSettings - load" {
     try std.testing.expectEqual(144, settings.capture_fps);
     try std.testing.expectEqual(25_000_000, settings.capture_bit_rate);
     try std.testing.expectEqual(45, settings.replay_seconds);
+    try std.testing.expectEqual(536_870_912, settings.replay_max_bytes);
     try std.testing.expect(settings.start_replay_buffer_on_startup);
     try std.testing.expect(!settings.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-output", settings.video_output_directory.?.bytes);
@@ -264,6 +269,7 @@ test "UserSettings - save" {
         .capture_fps = 30,
         .capture_bit_rate = 8_000_000,
         .replay_seconds = 12,
+        .replay_max_bytes = 256 * 1024 * 1024,
         .start_replay_buffer_on_startup = true,
         .restore_capture_source_on_startup = false,
         .video_output_directory = try String.from(allocator, "/tmp/spacecap-recordings"),
@@ -279,6 +285,7 @@ test "UserSettings - save" {
     try std.testing.expectEqual(30, loaded.capture_fps);
     try std.testing.expectEqual(8_000_000, loaded.capture_bit_rate);
     try std.testing.expectEqual(12, loaded.replay_seconds);
+    try std.testing.expectEqual(256 * 1024 * 1024, loaded.replay_max_bytes);
     try std.testing.expect(loaded.start_replay_buffer_on_startup);
     try std.testing.expect(!loaded.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-recordings", loaded.video_output_directory.?.bytes);
@@ -292,6 +299,7 @@ test "UserSettings - clone" {
         .capture_fps = 60,
         .capture_bit_rate = 10_000_000,
         .replay_seconds = 30,
+        .replay_max_bytes = 128 * 1024 * 1024,
         .video_output_directory = try String.from(allocator, "/tmp/original"),
     };
     defer original.deinit(allocator);
@@ -307,15 +315,18 @@ test "UserSettings - clone" {
 
     try cloned.set_video_output_directory(try String.from(allocator, "/tmp/cloned"));
     cloned.capture_fps = 120;
+    cloned.replay_max_bytes = 512 * 1024 * 1024;
     try cloned.update_audio_device_settings(allocator, "device-1", false, 2.0);
     try cloned.update_audio_device_settings(allocator, "device-2", true, 1.0);
 
     try std.testing.expectEqual(60, original.capture_fps);
+    try std.testing.expectEqual(128 * 1024 * 1024, original.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/original", original.video_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(original, "device-1", true, 0.75);
     try std.testing.expect(original.audio_devices.map.get("device-2") == null);
 
     try std.testing.expectEqual(120, cloned.capture_fps);
+    try std.testing.expectEqual(512 * 1024 * 1024, cloned.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/cloned", cloned.video_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(cloned, "device-1", false, 2.0);
     try TestUtil.expect_audio_device_settings(cloned, "device-2", true, 1.0);
