@@ -2,6 +2,7 @@ const args = @import("../args.zig");
 
 pub const IpcCommand = enum {
     save_replay,
+    screenshot,
     start_replay_buffer,
     stop_replay_buffer,
     toggle_replay_buffer,
@@ -12,6 +13,7 @@ pub const IpcCommand = enum {
     pub fn from_send_command(send_cmd: args.SendCommand) @This() {
         return switch (send_cmd) {
             .@"save-replay" => .save_replay,
+            .screenshot => .screenshot,
             .@"start-replay-buffer" => .start_replay_buffer,
             .@"stop-replay-buffer" => .stop_replay_buffer,
             .@"toggle-replay-buffer" => .toggle_replay_buffer,

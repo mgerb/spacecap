@@ -54,7 +54,13 @@ pub const Store = struct {
             switch (self.*) {
                 .capture => |*capture_msg| capture_msg.deinit(),
                 .user_settings => |*user_settings_msg| user_settings_msg.deinit(),
-                .global_shortcuts, .show_demo, .exit => {},
+                inline else => |payload| {
+                    if (@typeInfo(@TypeOf(payload)) == .@"struct" and
+                        @hasDecl(@TypeOf(payload), "deinit"))
+                    {
+                        @compileError("Payload with 'deinit' must be explicitly handled.");
+                    }
+                },
             }
         }
     };

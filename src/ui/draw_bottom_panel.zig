@@ -9,8 +9,6 @@ const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const theme = @import("./theme.zig");
 
-const log = std.log.scoped(.draw_bottom_panel);
-
 const AUDIO_GAIN_DB_MIN: f32 = -60.0;
 const AUDIO_GAIN_DB_MAX: f32 = 12.0;
 
@@ -57,6 +55,8 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
             c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, video_cell_padding);
             defer c.ImGui_PopStyleVar();
 
+            const video_capture_ready = state.capture.is_video_capture_supprted and state.capture.video_capture_active;
+
             // ----------------------------------------------------------------------------
             // Video primary.
             // ----------------------------------------------------------------------------
@@ -75,8 +75,6 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
                     store.dispatch(.{ .capture = .{ .select_video_source = .{ .source_type = .all } } });
                 }
                 c.ImGui_EndDisabled();
-
-                const video_capture_ready = state.capture.is_video_capture_supprted and state.capture.video_capture_active;
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
@@ -165,10 +163,11 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
-                c.ImGui_BeginDisabled(true);
-                defer c.ImGui_EndDisabled();
-                _ = c.ImGui_ButtonEx("󰹑 Screenshot", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = button_height });
-                imgui_util.item_tooltip("Screenshots are not implemented yet.");
+                c.ImGui_BeginDisabled(!video_capture_ready);
+                if (c.ImGui_ButtonEx("󰹑 Screenshot", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = button_height })) {
+                    store.dispatch(.{ .capture = .screenshot_request });
+                }
+                c.ImGui_EndDisabled();
             }
         }
     }
@@ -240,7 +239,7 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
                             &selected,
                             flags,
                         )) {
-                            store.dispatch(.{ .capture = .{ .toggle_audio_device = try .from(store.allocator, audio_device.id) } });
+                            store.dispatch(.{ .capture = .{ .toggle_audio_device = try .init(store.allocator, audio_device.id) } });
                         }
                     }
                 }
@@ -256,7 +255,7 @@ fn draw_audio_device(allocator: Allocator, ui_storage: *UIStorage, store: *Store
     _ = c.ImGui_TableNextColumn();
 
     if (c.ImGui_Button("")) {
-        store.dispatch(.{ .capture = .{ .toggle_audio_device = try .from(allocator, audio_device.id) } });
+        store.dispatch(.{ .capture = .{ .toggle_audio_device = try .init(allocator, audio_device.id) } });
     }
     imgui_util.item_tooltip("Remove device");
 
@@ -284,12 +283,15 @@ fn draw_audio_device(allocator: Allocator, ui_storage: *UIStorage, store: *Store
     c.ImGui_SetNextItemWidth(c.ImGui_GetContentRegionAvail().x);
     if (c.ImGui_SliderFloatEx("", &gain_db, AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX, "%.0f dB", 0)) {
         gain_db = @round(gain_db);
-        store.dispatch(.{ .capture = .{
-            .set_audio_device_gain = try .init(allocator, .{
-                .device_id = audio_device.id,
-                .gain = util.audio_db_to_linear(gain_db),
-            }),
-        } });
+        store.dispatch(.{
+            .capture = .{
+                .set_audio_device_gain = .{
+                    .allocator = allocator,
+                    .device_id = try allocator.dupe(u8, audio_device.id),
+                    .gain = util.audio_db_to_linear(gain_db),
+                },
+            },
+        });
     }
 }
 

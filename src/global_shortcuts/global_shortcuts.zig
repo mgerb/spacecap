@@ -6,6 +6,7 @@ pub const GlobalShortcuts = struct {
 
     pub const Shortcut = enum {
         save_replay,
+        screenshot,
         start_replay_buffer,
         stop_replay_buffer,
         toggle_replay_buffer,
@@ -22,6 +23,7 @@ pub const GlobalShortcuts = struct {
         pub fn display_name(self: Shortcut) []const u8 {
             return switch (self) {
                 .save_replay => "Save Replay",
+                .screenshot => "Screenshot",
                 .start_replay_buffer => "Start Replay Buffer",
                 .stop_replay_buffer => "Stop Replay Buffer",
                 .toggle_replay_buffer => "Toggle Replay Buffer",

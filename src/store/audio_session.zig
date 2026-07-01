@@ -12,11 +12,12 @@ const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").Select
 const UserSettings = @import("../store/user_settings.zig").UserSettings;
 const Store = @import("../store/store.zig").Store;
 const ChanError = @import("../channel.zig").ChanError;
-const deinitPacketList = @import("../audio/audio_encoder.zig").deinit_packet_list;
-const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
-const Muxer = @import("../video/muxer.zig").Muxer;
 const Arc = @import("../arc.zig").Arc;
+const ffmpeg = @import("../ffmpeg/main.zig");
+const AudioEncoder = ffmpeg.AudioEncoder;
+const CodecContextInfo = ffmpeg.AudioEncoder.CodecContextInfo;
+const Muxer = ffmpeg.Muxer;
 
 /// AudioSession owns the main audio capture loop. All audio captured by the
 /// system goes through the AudioSession.
@@ -126,13 +127,16 @@ pub const AudioSession = struct {
                 continue;
             };
 
-            self.store.dispatch(.{ .capture = .{
-                .update_audio_device_level = try .init(self.allocator, .{
-                    .device_id = data.as_ptr().id,
-                    .level = data.as_ptr().peak_level * data.as_ptr().gain,
-                    .updated_at = std.Io.Timestamp.now(self.io, .awake).nanoseconds,
-                }),
-            } });
+            self.store.dispatch(.{
+                .capture = .{
+                    .update_audio_device_level = .{
+                        .allocator = self.allocator,
+                        .device_id = try self.allocator.dupe(u8, data.as_ptr().id),
+                        .level = data.as_ptr().peak_level * data.as_ptr().gain,
+                        .updated_at = std.Io.Timestamp.now(self.io, .awake).nanoseconds,
+                    },
+                },
+            });
 
             try self.write_audio_packets_to_disk(data.clone());
 
@@ -203,7 +207,7 @@ pub const AudioSession = struct {
 
             try _timeline.finalize();
             var packets = _timeline.take_ready_packets();
-            defer deinitPacketList(&packets);
+            defer AudioEncoder.deinit_packet_list(&packets);
             if (muxer) |_muxer| {
                 _ = try mux_audio_packets(&packets, _timeline, _muxer);
             }
@@ -232,7 +236,7 @@ pub const AudioSession = struct {
         try timeline.process_ready_timeline(false);
 
         var packets = timeline.take_ready_packets();
-        defer deinitPacketList(&packets);
+        defer AudioEncoder.deinit_packet_list(&packets);
         const audio_bytes = try mux_audio_packets(&packets, timeline, muxer);
         self.store.dispatch(.{ .capture = .{ .update_recording_bytes = .{ .audio = audio_bytes } } });
     }

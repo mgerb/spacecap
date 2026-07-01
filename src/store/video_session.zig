@@ -11,6 +11,8 @@ const ChanError = @import("../channel.zig").ChanError;
 const Store = @import("../store/store.zig").Store;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoCaptureError = @import("../capture/video/video_capture.zig").VideoCaptureError;
+const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+const Arc = @import("../arc.zig").Arc;
 
 const VideoRecordData = struct {
     allocator: Allocator,
@@ -65,6 +67,8 @@ pub const VideoSession = struct {
     video_replay_buffer: Mutex(?*VideoReplayBuffer),
     /// Increments every frame (even when not recording/replay buffer is not going).
     frame_count: u64 = 0,
+    screenshot_requests: Mutex(u32),
+    screenshot_io_group: std.Io.Group = .init,
     // When recording to disk this channel will not be null. There is
     // a separate thread that pulls data off this queue and writes to disk.
     // We do this so that we don't slow the main capture thread by disk IO.
@@ -84,6 +88,7 @@ pub const VideoSession = struct {
             .store = store,
             .video_capture = video_capture,
             .video_replay_buffer = .init(io, null),
+            .screenshot_requests = .init(io, 0),
         };
     }
 
@@ -101,6 +106,10 @@ pub const VideoSession = struct {
             record_to_disk_thread.join();
             self.record_to_disk_thread = null;
         }
+
+        self.screenshot_io_group.await(self.io) catch |err| {
+            log.err("[deinit] screenshot_io_group.await error: {}", .{err});
+        };
 
         // NOTE: Only deinit after the record to disk thread closes.
         if (self.record_data_queue) |*record_data_queue| {
@@ -351,6 +360,14 @@ pub const VideoSession = struct {
                 break :blk _copy_data;
             };
 
+            const screenshot_signal_semaphore = if (self.decrement_screenshot_requests()) blk: {
+                break :blk self.take_screenshot(vulkan_image_buffer.as_ptr()) catch |err| {
+                    log.err("[video_capture_thread_handler] queue_screenshot error: {}", .{err});
+                    self.store.dispatch(.{ .capture = .screenshot_fail });
+                    break :blk null;
+                };
+            } else null;
+
             if (!should_encode) {
                 // In capture-only mode no downstream work waits on the preview copy.
                 // Wait here so the capture-ring source image is not recycled while still in flight.
@@ -367,6 +384,15 @@ pub const VideoSession = struct {
 
             const video_encoder = self.vulkan.video_encoder orelse continue;
 
+            var external_wait_semaphore_buffer: [2]vk.Semaphore = undefined;
+            var external_wait_semaphores: std.ArrayList(vk.Semaphore) = .initBuffer(&external_wait_semaphore_buffer);
+            if (copy_data.semaphore) |semaphore| {
+                external_wait_semaphores.appendAssumeCapacity(semaphore);
+            }
+            if (screenshot_signal_semaphore) |semaphore| {
+                external_wait_semaphores.appendAssumeCapacity(semaphore);
+            }
+
             try video_encoder.prepare_encode(.{
                 .image = &image_slc,
                 .image_view = &image_view_slc,
@@ -374,7 +400,7 @@ pub const VideoSession = struct {
                     .width = vulkan_image_buffer.as_ptr().width,
                     .height = vulkan_image_buffer.as_ptr().height,
                 },
-                .external_wait_semaphore = copy_data.semaphore,
+                .external_wait_semaphores = external_wait_semaphores.items,
             });
 
             const encode_result = try video_encoder.encode(0);
@@ -422,6 +448,62 @@ pub const VideoSession = struct {
                 });
             }
         }
+    }
+
+    /// Request a screenshot. Increments a request queue.
+    pub fn screenshot_request(self: *Self) void {
+        var locked = self.screenshot_requests.lock();
+        defer locked.unlock();
+        locked.unwrap_ptr().* += 1;
+    }
+
+    /// Decrement screenshot_requests and return true if there was a request.
+    fn decrement_screenshot_requests(self: *Self) bool {
+        var locked = self.screenshot_requests.lock();
+        defer locked.unlock();
+        const requests = locked.unwrap_ptr();
+        if (requests.* == 0) {
+            return false;
+        }
+        requests.* -= 1;
+        return true;
+    }
+
+    fn take_screenshot(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !vk.Semaphore {
+        const copy_result = try vulkan_image_buffer.duplicate(self.io);
+        errdefer copy_result.vulkan_image_buffer.deinit();
+
+        self.screenshot_io_group.async(self.io, struct {
+            fn run(
+                allocator: std.mem.Allocator,
+                store: *Store,
+                image_buffer: Arc(VulkanImageBuffer),
+            ) void {
+                defer image_buffer.deinit();
+                const bgra = image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator) catch |err| {
+                    log.err("[take_screenshot] copy_image_to_buffer error: {}", .{err});
+                    store.dispatch(.{ .capture = .screenshot_fail });
+                    return;
+                };
+
+                store.dispatch(.{
+                    .capture = .{
+                        .screenshot_response = .{
+                            .allocator = allocator,
+                            .data = bgra,
+                            .width = image_buffer.as_ptr().width,
+                            .height = image_buffer.as_ptr().height,
+                        },
+                    },
+                });
+            }
+        }.run, .{
+            self.allocator,
+            self.store,
+            copy_result.vulkan_image_buffer,
+        });
+
+        return copy_result.signal_semaphore;
     }
 
     fn record_to_disk_thread_handler(self: *Self) void {

@@ -1,13 +1,11 @@
 const std = @import("std");
 const assert = std.debug.assert;
-
 const Allocator = std.mem.Allocator;
-const CodecContextInfo = @import("../audio/audio_timeline.zig").CodecContextInfo;
-const SampleWindow = @import("../audio/audio_timeline.zig").SampleWindow;
-const EncodedAudioPacketNode = @import("../audio/audio_encoder.zig").EncodedAudioPacketNode;
-const LinkedListIterator = @import("../util.zig").LinkedListIterator;
-const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
-const checkErr = @import("../ffmpeg.zig").check_err;
+const Util = @import("../util.zig");
+const LinkedListIterator = Util.LinkedListIterator;
+const c = @import("./c.zig").c;
+const check_err = @import("./c.zig").check_err;
+const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
 
 pub const Muxer = struct {
     const Self = @This();
@@ -34,10 +32,10 @@ pub const Muxer = struct {
     allocator: Allocator,
     io: std.Io,
     fps: u32,
-    format_context: *ffmpeg.AVFormatContext,
+    format_context: *c.AVFormatContext,
     file_name: [:0]u8,
-    video_stream: *ffmpeg.AVStream,
-    audio_stream: ?*ffmpeg.AVStream,
+    video_stream: *c.AVStream,
+    audio_stream: ?*c.AVStream,
     first_video_time_ns: ?i128 = null,
     audio_start_sample: ?i64 = null,
     audio_end_sample: ?i64 = null,
@@ -51,37 +49,37 @@ pub const Muxer = struct {
         io: std.Io,
         file_name_prefix: []const u8,
         header_frame: []const u8,
-        audio_codec_context: ?CodecContextInfo,
+        audio_codec_context: ?AudioEncoder.CodecContextInfo,
         width: u32,
         height: u32,
         fps: u32,
         output_directory: []const u8,
     ) !Self {
-        var format_context: *ffmpeg.AVFormatContext = undefined;
+        var format_context: *c.AVFormatContext = undefined;
         try std.Io.Dir.cwd().createDirPath(io, output_directory);
         const file_name = try get_output_file_name(allocator, io, file_name_prefix, output_directory);
         errdefer allocator.free(file_name);
 
-        var ret = ffmpeg.avformat_alloc_output_context2(@ptrCast(&format_context), null, "mp4", file_name);
-        try checkErr(ret);
+        var ret = c.avformat_alloc_output_context2(@ptrCast(&format_context), null, "mp4", file_name);
+        try check_err(ret);
         errdefer {
             if (format_context.pb != null) {
-                _ = ffmpeg.avio_closep(&format_context.pb);
+                _ = c.avio_closep(&format_context.pb);
             }
-            ffmpeg.avformat_free_context(format_context);
+            c.avformat_free_context(format_context);
         }
 
         // Configure the H264 video stream as passthrough of the encoded bitstream.
-        const video_stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
+        const video_stream = c.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
 
         const video_codecpar = video_stream.*.codecpar;
-        video_codecpar.*.codec_id = ffmpeg.AV_CODEC_ID_H264;
-        video_codecpar.*.codec_type = ffmpeg.AVMEDIA_TYPE_VIDEO;
+        video_codecpar.*.codec_id = c.AV_CODEC_ID_H264;
+        video_codecpar.*.codec_type = c.AVMEDIA_TYPE_VIDEO;
         video_codecpar.*.width = @intCast(width);
         video_codecpar.*.height = @intCast(height);
 
         // ffmpeg frees this memory when it's done so we need to copy it.
-        const extradata: [*c]u8 = @ptrCast(ffmpeg.av_malloc(header_frame.len));
+        const extradata: [*c]u8 = @ptrCast(c.av_malloc(header_frame.len));
         if (extradata == null) {
             return error.OutOfMemory;
         }
@@ -91,26 +89,26 @@ pub const Muxer = struct {
         video_codecpar.*.extradata_size = @intCast(header_frame.len);
 
         // Convert nanosecond capture timestamps to a muxer-friendly video time base.
-        video_stream.*.time_base = ffmpeg.AVRational{ .num = 1, .den = 90_000 };
-        video_stream.*.avg_frame_rate = ffmpeg.AVRational{ .num = @intCast(fps), .den = 1 };
-        video_stream.*.r_frame_rate = ffmpeg.AVRational{ .num = @intCast(fps), .den = 1 };
+        video_stream.*.time_base = c.AVRational{ .num = 1, .den = 90_000 };
+        video_stream.*.avg_frame_rate = c.AVRational{ .num = @intCast(fps), .den = 1 };
+        video_stream.*.r_frame_rate = c.AVRational{ .num = @intCast(fps), .den = 1 };
 
-        var audio_stream: ?*ffmpeg.AVStream = null;
+        var audio_stream: ?*c.AVStream = null;
         if (audio_codec_context) |codec_context| {
-            const stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
-            try checkErr(ffmpeg.avcodec_parameters_from_context(stream.*.codecpar, codec_context.audio_codec_ctx));
+            const stream = c.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
+            try check_err(c.avcodec_parameters_from_context(stream.*.codecpar, codec_context.audio_codec_ctx));
             stream.*.time_base = codec_context.time_base;
             audio_stream = stream;
         }
 
-        if (format_context.oformat.*.flags & ffmpeg.AVFMT_NOFILE == 0) {
-            ret = ffmpeg.avio_open(&format_context.pb, file_name, ffmpeg.AVIO_FLAG_WRITE);
-            try checkErr(ret);
+        if (format_context.oformat.*.flags & c.AVFMT_NOFILE == 0) {
+            ret = c.avio_open(&format_context.pb, file_name, c.AVIO_FLAG_WRITE);
+            try check_err(ret);
         }
 
         // Write container headers once streams are configured.
-        ret = ffmpeg.avformat_write_header(format_context, null);
-        try checkErr(ret);
+        ret = c.avformat_write_header(format_context, null);
+        try check_err(ret);
 
         return .{
             .allocator = allocator,
@@ -128,15 +126,15 @@ pub const Muxer = struct {
             pending.deinit();
         }
         if (self.format_context.pb != null) {
-            _ = ffmpeg.avio_closep(&self.format_context.pb);
+            _ = c.avio_closep(&self.format_context.pb);
         }
-        ffmpeg.avformat_free_context(self.format_context);
+        c.avformat_free_context(self.format_context);
         self.allocator.free(self.file_name);
     }
 
     fn write_video_packet_data(
         self: *Self,
-        video_pkt: [*c]ffmpeg.AVPacket,
+        video_pkt: [*c]c.AVPacket,
         data: []const u8,
         is_idr: bool,
         pts: i64,
@@ -149,28 +147,28 @@ pub const Muxer = struct {
         video_pkt.*.dts = pts;
         video_pkt.*.duration = duration;
         if (is_idr) {
-            video_pkt.*.flags |= ffmpeg.AV_PKT_FLAG_KEY;
+            video_pkt.*.flags |= c.AV_PKT_FLAG_KEY;
         } else {
-            video_pkt.*.flags &= ~ffmpeg.AV_PKT_FLAG_KEY;
+            video_pkt.*.flags &= ~c.AV_PKT_FLAG_KEY;
         }
 
-        const ret = ffmpeg.av_interleaved_write_frame(self.format_context, video_pkt);
-        ffmpeg.av_packet_unref(video_pkt);
-        try checkErr(ret);
+        const ret = c.av_interleaved_write_frame(self.format_context, video_pkt);
+        c.av_packet_unref(video_pkt);
+        try check_err(ret);
     }
 
-    fn write_audio_packet(self: *Self, pkt: [*c]ffmpeg.AVPacket, packet_node: *EncodedAudioPacketNode, start_sample: i64) !void {
+    fn write_audio_packet(self: *Self, pkt: [*c]c.AVPacket, packet_node: *AudioEncoder.EncodedAudioPacketNode, start_sample: i64) !void {
         assert(self.audio_stream != null);
-        try checkErr(ffmpeg.av_packet_ref(pkt, @constCast(packet_node.data)));
+        try check_err(c.av_packet_ref(pkt, @constCast(packet_node.data)));
         pkt.*.stream_index = self.audio_stream.?.*.index;
         pkt.*.pts = packet_node.data.*.pts - start_sample;
         pkt.*.dts = packet_node.data.*.dts - start_sample;
         pkt.*.duration = packet_node.data.*.duration;
         pkt.*.flags = packet_node.data.*.flags;
 
-        const ret = ffmpeg.av_interleaved_write_frame(self.format_context, pkt);
-        ffmpeg.av_packet_unref(pkt);
-        try checkErr(ret);
+        const ret = c.av_interleaved_write_frame(self.format_context, pkt);
+        c.av_packet_unref(pkt);
+        try check_err(ret);
     }
 
     pub fn video_start_time_ns(self: *const Self) ?i128 {
@@ -187,9 +185,9 @@ pub const Muxer = struct {
         }
     }
 
-    pub fn set_audio_sample_window(self: *Self, sample_window: SampleWindow) void {
-        self.audio_start_sample = sample_window.start_sample;
-        self.audio_end_sample = sample_window.end_sample;
+    pub fn set_audio_sample_window(self: *Self, start: i64, end: i64) void {
+        self.audio_start_sample = start;
+        self.audio_end_sample = end;
     }
 
     /// NOTE: Takes ownership of data.
@@ -206,9 +204,9 @@ pub const Muxer = struct {
             self.first_video_time_ns = frame_time_ns;
         }
 
-        const ns_time_base = ffmpeg.AVRational{ .num = 1, .den = 1_000_000_000 };
+        const ns_time_base = c.AVRational{ .num = 1, .den = 1_000_000_000 };
         const frame_duration_pts = if (self.fps > 0)
-            @max(ffmpeg.av_rescale_q(1, .{ .num = 1, .den = @intCast(self.fps) }, self.video_stream.time_base), 1)
+            @max(c.av_rescale_q(1, .{ .num = 1, .den = @intCast(self.fps) }, self.video_stream.time_base), 1)
         else
             0;
         const jitter_tolerance_pts = if (self.fps > 0)
@@ -217,7 +215,7 @@ pub const Muxer = struct {
             0;
 
         const pts_ns = frame_time_ns - self.first_video_time_ns.?;
-        const raw_current_pts: i64 = ffmpeg.av_rescale_q(@intCast(pts_ns), ns_time_base, self.video_stream.time_base);
+        const raw_current_pts: i64 = c.av_rescale_q(@intCast(pts_ns), ns_time_base, self.video_stream.time_base);
         const current_pts = apply_jitter_correction_to_pts(
             raw_current_pts,
             if (self.pending_video != null) self.previous_pts else null,
@@ -228,8 +226,8 @@ pub const Muxer = struct {
         if (self.pending_video) |*pending| {
             const duration = if (current_pts > self.previous_pts) current_pts - self.previous_pts else 0;
             const safe_duration = if (duration > max_mux_duration) max_mux_duration else duration;
-            var video_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-            defer ffmpeg.av_packet_free(&video_pkt);
+            var video_pkt = c.av_packet_alloc() orelse return error.FFmpegError;
+            defer c.av_packet_free(&video_pkt);
             try self.write_video_packet_data(video_pkt, pending.data, pending.is_idr, self.previous_pts, safe_duration);
             self.last_delta = safe_duration;
             pending.deinit();
@@ -249,10 +247,10 @@ pub const Muxer = struct {
 
         const start_sample = self.audio_start_sample orelse return 0;
 
-        var pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-        defer ffmpeg.av_packet_free(&pkt);
+        var pkt = c.av_packet_alloc() orelse return error.FFmpegError;
+        defer c.av_packet_free(&pkt);
 
-        var iter = LinkedListIterator(EncodedAudioPacketNode).init(packets);
+        var iter = LinkedListIterator(AudioEncoder.EncodedAudioPacketNode).init(packets);
         while (iter.next()) |packet_node| {
             const packet_start = packet_node.data.*.pts;
             const packet_end = packet_start + packet_node.data.*.duration;
@@ -268,8 +266,8 @@ pub const Muxer = struct {
 
     pub fn flush_video(self: *Self) !void {
         if (self.pending_video) |*pending| {
-            var video_pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-            defer ffmpeg.av_packet_free(&video_pkt);
+            var video_pkt = c.av_packet_alloc() orelse return error.FFmpegError;
+            defer c.av_packet_free(&video_pkt);
             try self.write_video_packet_data(video_pkt, pending.data, pending.is_idr, self.previous_pts, self.last_delta);
             pending.deinit();
             self.pending_video = null;
@@ -283,8 +281,8 @@ pub const Muxer = struct {
 
     fn write_trailer(self: *Self) !void {
         if (self.wrote_trailer) return;
-        const ret = ffmpeg.av_write_trailer(self.format_context);
-        try checkErr(ret);
+        const ret = c.av_write_trailer(self.format_context);
+        try check_err(ret);
         self.wrote_trailer = true;
     }
 
@@ -307,22 +305,24 @@ pub const Muxer = struct {
         }
         return current_pts;
     }
+
+    fn get_output_file_name(
+        allocator: Allocator,
+        io: std.Io,
+        file_name_prefix: []const u8,
+        output_directory: []const u8,
+    ) ![:0]u8 {
+        const base_name = try Util.format_file_name(allocator, io, .{
+            .prefix = file_name_prefix,
+            .extension = "mp4",
+        });
+        defer allocator.free(base_name);
+
+        const path = try std.fs.path.join(allocator, &.{ output_directory, base_name });
+        defer allocator.free(path);
+        return allocator.dupeZ(u8, path);
+    }
 };
-
-fn get_output_file_name(
-    allocator: Allocator,
-    io: std.Io,
-    file_name_prefix: []const u8,
-    output_directory: []const u8,
-) ![:0]u8 {
-    const timestamp_ns = std.Io.Clock.real.now(io).nanoseconds;
-    const base_name = try std.fmt.allocPrint(allocator, "{s}_{}.mp4", .{ file_name_prefix, timestamp_ns });
-    defer allocator.free(base_name);
-
-    const path = try std.fs.path.join(allocator, &.{ output_directory, base_name });
-    defer allocator.free(path);
-    return allocator.dupeZ(u8, path);
-}
 
 test "Muxer - apply_jitter_correction_to_pts snaps small jitter to expected cadence" {
     const expected = 3_000;

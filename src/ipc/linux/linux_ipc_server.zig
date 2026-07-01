@@ -17,6 +17,7 @@ const RequestPayload = enum(u8) {
     start_recording = 5,
     stop_recording = 6,
     toggle_recording = 7,
+    screenshot = 8,
 
     pub fn value(self: @This()) u8 {
         return @intFromEnum(self);
@@ -191,6 +192,7 @@ pub const IpcServer = struct {
 
         const request_payload: RequestPayload = switch (command) {
             .save_replay => .save_replay,
+            .screenshot => .screenshot,
             .start_replay_buffer => .start_replay_buffer,
             .stop_replay_buffer => .stop_replay_buffer,
             .toggle_replay_buffer => .toggle_replay_buffer,
@@ -260,6 +262,7 @@ pub const IpcServer = struct {
         switch (command) {
             .wake => {},
             .save_replay => store.dispatch(.{ .capture = .save_replay }),
+            .screenshot => store.dispatch(.{ .capture = .screenshot_request }),
             .start_replay_buffer => store.dispatch(.{ .capture = .start_replay_buffer }),
             .stop_replay_buffer => store.dispatch(.{ .capture = .stop_replay_buffer }),
             .toggle_replay_buffer => {

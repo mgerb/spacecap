@@ -14,8 +14,8 @@ const CAPTURE_BIT_RATE_KBPS_MAX: i32 = 1_000_000;
 const REPLAY_SECONDS_MIN: i32 = 1;
 const REPLAY_SECONDS_MAX: i32 = 60 * 60 * 24;
 const BYTES_PER_MB: u64 = 1024 * 1024;
-const VIDEO_OUTPUT_DIRECTORY_MAX_BYTES = std.fs.max_path_bytes;
-const VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH: f32 = 34;
+const OUTPUT_DIRECTORY_MAX_BYTES = std.fs.max_path_bytes;
+const OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH: f32 = 34;
 
 // These local values are temporary to hold the value
 // of an input as it's being edited. We do this so that
@@ -27,7 +27,9 @@ var replay_seconds_local: ?i32 = null;
 var replay_max_memory_mb_local: ?i32 = null;
 var fg_fps_local: ?i32 = null;
 var bg_fps_local: ?i32 = null;
-var video_output_directory_local: ?[VIDEO_OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
+// TODO: This could take up unnecessary stack space. Revise at a later point.
+var video_output_directory_local: ?[OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
+var screenshot_output_directory_local: ?[OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
 
 pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Store.State) !void {
     _ = c.ImGui_Begin(dockspace.LEFT_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
@@ -77,16 +79,16 @@ pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Sto
 }
 
 fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
-    c.ImGui_SeparatorText("Output Directory");
+    c.ImGui_SeparatorText("Output");
 
-    const video_output_directory = blk: {
-        break :blk store.state.private.value.user_settings.user_settings.video_output_directory.?.bytes;
-    };
+    const settings = store.state.private.value.user_settings.user_settings;
+    const video_output_directory = settings.video_output_directory.?.bytes;
+    const screenshot_output_directory = settings.screenshot_output_directory.?.bytes;
 
-    c.ImGui_Text("Video");
+    c.ImGui_Text("Videos");
 
     var _video_output_directory_local = video_output_directory_local orelse blk: {
-        var buffer = std.mem.zeroes([VIDEO_OUTPUT_DIRECTORY_MAX_BYTES:0]u8);
+        var buffer = std.mem.zeroes([OUTPUT_DIRECTORY_MAX_BYTES:0]u8);
         const copy_len = @min(video_output_directory.len, buffer.len - 1);
         @memmove(buffer[0..copy_len], video_output_directory[0..copy_len]);
         break :blk buffer;
@@ -96,7 +98,7 @@ fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
         defer c.ImGui_EndTable();
 
         c.ImGui_TableSetupColumnEx("input", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
-        c.ImGui_TableSetupColumnEx("button", c.ImGuiTableColumnFlags_WidthFixed, VIDEO_OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH, 0);
+        c.ImGui_TableSetupColumnEx("button", c.ImGuiTableColumnFlags_WidthFixed, OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH, 0);
 
         _ = c.ImGui_TableNextColumn();
         imgui_util.set_next_item_width_fill();
@@ -112,11 +114,15 @@ fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
         if (c.ImGui_IsItemDeactivatedAfterEdit()) {
             const updated_directory = std.mem.sliceTo(_video_output_directory_local[0..], 0);
             if (updated_directory.len > 0 and !std.mem.eql(u8, updated_directory, video_output_directory)) {
-                store.dispatch(.{ .user_settings = .{
-                    .set_video_output_directory = try .init(allocator, .{
-                        .video_output_directory = updated_directory,
-                    }),
-                } });
+                store.dispatch(.{
+                    .user_settings = .{
+                        .set_output_directory = .{
+                            .allocator = allocator,
+                            .output_directory = .videos,
+                            .directory = try store.allocator.dupe(u8, updated_directory),
+                        },
+                    },
+                });
             }
             video_output_directory_local = null;
         } else if (!c.ImGui_IsItemActive()) {
@@ -128,7 +134,64 @@ fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
             .x = imgui_util.WIDTH_FILL,
             .y = 0,
         })) {
-            store.dispatch(.{ .user_settings = .select_output_directory });
+            store.dispatch(.{ .user_settings = .{ .select_output_directory = .videos } });
+        }
+        if (c.ImGui_BeginItemTooltip()) {
+            c.ImGui_TextUnformatted("Choose directory");
+            c.ImGui_EndTooltip();
+        }
+    }
+
+    c.ImGui_Text("Screenshots");
+
+    var _screenshot_output_directory_local = screenshot_output_directory_local orelse blk: {
+        var buffer = std.mem.zeroes([OUTPUT_DIRECTORY_MAX_BYTES:0]u8);
+        const copy_len = @min(screenshot_output_directory.len, buffer.len - 1);
+        @memmove(buffer[0..copy_len], screenshot_output_directory[0..copy_len]);
+        break :blk buffer;
+    };
+
+    if (c.ImGui_BeginTable("screenshot_output_directory_row", 2, c.ImGuiTableFlags_SizingStretchProp)) {
+        defer c.ImGui_EndTable();
+
+        c.ImGui_TableSetupColumnEx("input", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
+        c.ImGui_TableSetupColumnEx("button", c.ImGuiTableColumnFlags_WidthFixed, OUTPUT_DIRECTORY_PICKER_BUTTON_WIDTH, 0);
+
+        _ = c.ImGui_TableNextColumn();
+        imgui_util.set_next_item_width_fill();
+        _ = c.ImGui_InputText(
+            "##screenshot_output_directory",
+            &_screenshot_output_directory_local,
+            _screenshot_output_directory_local.len,
+            c.ImGuiInputTextFlags_None,
+        );
+        if (c.ImGui_IsItemEdited()) {
+            screenshot_output_directory_local = _screenshot_output_directory_local;
+        }
+        if (c.ImGui_IsItemDeactivatedAfterEdit()) {
+            const updated_directory = std.mem.sliceTo(_screenshot_output_directory_local[0..], 0);
+            if (updated_directory.len > 0 and !std.mem.eql(u8, updated_directory, screenshot_output_directory)) {
+                store.dispatch(.{
+                    .user_settings = .{
+                        .set_output_directory = .{
+                            .allocator = allocator,
+                            .output_directory = .screenshots,
+                            .directory = try store.allocator.dupe(u8, updated_directory),
+                        },
+                    },
+                });
+            }
+            screenshot_output_directory_local = null;
+        } else if (!c.ImGui_IsItemActive()) {
+            screenshot_output_directory_local = null;
+        }
+
+        _ = c.ImGui_TableNextColumn();
+        if (c.ImGui_ButtonEx("...##screenshot_output_directory_picker", .{
+            .x = imgui_util.WIDTH_FILL,
+            .y = 0,
+        })) {
+            store.dispatch(.{ .user_settings = .{ .select_output_directory = .screenshots } });
         }
         if (c.ImGui_BeginItemTooltip()) {
             c.ImGui_TextUnformatted("Choose directory");

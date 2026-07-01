@@ -16,6 +16,8 @@ pub const VulkanImageBuffer = struct {
     image_layout: vk.ImageLayout,
     dst_stage_mask: vk.PipelineStageFlags2,
     dst_access_mask: vk.AccessFlags2,
+    usage: vk.ImageUsageFlags,
+    image_component_mapping: vk.ComponentMapping,
     command_buffer: vk.CommandBuffer,
     command_pool: vk.CommandPool,
     signal_semaphore: vk.Semaphore,
@@ -26,8 +28,8 @@ pub const VulkanImageBuffer = struct {
 
     width: u32,
     height: u32,
-    /// This should be true until the image buffer has been released from the
-    /// encode pipeline.
+    /// In use means that the buffer is occupied and is not free to copy data into it.
+    /// (e.g. encoding, rendering on UI, etc.)
     in_use: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub const InitArgs = struct {
@@ -121,6 +123,8 @@ pub const VulkanImageBuffer = struct {
             .image_layout = args.image_layout,
             .dst_stage_mask = args.dst_stage_mask,
             .dst_access_mask = args.dst_access_mask,
+            .usage = args.usage,
+            .image_component_mapping = args.image_component_mapping,
             .width = args.width,
             .height = args.height,
             .src_queue_family_index = args.src_queue_family_index,
@@ -142,7 +146,7 @@ pub const VulkanImageBuffer = struct {
     }
 
     /// Copy an external vulkan image into the local image buffer.
-    pub fn copy_image(
+    pub fn copy_image_into(
         self: *Self,
         args: struct {
             src_image: vk.Image,
@@ -179,6 +183,65 @@ pub const VulkanImageBuffer = struct {
                 .wait_semaphores = if (wait_semaphores != null) wait_semaphores.?[0..] else &.{},
                 .signal_semaphores = if (signal_semaphores != null) signal_semaphores.?[0..] else &.{},
                 .fence = self.fence,
+            },
+        );
+    }
+
+    /// Return a new instance and copy the underlying image data.
+    pub fn duplicate(self: *Self, io: std.Io) !struct {
+        vulkan_image_buffer: Arc(Self),
+        signal_semaphore: vk.Semaphore,
+    } {
+        const image_buffer = try Self.init(.{
+            .allocator = self.allocator,
+            .io = io,
+            .vulkan = self.vulkan,
+            .width = self.width,
+            .height = self.height,
+            .image_layout = self.image_layout,
+            .dst_stage_mask = self.dst_stage_mask,
+            .dst_access_mask = self.dst_access_mask,
+            .usage = self.usage,
+            .image_component_mapping = self.image_component_mapping,
+            .src_queue_family_index = self.vulkan.graphics_queue.family,
+        });
+        errdefer image_buffer.deinit();
+
+        try image_buffer.as_ptr().copy_image_into(.{
+            .src_image = self.image,
+            .src_width = self.width,
+            .src_height = self.height,
+            .wait_semaphore = null,
+            .use_signal_semaphore = true,
+            .timestamp_ns = self.timestamp_ns,
+        });
+
+        return .{
+            .vulkan_image_buffer = image_buffer,
+            .signal_semaphore = image_buffer.as_ptr().signal_semaphore,
+        };
+    }
+
+    /// Copy the raw contents of the image to a buffer.
+    pub fn copy_image_to_cpu_buffer(self: *Self, allocator: std.mem.Allocator) ![]u8 {
+        const result = try self.vulkan.device.waitForFences(
+            &.{self.fence},
+            .true,
+            std.math.maxInt(u64),
+        );
+        if (result != .success) {
+            return error.WaitForFences;
+        }
+
+        return try self.vulkan.copy_image_to_cpu_buffer(
+            allocator,
+            self.image,
+            self.image_layout,
+            self.width,
+            self.height,
+            .{
+                .src_stage_mask = self.dst_stage_mask,
+                .src_access_mask = self.dst_access_mask,
             },
         );
     }

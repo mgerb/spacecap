@@ -141,3 +141,7 @@ fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !v
 
     store_thread.join();
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

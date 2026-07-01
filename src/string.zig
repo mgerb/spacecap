@@ -10,13 +10,24 @@ pub const String = struct {
     allocator: Allocator,
 
     /// Create a new String. Memory is duped. Does not take ownership of bytes passed in.
-    pub fn from(allocator: Allocator, bytes: []const u8) !String {
+    pub fn init(allocator: Allocator, bytes: []const u8) !String {
         if (!std.unicode.utf8ValidateSlice(bytes)) {
             return error.InvalidUtf8;
         }
         return .{
             .allocator = allocator,
             .bytes = try allocator.dupe(u8, bytes),
+        };
+    }
+
+    /// Create a new String. Takes ownership of bytes passed in.
+    pub fn from(allocator: Allocator, bytes: []u8) !String {
+        if (!std.unicode.utf8ValidateSlice(bytes)) {
+            return error.InvalidUtf8;
+        }
+        return .{
+            .allocator = allocator,
+            .bytes = bytes,
         };
     }
 
@@ -62,13 +73,13 @@ const TestUtil = struct {
 };
 
 test "String - should create from utf8 string" {
-    var s = try String.from(std.testing.allocator, "test 123");
+    var s = try String.init(std.testing.allocator, "test 123");
     defer s.deinit();
     try std.testing.expectEqualStrings(s.bytes, "test 123");
 }
 
 test "String - should clone" {
-    var s1 = try String.from(std.testing.allocator, "test1");
+    var s1 = try String.init(std.testing.allocator, "test1");
     defer s1.deinit();
 
     var s2 = try s1.clone(std.testing.allocator);
@@ -80,7 +91,7 @@ test "String - should clone" {
 }
 
 test "String - should encode json" {
-    var person: TestUtil.Person = .{ .name = try .from(std.testing.allocator, "mitchell") };
+    var person: TestUtil.Person = .{ .name = try .init(std.testing.allocator, "mitchell") };
     defer person.name.deinit();
 
     try std.testing.expectEqualStrings(person.name.bytes, "mitchell");

@@ -1,5 +1,7 @@
 const vk = @import("vulkan");
 const std = @import("std");
+const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
 const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
@@ -68,10 +70,12 @@ pub const VulkanVideoEncoder = struct {
     compute_descriptor_sets: std.ArrayList(vk.DescriptorSet),
     descriptor_pool: ?vk.DescriptorPool = null,
 
-    inter_queue_semaphore1: vk.Semaphore,
-    inter_queue_semaphore2: vk.Semaphore,
-    // TODO: this should probably be a list
-    external_wait_semaphore: ?vk.Semaphore = null,
+    /// Signaled when the rgb to ycb_cr pipeline is done.
+    compute_semaphore: vk.Semaphore,
+    /// Signaled when the encode pipeline is done.
+    encode_semaphore: vk.Semaphore,
+    wait_semaphores: std.ArrayList(vk.Semaphore),
+    wait_stage_masks: std.ArrayList(vk.PipelineStageFlags),
 
     encode_finished_fence: vk.Fence,
     compute_finished_fence: vk.Fence,
@@ -119,11 +123,17 @@ pub const VulkanVideoEncoder = struct {
             .ycbcr_image_plane_views = try std.ArrayList(vk.ImageView).initCapacity(allocator, 0),
             .compute_descriptor_sets = try std.ArrayList(vk.DescriptorSet).initCapacity(allocator, 0),
 
-            .inter_queue_semaphore1 = try vulkan.device.createSemaphore(&.{}, null),
-            .inter_queue_semaphore2 = try vulkan.device.createSemaphore(&.{}, null),
+            .compute_semaphore = try vulkan.device.createSemaphore(&.{}, null),
+            .encode_semaphore = try vulkan.device.createSemaphore(&.{}, null),
+            .wait_semaphores = try .initCapacity(allocator, 0),
+            .wait_stage_masks = try .initCapacity(allocator, 0),
+
             .encode_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
             .compute_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
         };
+
+        try self.wait_semaphores.append(self.allocator, self.encode_semaphore);
+        try self.wait_stage_masks.append(self.allocator, .{ .all_commands_bit = true });
 
         try self.create_command_pools();
         errdefer {
@@ -749,8 +759,24 @@ pub const VulkanVideoEncoder = struct {
         try self.update_descriptor_sets(image_views);
     }
 
-    pub fn update_external_wait_semaphores(self: *Self, semaphore: ?vk.Semaphore) void {
-        self.external_wait_semaphore = semaphore;
+    pub fn update_external_wait_semaphores(self: *Self, semaphores: []const vk.Semaphore) Allocator.Error!void {
+        // Only the compute pipeline needs to wait on any external semaphores,
+        // including the encode_semaphore. Resize the buffers if necessary
+        // (including space for encode_semaphore), and then update
+        // wait_stage_masks accordingly.
+        try self.wait_semaphores.resize(self.allocator, semaphores.len + 1);
+
+        self.wait_semaphores.clearRetainingCapacity();
+        try self.wait_semaphores.append(self.allocator, self.encode_semaphore);
+        try self.wait_semaphores.appendSlice(self.allocator, semaphores);
+
+        try self.wait_stage_masks.resize(self.allocator, semaphores.len + 1);
+        self.wait_stage_masks.clearRetainingCapacity();
+        try self.wait_stage_masks.appendNTimes(self.allocator, .{ .all_commands_bit = true }, semaphores.len + 1);
+
+        // Must always be at least length 1 for the encode_semaphore.
+        assert(self.wait_semaphores.items.len > 0);
+        assert(self.wait_stage_masks.items.len > 0);
     }
 
     fn update_descriptor_sets(self: *Self, image_views: []vk.ImageView) !void {
@@ -1005,24 +1031,7 @@ pub const VulkanVideoEncoder = struct {
 
         try self.vulkan.device.endCommandBuffer(self.compute_command_buffer.?);
 
-        const signal_semaphores: [1]vk.Semaphore = .{self.inter_queue_semaphore1};
-        var wait_semaphores: [2]vk.Semaphore = undefined;
-        var wait_stage_masks: [2]vk.PipelineStageFlags = undefined;
-        var wait_count: usize = 0;
-
-        if (self.frame_count != 0) {
-            wait_semaphores[wait_count] = self.inter_queue_semaphore2;
-            wait_stage_masks[wait_count] = .{ .all_commands_bit = true };
-            wait_count += 1;
-        }
-
-        // Make sure we wait on any external wait semaphores even when the
-        // frame_count is 0.
-        if (self.external_wait_semaphore) |external_wait_semaphore| {
-            wait_semaphores[wait_count] = external_wait_semaphore;
-            wait_stage_masks[wait_count] = .{ .all_commands_bit = true };
-            wait_count += 1;
-        }
+        const signal_semaphores: [1]vk.Semaphore = .{self.compute_semaphore};
 
         var submit_info = vk.SubmitInfo{
             .command_buffer_count = 1,
@@ -1031,10 +1040,10 @@ pub const VulkanVideoEncoder = struct {
             .p_signal_semaphores = &signal_semaphores,
         };
 
-        if (wait_count > 0) {
-            submit_info.wait_semaphore_count = @intCast(wait_count);
-            submit_info.p_wait_semaphores = wait_semaphores[0..wait_count].ptr;
-            submit_info.p_wait_dst_stage_mask = wait_stage_masks[0..wait_count].ptr;
+        if (self.frame_count != 0) {
+            submit_info.wait_semaphore_count = @intCast(self.wait_semaphores.items.len);
+            submit_info.p_wait_semaphores = self.wait_semaphores.items.ptr;
+            submit_info.p_wait_dst_stage_mask = self.wait_stage_masks.items.ptr;
         }
 
         try self.vulkan.queue_submit(.graphics, &.{submit_info}, .{ .fence = self.compute_finished_fence });
@@ -1044,7 +1053,7 @@ pub const VulkanVideoEncoder = struct {
         image: []vk.Image,
         image_view: []vk.ImageView,
         input_size: types.Size,
-        external_wait_semaphore: ?vk.Semaphore,
+        external_wait_semaphores: []const vk.Semaphore,
     }) !void {
         const sanitized_width = @max(opts.input_size.width & ~@as(u32, 1), 1);
         const sanitized_height = @max(opts.input_size.height & ~@as(u32, 1), 1);
@@ -1052,7 +1061,7 @@ pub const VulkanVideoEncoder = struct {
             .width = sanitized_width,
             .height = sanitized_height,
         };
-        self.update_external_wait_semaphores(opts.external_wait_semaphore);
+        try self.update_external_wait_semaphores(opts.external_wait_semaphores);
         try self.update_images(
             opts.image,
             opts.image_view,
@@ -1222,12 +1231,12 @@ pub const VulkanVideoEncoder = struct {
         };
         const submit_info = vk.SubmitInfo{
             .wait_semaphore_count = 1,
-            .p_wait_semaphores = @ptrCast(&self.inter_queue_semaphore1),
+            .p_wait_semaphores = @ptrCast(&self.compute_semaphore),
             .p_wait_dst_stage_mask = @ptrCast(&dst_stage_mask),
             .command_buffer_count = 1,
             .p_command_buffers = @ptrCast(&self.encode_command_buffer.?),
             .signal_semaphore_count = 1,
-            .p_signal_semaphores = @ptrCast(&self.inter_queue_semaphore2),
+            .p_signal_semaphores = @ptrCast(&self.encode_semaphore),
         };
         try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
@@ -1316,8 +1325,8 @@ pub const VulkanVideoEncoder = struct {
     fn destroy_encode_finished_fence(self: *Self) void {
         self.vulkan.device.destroyFence(self.compute_finished_fence, null);
         self.vulkan.device.destroyFence(self.encode_finished_fence, null);
-        self.vulkan.device.destroySemaphore(self.inter_queue_semaphore1, null);
-        self.vulkan.device.destroySemaphore(self.inter_queue_semaphore2, null);
+        self.vulkan.device.destroySemaphore(self.compute_semaphore, null);
+        self.vulkan.device.destroySemaphore(self.encode_semaphore, null);
     }
 
     fn destroy_ycb_cr_conversion_pipeline(self: *Self) void {
@@ -1402,6 +1411,9 @@ pub const VulkanVideoEncoder = struct {
         if (self.graphics_command_pool) |graphics_command_pool| {
             self.vulkan.device.destroyCommandPool(graphics_command_pool, null);
         }
+
+        self.wait_semaphores.deinit(self.allocator);
+        self.wait_stage_masks.deinit(self.allocator);
 
         self.bit_stream_header.deinit(self.allocator);
         self.encode_session_bind_memory.deinit(self.allocator);

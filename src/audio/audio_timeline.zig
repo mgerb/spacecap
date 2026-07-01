@@ -3,9 +3,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioMixer = @import("./audio_mixer.zig").AudioMixer;
-const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
-const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
-const ffmpeg = @import("../ffmpeg.zig").ffmpeg;
+const AudioEncoder = @import("../ffmpeg/main.zig").AudioEncoder;
 const Arc = @import("../arc.zig").Arc;
 
 /// Pending per-device PCM chunk that has not yet been fully mixed into the
@@ -51,11 +49,6 @@ pub const DeviceState = struct {
 pub const SampleWindow = struct {
     start_sample: i64,
     end_sample: i64,
-};
-
-pub const CodecContextInfo = struct {
-    audio_codec_ctx: [*c]ffmpeg.AVCodecContext,
-    time_base: ffmpeg.AVRational,
 };
 
 /// Mixes and encodes audio data.
@@ -109,7 +102,7 @@ pub const AudioTimeline = struct {
         }
         self.device_map.deinit();
 
-        deinitPacketList(&self.ready_packets);
+        AudioEncoder.deinit_packet_list(&self.ready_packets);
         self.encoder.deinit(self.allocator);
     }
 
@@ -175,7 +168,7 @@ pub const AudioTimeline = struct {
         try self.process_ready_timeline(true);
 
         var flush_result = try self.encoder.flush(self.allocator);
-        errdefer deinitPacketList(&flush_result);
+        errdefer AudioEncoder.deinit_packet_list(&flush_result);
         self.append_ready_packets(&flush_result);
     }
 
@@ -186,7 +179,7 @@ pub const AudioTimeline = struct {
         return packets;
     }
 
-    pub fn get_codec_context(self: *Self) CodecContextInfo {
+    pub fn get_codec_context(self: *Self) AudioEncoder.CodecContextInfo {
         return .{
             .audio_codec_ctx = self.encoder.audio_codec_ctx,
             .time_base = self.encoder.audio_codec_ctx.*.time_base,
@@ -231,7 +224,7 @@ pub const AudioTimeline = struct {
 
             var packets = try self.encoder.encode_chunk(self.allocator, self.encoded_until_sample, mixed_pcm.items);
             if (packets) |*owned_packets| {
-                errdefer deinitPacketList(owned_packets);
+                errdefer AudioEncoder.deinit_packet_list(owned_packets);
                 self.append_ready_packets(owned_packets);
             }
 

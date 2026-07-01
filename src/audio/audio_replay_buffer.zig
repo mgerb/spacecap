@@ -3,11 +3,11 @@ const Allocator = std.mem.Allocator;
 const LinkedListIterator = @import("../util.zig").LinkedListIterator;
 const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
 const AudioTimeline = @import("./audio_timeline.zig").AudioTimeline;
-const EncodedAudioPacketNode = @import("./audio_encoder.zig").EncodedAudioPacketNode;
-const deinitPacketList = @import("./audio_encoder.zig").deinit_packet_list;
 const SAMPLE_RATE = @import("../capture/audio/audio_capture.zig").SAMPLE_RATE;
 const CHANNELS = @import("../capture/audio/audio_capture.zig").CHANNELS;
 const Arc = @import("../arc.zig").Arc;
+const ffmpeg = @import("../ffmpeg/main.zig");
+const AudioEncoder = ffmpeg.AudioEncoder;
 
 const log = std.log.scoped(.AudioReplayBuffer);
 const Self = @This();
@@ -45,7 +45,7 @@ pub fn init(
 
 pub fn deinit(self: *Self) void {
     defer self.allocator.destroy(self);
-    deinitPacketList(&self.packets);
+    AudioEncoder.deinit_packet_list(&self.packets);
     self.timeline.deinit();
 }
 
@@ -62,7 +62,7 @@ pub fn add_data(self: *Self, data: Arc(AudioCaptureData)) !void {
     try self.timeline.process_ready_timeline(false);
 
     var ready_packets = self.timeline.take_ready_packets();
-    defer deinitPacketList(&ready_packets);
+    defer AudioEncoder.deinit_packet_list(&ready_packets);
     self.append_packets(&ready_packets);
     self.trim_packets(.{});
 }
@@ -72,7 +72,7 @@ pub fn finalize(self: *Self) !void {
     try self.timeline.finalize();
 
     var ready_packets = self.timeline.take_ready_packets();
-    defer deinitPacketList(&ready_packets);
+    defer AudioEncoder.deinit_packet_list(&ready_packets);
     self.append_packets(&ready_packets);
     self.trim_packets(.{});
 }
@@ -82,8 +82,8 @@ pub fn set_replay_seconds(self: *Self, replay_seconds: u32) void {
     self.trim_packets(.{});
 }
 
-pub fn packet_iterator(self: *Self) LinkedListIterator(EncodedAudioPacketNode) {
-    return LinkedListIterator(EncodedAudioPacketNode).init(&self.packets);
+pub fn packet_iterator(self: *Self) LinkedListIterator(AudioEncoder.EncodedAudioPacketNode) {
+    return LinkedListIterator(AudioEncoder.EncodedAudioPacketNode).init(&self.packets);
 }
 
 pub fn has_packets(self: *Self) bool {
@@ -92,7 +92,7 @@ pub fn has_packets(self: *Self) bool {
 
 fn append_packets(self: *Self, packets: *std.DoublyLinkedList) void {
     while (packets.popFirst()) |current| {
-        const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", current);
+        const packet_node: *AudioEncoder.EncodedAudioPacketNode = @fieldParentPtr("node", current);
         self.len += 1;
         self.size += @intCast(packet_node.data.*.size);
         self.packets.append(current);
@@ -101,7 +101,7 @@ fn append_packets(self: *Self, packets: *std.DoublyLinkedList) void {
 
 fn remove_first_packet(self: *Self) void {
     if (self.packets.popFirst()) |first| {
-        const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", first);
+        const packet_node: *AudioEncoder.EncodedAudioPacketNode = @fieldParentPtr("node", first);
         self.size -= @intCast(packet_node.data.*.size);
         self.len -= 1;
         packet_node.deinit();
@@ -125,7 +125,7 @@ pub fn trim_packets(self: *Self, args: struct {
     }
 
     while (self.packets.first) |first| {
-        const packet_node: *EncodedAudioPacketNode = @fieldParentPtr("node", first);
+        const packet_node: *AudioEncoder.EncodedAudioPacketNode = @fieldParentPtr("node", first);
         const packet_end = packet_node.data.*.pts + packet_node.data.*.duration;
         if (packet_end <= oldest_sample.?) {
             self.remove_first_packet();

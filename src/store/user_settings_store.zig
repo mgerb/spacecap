@@ -2,7 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Store = @import("./store.zig").Store;
 const UserSettings = @import("./user_settings.zig").UserSettings;
-const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const String = @import("../string.zig").String;
 const FilePickerError = @import("../file_picker/file_picker.zig").FilePickerError;
 const CaptureStore = @import("./capture_store.zig").CaptureStore;
@@ -10,44 +9,37 @@ const CaptureStore = @import("./capture_store.zig").CaptureStore;
 const log = std.log.scoped(.user_settings_store);
 
 pub const Message = union(enum) {
-    select_output_directory,
+    const SetOutputDirectoryPayload = struct {
+        allocator: Allocator,
+        output_directory: UserSettings.OutputDirectory,
+        directory: []u8,
+
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.directory);
+        }
+    };
+
+    select_output_directory: UserSettings.OutputDirectory,
     set_capture_fps: u32,
     set_capture_bit_rate: u64,
     set_replay_seconds: u32,
     set_replay_max_bytes: u64,
     set_restore_capture_source_on_startup: bool,
     set_start_replay_buffer_on_startup: bool,
-    set_video_output_directory: *ActionPayload(struct {
-        video_output_directory: []u8,
-
-        pub fn init(
-            arena: *std.heap.ArenaAllocator,
-            args: struct { video_output_directory: []const u8 },
-        ) !@This() {
-            return .{
-                .video_output_directory = try arena.allocator().dupe(u8, args.video_output_directory),
-            };
-        }
-    }),
-    set_audio_device_settings: *ActionPayload(struct {
+    set_output_directory: SetOutputDirectoryPayload,
+    set_audio_device_settings: struct {
+        allocator: Allocator,
         device_id: []u8,
         selected: bool,
         gain: f32,
 
-        pub fn init(
-            arena: *std.heap.ArenaAllocator,
-            args: struct { device_id: []u8, selected: bool, gain: f32 },
-        ) !@This() {
-            return .{
-                .device_id = try arena.allocator().dupe(u8, args.device_id),
-                .selected = args.selected,
-                .gain = args.gain,
-            };
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.device_id);
         }
-    }),
+    },
 
     pub const effects = .{
-        .set_video_output_directory = .{effect_sync_settings_to_file},
+        .set_output_directory = .{effect_sync_settings_to_file},
         .set_audio_device_settings = .{effect_sync_settings_to_file},
         .set_capture_fps = .{ effect_sync_settings_to_file, CaptureStore.effect_update_video_capture_fps },
         .set_capture_bit_rate = .{effect_sync_settings_to_file},
@@ -60,9 +52,15 @@ pub const Message = union(enum) {
 
     pub fn deinit(self: *@This()) void {
         switch (self.*) {
-            .set_video_output_directory => |payload| payload.deinit(),
-            .set_audio_device_settings => |payload| payload.deinit(),
-            else => {},
+            .set_output_directory => |*payload| payload.deinit(),
+            .set_audio_device_settings => |*payload| payload.deinit(),
+            inline else => |payload| {
+                if (@typeInfo(@TypeOf(payload)) == .@"struct" and
+                    @hasDecl(@TypeOf(payload), "deinit"))
+                {
+                    @compileError("Payload with 'deinit' must be explicitly handled.");
+                }
+            },
         }
     }
 };
@@ -105,20 +103,19 @@ pub fn update(allocator: Allocator, msg: Store.Message, state: *Store.State) !vo
                 .set_start_replay_buffer_on_startup => |payload| {
                     state.user_settings.user_settings.start_replay_buffer_on_startup = payload;
                 },
-                .set_video_output_directory => |payload| {
-                    defer payload.deinit();
+                .set_output_directory => |*payload| {
+                    defer @constCast(payload).deinit();
                     try state.user_settings.user_settings
-                        .set_video_output_directory(try String.from(allocator, payload.payload.video_output_directory));
+                        .set_output_directory(payload.output_directory, try String.init(allocator, payload.directory));
                 },
-                .set_audio_device_settings => |payload| {
-                    defer payload.deinit();
-                    const _payload = payload.payload;
+                .set_audio_device_settings => |*payload| {
+                    defer @constCast(payload).deinit();
 
                     try state.user_settings.user_settings.update_audio_device_settings(
                         allocator,
-                        _payload.device_id,
-                        _payload.selected,
-                        _payload.gain,
+                        payload.device_id,
+                        payload.selected,
+                        payload.gain,
                     );
                 },
                 else => {},
@@ -140,13 +137,17 @@ fn effect_sync_settings_to_file(store: *Store, _: anytype) !void {
     try user_settings_snapshot.save(store.allocator, store.io);
 }
 
-fn effect_select_output_directory(store: *Store, _: anytype) !void {
+fn effect_select_output_directory(store: *Store, output_directory: UserSettings.OutputDirectory) !void {
     var initial_directory = blk: {
         const state_locked = store.state.lock();
         defer state_locked.unlock();
         const state = state_locked.unwrap_ptr();
-        if (state.user_settings.user_settings.video_output_directory) |video_output_directory| {
-            break :blk try video_output_directory.clone(store.allocator);
+        const directory = switch (output_directory) {
+            .videos => state.user_settings.user_settings.video_output_directory,
+            .screenshots => state.user_settings.user_settings.screenshot_output_directory,
+        };
+        if (directory) |value| {
+            break :blk try value.clone(store.allocator);
         }
         break :blk null;
     };
@@ -167,10 +168,10 @@ fn effect_select_output_directory(store: *Store, _: anytype) !void {
     const selected_directory = store.file_picker.open_directory_picker(store.allocator, store.io, directory) catch |err| {
         switch (err) {
             FilePickerError.PickerCancelled => {
-                log.info("[select_output_directory] output directory selection cancelled", .{});
+                log.info("[effect_select_output_directory] output directory selection cancelled", .{});
             },
             else => {
-                log.err("[select_output_directory] failed to open output directory picker: {}", .{err});
+                log.err("[effect_select_output_directory] failed to open output directory picker: {}", .{err});
             },
         }
         return;
@@ -179,7 +180,11 @@ fn effect_select_output_directory(store: *Store, _: anytype) !void {
 
     store.dispatch(.{
         .user_settings = .{
-            .set_video_output_directory = try .init(store.allocator, .{ .video_output_directory = selected_directory }),
+            .set_output_directory = .{
+                .allocator = store.allocator,
+                .output_directory = output_directory,
+                .directory = try store.allocator.dupe(u8, selected_directory),
+            },
         },
     });
 }

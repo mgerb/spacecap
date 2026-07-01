@@ -25,3 +25,75 @@ A child store is a domain-specific slice of the main store. It consists of:
 
 Child stores are registered in `Store.ChildStores`. The main store uses that
 list to execute updates and discover effect declarations.
+
+### Child Store Template
+
+```zig
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Store = @import("./store.zig").Store;
+
+pub const TemplateStore = struct {
+    const Self = @This();
+    const log = std.log.scoped(.template_store);
+
+    pub const Message = union(enum) {
+        do_some_thing: bool,
+
+        pub const effects = .{
+            .do_some_thing = .{effect_do_some_thing},
+        };
+
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                // Handle cleanup like this.
+                .do_some_thing => |*payload| {},
+                // This is a compile time check to make sure that all messages
+                // get cleaned up even if they are still in the queue when the app
+                // closes.
+                inline else => |payload| {
+                    if (@typeInfo(@TypeOf(payload)) == .@"struct" and
+                        @hasDecl(@TypeOf(payload), "deinit"))
+                    {
+                        @compileError("Payload with 'deinit' must be explicitly handled.");
+                    }
+                },
+            }
+        }
+    };
+
+    pub const State = struct {
+        did_thing: bool = false,
+    };
+
+    pub fn init() !Self {
+        return .{};
+    }
+
+    pub fn deinit(_: *Self) void {}
+
+    /// Called before the app closes.
+    pub fn exit(_: *Self) void {}
+
+    /// Only update the state in here.
+    pub fn update(_: Allocator, msg: Store.Message, state: *Store.State) !void {
+        switch (msg) {
+            .template => |template_msg| {
+                switch (template_msg) {
+                    .do_some_thing => |did_some_thing| {
+                        state.template_store.did_some_thing = did_some_thing;
+                    },
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
+
+    /// Handle any side effects. This runs asynchronously.
+    pub fn effect_do_some_thing(store: *Store, payload: bool) !void {
+        _ = store;
+        _ = payload;
+    }
+};
+```

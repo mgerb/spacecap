@@ -3,8 +3,8 @@
 </p>
 <h1 align="center">Spacecap</h1>
 
-A hardware accelerated screen recording tool for Linux. _Still in development
-(see features/roadmap below)_.
+A hardware accelerated screen recording tool for Linux. _Still in early
+development (see features/roadmap below)_.
 
 - Written in [Zig](https://ziglang.org/) (0.16.0).
 - Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).

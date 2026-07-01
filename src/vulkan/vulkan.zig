@@ -109,7 +109,7 @@ pub const Vulkan = struct {
     /// to the vulkan image ring buffer.
     capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, Arc(VulkanCapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
-    /// in which the encoded can grab from.
+    /// in which the encoder can grab from.
     capture_ring_buffer: Mutex(?*VulkanImageRingBuffer),
 
     /// The window used to render the UI with imgui
@@ -787,6 +787,150 @@ pub const Vulkan = struct {
 
     pub fn wait_for_all_graphics_fences_end(self: *Self) void {
         self.graphics_queue.mutex.unlock(self.io);
+    }
+
+    /// Copy a Vulkan image to a buffer in which the CPU can access.
+    pub fn copy_image_to_cpu_buffer(
+        self: *Self,
+        allocator: Allocator,
+        image: vk.Image,
+        image_layout: vk.ImageLayout,
+        width: u32,
+        height: u32,
+        args: struct {
+            src_stage_mask: vk.PipelineStageFlags2,
+            src_access_mask: vk.AccessFlags2,
+        },
+    ) ![]u8 {
+        const size: u64 = width * height * 4; // bgra
+
+        const buffer_create_info = vk.BufferCreateInfo{
+            .size = size,
+            .usage = .{ .transfer_dst_bit = true },
+            .sharing_mode = .exclusive,
+        };
+
+        const buffer = try self.device.createBuffer(&buffer_create_info, null);
+        defer self.device.destroyBuffer(buffer, null);
+
+        const mem_reqs = self.device.getBufferMemoryRequirements(buffer);
+        const memory = try self.allocate(
+            mem_reqs,
+            .{ .host_visible_bit = true, .host_coherent_bit = true },
+            null,
+        );
+        defer self.device.freeMemory(memory, null);
+
+        try self.device.bindBufferMemory(buffer, memory, 0);
+
+        const command_pool = try self.device.createCommandPool(&.{
+            .queue_family_index = self.graphics_queue.family,
+            .flags = .{ .reset_command_buffer_bit = true },
+        }, null);
+        defer self.device.destroyCommandPool(command_pool, null);
+
+        const command_buffer_alloc_info = vk.CommandBufferAllocateInfo{
+            .command_pool = command_pool,
+            .level = .primary,
+            .command_buffer_count = 1,
+        };
+
+        var command_buffer: vk.CommandBuffer = undefined;
+        try self.device.allocateCommandBuffers(&command_buffer_alloc_info, @ptrCast(&command_buffer));
+        defer self.device.freeCommandBuffers(command_pool, &.{command_buffer});
+
+        try self.device.beginCommandBuffer(command_buffer, &.{});
+
+        const color_subresource_range = vk.ImageSubresourceRange{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .level_count = 1,
+            .base_array_layer = 0,
+            .layer_count = 1,
+        };
+
+        const image_to_transfer_barrier = vk.ImageMemoryBarrier2{
+            .src_stage_mask = args.src_stage_mask,
+            .src_access_mask = args.src_access_mask,
+            .dst_stage_mask = .{ .all_transfer_bit = true },
+            .dst_access_mask = .{ .transfer_read_bit = true },
+            .old_layout = image_layout,
+            .new_layout = .transfer_src_optimal,
+            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresource_range = color_subresource_range,
+        };
+        const image_to_transfer_dep_info = vk.DependencyInfoKHR{
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&image_to_transfer_barrier),
+        };
+        self.device.cmdPipelineBarrier2(command_buffer, &image_to_transfer_dep_info);
+
+        const copy_region = vk.BufferImageCopy{
+            .buffer_offset = 0,
+            .buffer_row_length = 0,
+            .buffer_image_height = 0,
+            .image_subresource = .{
+                .aspect_mask = .{ .color_bit = true },
+                .mip_level = 0,
+                .base_array_layer = 0,
+                .layer_count = 1,
+            },
+            .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+            .image_extent = .{ .width = width, .height = height, .depth = 1 },
+        };
+
+        self.device.cmdCopyImageToBuffer(
+            command_buffer,
+            image,
+            .transfer_src_optimal,
+            buffer,
+            &.{copy_region},
+        );
+
+        const buffer_read_barrier = vk.BufferMemoryBarrier2{
+            .src_stage_mask = .{ .all_transfer_bit = true },
+            .src_access_mask = .{ .transfer_write_bit = true },
+            .dst_stage_mask = .{ .host_bit = true },
+            .dst_access_mask = .{ .host_read_bit = true },
+            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .buffer = buffer,
+            .offset = 0,
+            .size = size,
+        };
+        const read_dep_info = vk.DependencyInfoKHR{
+            .buffer_memory_barrier_count = 1,
+            .p_buffer_memory_barriers = @ptrCast(&buffer_read_barrier),
+        };
+        self.device.cmdPipelineBarrier2(command_buffer, &read_dep_info);
+
+        try self.device.endCommandBuffer(command_buffer);
+
+        const submit_info = vk.SubmitInfo{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&command_buffer),
+        };
+
+        const fence = try self.device.createFence(&.{}, null);
+        defer self.device.destroyFence(fence, null);
+
+        try self.queue_submit(.graphics, &.{submit_info}, .{ .fence = fence });
+
+        const result = try self.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64));
+        if (result != .success) {
+            return error.WaitForFences;
+        }
+
+        const mapped = try self.device.mapMemory(memory, 0, size, .{});
+        defer self.device.unmapMemory(memory);
+
+        const mapped_data: [*]const u8 = @ptrCast(mapped);
+        const data = try allocator.alloc(u8, size);
+        errdefer allocator.free(data);
+        @memcpy(data, mapped_data[0..data.len]);
+        return data;
     }
 
     /// Copy a vulkan image on the GPU.
