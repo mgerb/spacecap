@@ -133,13 +133,8 @@
             # Required for linux tray icon.
             pkgs.gtk3
             pkgs.libayatana-appindicator
-
-            # SDL runtime backends (don't rely on ffmpeg closure for these).
             pkgs.wayland
-            pkgs.libxkbcommon
           ];
-
-          # TODO: Separate devShell for building appimage.
         };
       }
     );

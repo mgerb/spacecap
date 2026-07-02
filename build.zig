@@ -279,7 +279,7 @@ fn build_linux_app_image(
 
     const buffer = b.build_root.handle.readFileAlloc(
         b.graph.io,
-        "build_app_image.sh",
+        "./build/build_app_image.sh",
         allocator,
         .limited(1024 * 1024),
     ) catch unreachable;

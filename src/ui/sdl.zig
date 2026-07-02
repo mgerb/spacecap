@@ -44,7 +44,7 @@ pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensi
     };
 }
 
-/// If Linux, try Wayland, fallback to x11.
+/// If Linux, try Wayland, fallback to x11, which causes a panic because it's not supported.
 pub fn init() !void {
     _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_APP_NAME, "Spacecap");
     _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_APP_ID, "spacecap");
@@ -55,8 +55,9 @@ pub fn init() !void {
             return;
         }
         if (try try_sdl_init_with_hint("x11")) {
-            log.info("[sdl_init] using x11", .{});
-            return;
+            const message = "[sdl_init] using x11, which is not supported.";
+            log.err(message, .{});
+            @panic(message);
         }
         return error.SDLInitFailure;
     }
