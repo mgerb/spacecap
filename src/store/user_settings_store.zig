@@ -14,6 +14,7 @@ pub const Message = union(enum) {
     set_capture_fps: u32,
     set_capture_bit_rate: u64,
     set_replay_seconds: u32,
+    set_replay_max_bytes: u64,
     set_restore_capture_source_on_startup: bool,
     set_start_replay_buffer_on_startup: bool,
     set_video_output_directory: *ActionPayload(struct {
@@ -51,6 +52,7 @@ pub const Message = union(enum) {
         .set_capture_fps = .{ effect_sync_settings_to_file, CaptureStore.effect_update_video_capture_fps },
         .set_capture_bit_rate = .{effect_sync_settings_to_file},
         .set_replay_seconds = .{ effect_sync_settings_to_file, CaptureStore.effect_sync_replay_buffer_with_user_settings },
+        .set_replay_max_bytes = .{ effect_sync_settings_to_file, CaptureStore.effect_sync_replay_buffer_max_bytes },
         .set_restore_capture_source_on_startup = .{effect_sync_settings_to_file},
         .set_start_replay_buffer_on_startup = .{effect_sync_settings_to_file},
         .select_output_directory = .{effect_select_output_directory},
@@ -93,6 +95,9 @@ pub fn update(allocator: Allocator, msg: Store.Message, state: *Store.State) !vo
                 },
                 .set_replay_seconds => |payload| {
                     state.user_settings.user_settings.replay_seconds = payload;
+                },
+                .set_replay_max_bytes => |payload| {
+                    state.user_settings.user_settings.replay_max_bytes = payload;
                 },
                 .set_restore_capture_source_on_startup => |payload| {
                     state.user_settings.user_settings.restore_capture_source_on_startup = payload;

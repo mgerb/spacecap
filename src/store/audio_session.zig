@@ -142,7 +142,7 @@ pub const AudioSession = struct {
                 try replay_buffer.add_data(data.clone());
                 self.store.dispatch(.{
                     .capture = .{
-                        .update_replay_buffer_size = .{ .audio_bytes = replay_buffer.size },
+                        .update_replay_buffer_metrics = .{ .audio_bytes = replay_buffer.size },
                     },
                 });
             }

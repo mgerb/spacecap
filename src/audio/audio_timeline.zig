@@ -138,7 +138,7 @@ pub const AudioTimeline = struct {
             device.value_ptr.* = .{};
         }
 
-        var start_sample = self.timestamp_to_sample_floor(audio_capture_data.start_ns());
+        var start_sample = self.timestamp_to_sample_floor(audio_capture_data.start_ns()).?;
 
         // Chunks don't always arrive at exactly the timestamps they are
         // expected to. Small jitter here can cause static once multiple devices
@@ -190,14 +190,6 @@ pub const AudioTimeline = struct {
         return .{
             .audio_codec_ctx = self.encoder.audio_codec_ctx,
             .time_base = self.encoder.audio_codec_ctx.*.time_base,
-        };
-    }
-
-    pub fn get_sample_window(self: *Self, start_time_ns: i128, end_time_ns: i128) ?SampleWindow {
-        if (self.timeline_origin_ns == null) return null;
-        return .{
-            .start_sample = self.timestamp_to_sample_floor(start_time_ns),
-            .end_sample = self.timestamp_to_sample_ceil(end_time_ns),
         };
     }
 
@@ -292,7 +284,8 @@ pub const AudioTimeline = struct {
     }
 
     /// Floor is used for starts so a chunk never begins after its true time.
-    fn timestamp_to_sample_floor(self: *Self, timestamp_ns: i128) i64 {
+    pub fn timestamp_to_sample_floor(self: *Self, timestamp_ns: i128) ?i64 {
+        if (self.timeline_origin_ns == null) return null;
         return @max(self.timestamp_to_sample_floor_unclamped(timestamp_ns), 0);
     }
 
