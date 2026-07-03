@@ -128,7 +128,7 @@ reboot.
 
 ```sh
 # Delete
-rm ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
+rm ~/.local/share/flatpak/db/screencast
 
 # OR move it to a backup
 mv ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
