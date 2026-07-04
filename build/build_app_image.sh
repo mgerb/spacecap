@@ -8,13 +8,14 @@ export NO_STRIP=1
 rm -rf AppDir
 rm -f zig-out/linux/spacecap-linux-x86_64.AppImage
 
-# NOTE: Vulkan is excluded because system libraries should be used.
+# NOTE: Vulkan and libxkbcommon are excluded because they should be provided by the host.
 LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" linuxdeploy \
   --appdir AppDir \
   --executable zig-out/linux/spacecap \
   --desktop-file packaging/linux/spacecap.desktop \
   --icon-file packaging/spacecap.svg \
   --exclude-library libvulkan.so.1 \
+  --exclude-library libxkbcommon.so.0 \
   --library "$GTK3_LIB" \
   --library "$APPINDICATOR_LIB"
 
