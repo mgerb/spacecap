@@ -102,6 +102,7 @@
             vulkan-validation-layers
             vulkan-tools
             wayland
+            libxkbcommon
             zlib
             glib
 
@@ -133,7 +134,10 @@
             # Required for linux tray icon.
             pkgs.gtk3
             pkgs.libayatana-appindicator
+
+            # SDL runtime libs
             pkgs.wayland
+            pkgs.libxkbcommon
           ];
         };
       }

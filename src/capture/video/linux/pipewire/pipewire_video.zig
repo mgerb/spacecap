@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Arc = @import("../../../../arc.zig").Arc;
 const pw = @import("pipewire").c;
@@ -384,8 +385,10 @@ pub const PipewireVideo = struct {
             return;
         }
 
-        // Grab the newest buffer.
+        // Grab the most recent buffer.
         var pipewire_buffer: ?*pw.struct_pw_buffer = null;
+        var pipewire_buffer_plane_count: u32 = 0;
+
         while (true) {
             const tmp: ?*pw.struct_pw_buffer = pw.pw_stream_dequeue_buffer(self.stream);
 
@@ -393,35 +396,42 @@ pub const PipewireVideo = struct {
                 break;
             }
 
-            // Only keep buffers that are dmabuf.
-            if (tmp.?.buffer == null or tmp.?.buffer[0].datas[0].type != pw.SPA_DATA_DmaBuf) {
+            const plane_count = get_dmabuf_plane_count(tmp.?.buffer);
+
+            // Only keep dma buffers that have at least one plane.
+            if (plane_count == 0) {
                 _ = pw.pw_stream_queue_buffer(self.stream.?, tmp.?);
                 continue;
             }
+
+            assert(plane_count > 0);
 
             if (pipewire_buffer) |pwb| {
                 _ = pw.pw_stream_queue_buffer(self.stream.?, pwb);
             }
 
             pipewire_buffer = tmp;
+            pipewire_buffer_plane_count = plane_count;
         }
 
-        const pwb = pipewire_buffer.?;
+        const pwb = pipewire_buffer orelse return;
+
+        assert(pipewire_buffer_plane_count > 0);
 
         // TODO: Should gracefully handle these errors.
         defer _ = pw.pw_stream_queue_buffer(self.stream.?, pwb);
-
-        const vulkan_image = self.pipewire_frame_buffer_manager.?.get_vulkan_image(pwb, self.info.?) catch |err| {
-            log.err("[stream_process_callback] unable to get buffer: {}", .{err});
-            return;
-        };
 
         const header = pw.spa_buffer_find_meta_data(pwb.buffer, pw.SPA_META_Header, @sizeOf(pw.spa_meta_header));
         if (header == null) {
             log.err("[stream_process_callback] unable to get metadata header. This should never happen.", .{});
             return;
         }
-        const metadata = @as(*pw.spa_meta_header, @ptrCast(@alignCast(header.?)));
+        const metadata: *pw.spa_meta_header = @ptrCast(@alignCast(header.?));
+
+        if (metadata.flags & pw.SPA_META_HEADER_FLAG_CORRUPTED != 0) {
+            return;
+        }
+
         var timestamp_ns = self.select_best_timestamp(metadata);
 
         // Pipewire can occasionally queue a buffer with the same timestamp
@@ -434,6 +444,11 @@ pub const PipewireVideo = struct {
         }
 
         self.previous_frame_timestamp_ns = timestamp_ns;
+
+        const vulkan_image = self.pipewire_frame_buffer_manager.?.get_vulkan_image(pwb, self.info.?, pipewire_buffer_plane_count) catch |err| {
+            log.err("[stream_process_callback] unable to get buffer: {}", .{err});
+            return;
+        };
 
         const copy_data = blk: {
             const capture_ring_buffer = self.vulkan.capture_ring_buffer.lock();
@@ -473,6 +488,37 @@ pub const PipewireVideo = struct {
         }
     }
 
+    /// Get the plane count from a buffer if it is a valid dmabuf, otherwise
+    /// return 0.
+    fn get_dmabuf_plane_count(buffer: ?[*c]pw.spa_buffer) u32 {
+        const _buffer = buffer orelse return 0;
+        if (_buffer[0].n_datas == 0 or
+            _buffer[0].datas[0].chunk == null or
+            _buffer[0].datas[0].chunk[0].size == 0)
+        {
+            return 0;
+        }
+
+        var plane_count: u32 = 0;
+        while (plane_count < _buffer[0].n_datas) : (plane_count += 1) {
+            if (_buffer[0].datas[plane_count].type != pw.SPA_DATA_DmaBuf) {
+                break;
+            }
+        }
+
+        for (0..plane_count) |i| {
+            const data = _buffer[0].datas[i];
+            if (data.chunk == null) {
+                return 0;
+            }
+            if (data.chunk[0].flags & pw.SPA_CHUNK_FLAG_CORRUPTED != 0) {
+                return 0;
+            }
+        }
+
+        return plane_count;
+    }
+
     /// Some DE/compositors vary on where they store the presentation timestamp.
     fn select_best_timestamp(self: *Self, metadata: *const pw.spa_meta_header) i128 {
         const raw_metadata_pts_ns: i128 = @intCast(metadata.pts);
@@ -488,12 +534,6 @@ pub const PipewireVideo = struct {
         if (raw_metadata_pts_ns > 0) {
             timestamp_ns = raw_metadata_pts_ns;
             source = .meta_pts;
-        }
-
-        // Limit the logging otherwise it will get spammed.
-        if (self.timestamp_source_log_count >= 10) {
-            log.info("[select_best_timestamp] video timestamp source: {}", .{source});
-            self.timestamp_source_log_count += 1;
         }
 
         return timestamp_ns;
@@ -636,7 +676,6 @@ pub const PipewireVideo = struct {
             return;
         };
 
-        // damage
         spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_ParamMeta,
@@ -644,20 +683,16 @@ pub const PipewireVideo = struct {
             .{
                 pw.SPA_PARAM_META_type,
                 "I",
-                pw.SPA_META_VideoDamage,
+                pw.SPA_META_VideoCrop,
                 pw.SPA_PARAM_META_size,
-                "?ri",
-                @as(i32, 3),
-                @as(i32, @sizeOf(pw.spa_meta_region) * 16),
-                @as(i32, @sizeOf(pw.spa_meta_region) * 1),
-                @as(i32, @sizeOf(pw.spa_meta_region) * 16),
+                "i",
+                @as(i32, @intCast(@sizeOf(pw.spa_meta_region))),
             },
         )))) catch |err| {
             log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
             return;
         };
 
-        // cursor
         spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_ParamMeta,
@@ -672,6 +707,23 @@ pub const PipewireVideo = struct {
                 @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 64 + 64 * 4),
                 @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1 + 1 * 4),
                 @as(i32, @sizeOf(pw.spa_meta_cursor) + @sizeOf(pw.spa_meta_bitmap) + 1024 + 1024 * 4),
+            },
+        )))) catch |err| {
+            log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});
+            return;
+        };
+
+        spa_pod_params.params.append(self.allocator, @ptrCast(@alignCast(c_def.spa_pod_builder_add_object(
+            &builder,
+            pw.SPA_TYPE_OBJECT_ParamMeta,
+            pw.SPA_PARAM_Meta,
+            .{
+                pw.SPA_PARAM_META_type,
+                "I",
+                pw.SPA_META_VideoTransform,
+                pw.SPA_PARAM_META_size,
+                "i",
+                @as(i32, @intCast(@sizeOf(pw.spa_meta_videotransform))),
             },
         )))) catch |err| {
             log.err("[send_stream_params] spa_pod_params.params.append error: {}", .{err});

@@ -2,10 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const pw = @import("pipewire").c;
-const c = @import("../../../../common/linux/pipewire_include.zig").c;
 const vk = @import("vulkan");
 const Vulkan = @import("../../../../vulkan/vulkan.zig").Vulkan;
-const BufferedChan = @import("../../../../channel.zig").BufferedChan;
 const pipewire_util = @import("./pipewire_util.zig");
 
 const PipewireFrameBufferImage = struct {
@@ -86,17 +84,18 @@ pub const PipewireFrameBufferManager = struct {
         self: *Self,
         pwb: *pw.struct_pw_buffer,
         info: pw.spa_video_info_raw,
+        plane_count: u32,
     ) !struct { frame_buffer: *PipewireFrameBuffer, wait_semaphore: vk.Semaphore } {
+        assert(plane_count > 0);
         const _frame_buffer = self.frame_buffers.getPtr(pwb);
         // Should never be null here. If it is, there are big problems.
         assert(_frame_buffer != null);
         const frame_buffer = _frame_buffer.?;
 
-        const n_datas = frame_buffer.pwb.buffer[0].n_datas;
-        var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, n_datas);
+        var subresource_layouts = try std.ArrayList(vk.SubresourceLayout).initCapacity(self.allocator, plane_count);
         defer subresource_layouts.deinit(self.allocator);
 
-        for (0..n_datas) |i| {
+        for (0..plane_count) |i| {
             const buf_data = frame_buffer.pwb.buffer[0].datas[i];
             const row_pitch: u64 = @intCast(buf_data.chunk[0].stride);
             const subresource_layout = vk.SubresourceLayout{
