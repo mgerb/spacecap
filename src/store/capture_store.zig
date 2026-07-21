@@ -1,7 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const ArenaAllocator = std.heap.ArenaAllocator;
 const AudioSession = @import("./audio_session.zig").AudioSession;
 const VideoSession = @import("./video_session.zig").VideoSession;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
@@ -10,9 +9,8 @@ const Store = @import("./store.zig").Store;
 const AudioDevices = @import("./audio_session.zig").AudioDevices;
 const String = @import("../string.zig").String;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
-const ActionPayload = @import("./action_payload.zig").ActionPayload;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const Muxer = @import("../video/muxer.zig").Muxer;
+const Muxer = @import("../ffmpeg/main.zig").Muxer;
 const Mutex = @import("../mutex.zig").Mutex;
 const VideoCaptureSelection = @import("../capture/video/video_capture.zig").VideoCaptureSelection;
 const VideoReplayBuffer = @import("../video/video_replay_buffer.zig").VideoReplayBuffer;
@@ -34,37 +32,36 @@ pub const CaptureStore = struct {
     muxer: Mutex(?Muxer),
 
     pub const Message = union(enum) {
-        const SetAudioDeviceGainPayload = *ActionPayload(struct {
+        const SetAudioDeviceGainPayload = struct {
+            allocator: Allocator,
             device_id: []const u8,
             gain: f32,
 
-            pub fn init(arena: *ArenaAllocator, args: struct {
-                device_id: []const u8,
-                gain: f32,
-            }) !@This() {
-                return .{
-                    .device_id = try arena.allocator().dupe(u8, args.device_id),
-                    .gain = args.gain,
-                };
+            pub fn deinit(self: *@This()) void {
+                self.allocator.free(self.device_id);
             }
-        });
-        const UpdateAudioDeviceLevelPayload = *ActionPayload(struct {
+        };
+        const UpdateAudioDeviceLevelPayload = struct {
+            allocator: Allocator,
             device_id: []const u8,
             level: f32,
             updated_at: i128,
 
-            pub fn init(arena: *ArenaAllocator, args: struct {
-                device_id: []const u8,
-                level: f32,
-                updated_at: i128,
-            }) !@This() {
-                return .{
-                    .device_id = try arena.allocator().dupe(u8, args.device_id),
-                    .level = args.level,
-                    .updated_at = args.updated_at,
-                };
+            pub fn deinit(self: *@This()) void {
+                self.allocator.free(self.device_id);
             }
-        });
+        };
+        const ScreenshotReadyPayload = struct {
+            allocator: Allocator,
+            /// Raw bgra data. Must be heap allocated. Takes ownership.
+            data: []const u8,
+            width: u32,
+            height: u32,
+
+            pub fn deinit(self: *@This()) void {
+                self.allocator.free(self.data);
+            }
+        };
 
         load_system_audio_devices,
         load_system_audio_devices_success: AudioDevices,
@@ -97,6 +94,11 @@ pub const CaptureStore = struct {
         save_replay,
         save_replay_success,
         save_replay_fail,
+
+        // Screenshots
+        screenshot_request,
+        screenshot_response: ScreenshotReadyPayload,
+        screenshot_fail,
 
         start_recording_to_disk,
         start_recording_to_disk_success: std.Io.Timestamp,
@@ -146,15 +148,24 @@ pub const CaptureStore = struct {
             .select_video_source_prepared = .{effect_select_video_source_prepared},
             .sync_replay_buffers = .{effect_sync_replay_buffers},
             .save_replay = .{effect_save_replay},
+            .screenshot_request = .{effect_screenshot_request},
+            .screenshot_response = .{effect_screenshot_response},
         };
 
         pub fn deinit(self: *@This()) void {
             switch (self.*) {
                 .load_system_audio_devices_success => |*audio_devices| audio_devices.deinit(),
                 .toggle_audio_device => |*device_id| device_id.deinit(),
-                .set_audio_device_gain => |payload| payload.deinit(),
-                .update_audio_device_level => |payload| payload.deinit(),
-                else => {},
+                .set_audio_device_gain => |*payload| payload.deinit(),
+                .update_audio_device_level => |*payload| payload.deinit(),
+                .screenshot_response => |*payload| payload.deinit(),
+                inline else => |payload| {
+                    if (@typeInfo(@TypeOf(payload)) == .@"struct" and
+                        @hasDecl(@TypeOf(payload), "deinit"))
+                    {
+                        @compileError("Payload with 'deinit' must be explicitly handled.");
+                    }
+                },
             }
         }
     };
@@ -344,26 +355,25 @@ pub const CaptureStore = struct {
                             break;
                         }
                     },
-                    .set_audio_device_gain => |payload| {
+                    .set_audio_device_gain => |*payload| {
                         for (state.capture.audio_devices.list.items) |*device| {
-                            if (!std.mem.eql(u8, device.id, payload.payload.device_id)) continue;
-                            device.gain = std.math.clamp(payload.payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
+                            if (!std.mem.eql(u8, device.id, payload.device_id)) continue;
+                            device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
                             break;
                         }
                     },
-                    .update_audio_device_level => |payload| {
-                        defer payload.deinit();
-                        const data = payload.payload;
-                        const clamped_level = std.math.clamp(data.level, 0.0, 1.0);
+                    .update_audio_device_level => |*payload| {
+                        defer @constCast(payload).deinit();
+                        const clamped_level = std.math.clamp(payload.level, 0.0, 1.0);
 
                         for (state.capture.audio_devices.list.items) |*device| {
-                            if (!std.mem.eql(u8, device.id, data.device_id)) {
+                            if (!std.mem.eql(u8, device.id, payload.device_id)) {
                                 continue;
                             }
 
                             if (device.selected) {
                                 device.audio_level = clamped_level;
-                                device.audio_level_updated_at = data.updated_at;
+                                device.audio_level_updated_at = payload.updated_at;
                             } else {
                                 device.audio_level = 0.0;
                                 device.audio_level_updated_at = null;
@@ -474,11 +484,12 @@ pub const CaptureStore = struct {
             }
             store.dispatch(.{
                 .user_settings = .{
-                    .set_audio_device_settings = try .init(store.allocator, .{
-                        .device_id = device.id,
+                    .set_audio_device_settings = .{
+                        .allocator = store.allocator,
+                        .device_id = try store.allocator.dupe(u8, device.id),
                         .selected = device.selected,
                         .gain = device.gain,
-                    }),
+                    },
                 },
             });
             break;
@@ -486,8 +497,8 @@ pub const CaptureStore = struct {
     }
 
     fn effect_set_audio_device_gain(store: *Store, _payload: Message.SetAudioDeviceGainPayload) !void {
-        defer _payload.deinit();
-        const payload = _payload.payload;
+        const payload = @constCast(&_payload);
+        defer payload.deinit();
         const state_locked = store.state.lock();
         defer state_locked.unlock();
         const state = state_locked.unwrap_ptr();
@@ -497,11 +508,12 @@ pub const CaptureStore = struct {
             device.gain = std.math.clamp(payload.gain, AUDIO_GAIN_MIN, AUDIO_GAIN_MAX);
             store.dispatch(.{
                 .user_settings = .{
-                    .set_audio_device_settings = try .init(store.allocator, .{
-                        .device_id = device.id,
+                    .set_audio_device_settings = .{
+                        .allocator = store.allocator,
+                        .device_id = try store.allocator.dupe(u8, device.id),
                         .selected = device.selected,
                         .gain = device.gain,
-                    }),
+                    },
                 },
             });
             break;
@@ -766,6 +778,48 @@ pub const CaptureStore = struct {
         store.dispatch(.{ .capture = .save_replay_success });
     }
 
+    fn effect_screenshot_request(store: *Store, _: anytype) !void {
+        const self = &store.capture_store;
+
+        const video_capture_active = blk: {
+            const state_locked = store.state.lock();
+            defer state_locked.unlock();
+            break :blk state_locked.unwrap_ptr().capture.video_capture_active;
+        };
+
+        if (!video_capture_active) {
+            log.debug("[effect_take_screenshot] video capture is not active", .{});
+            return;
+        }
+
+        self.video_session.screenshot_request();
+        log.debug("[effect_screenshot_request] screenshot requested", .{});
+    }
+
+    fn effect_screenshot_response(store: *Store, payload: Message.ScreenshotReadyPayload) !void {
+        defer @constCast(&payload).deinit();
+
+        var screenshot_output_directory = blk: {
+            const state_locked = store.state.lock();
+            defer state_locked.unlock();
+            const settings = state_locked.unwrap_ptr().user_settings.user_settings;
+            break :blk try settings.screenshot_output_directory.?.clone(store.allocator);
+        };
+        defer screenshot_output_directory.deinit();
+
+        const file_path = try exporter.export_image_to_file(
+            store.allocator,
+            store.io,
+            payload.width,
+            payload.height,
+            payload.data,
+            screenshot_output_directory.bytes,
+        );
+        defer store.allocator.free(file_path);
+
+        log.debug("[effect_screenshot_response] screenshot saved: {s}", .{file_path});
+    }
+
     fn effect_select_video_source(store: *Store, video_capture_selection: VideoCaptureSelection) !void {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .{ .select_video_source_fail = video_capture_selection } });
@@ -871,7 +925,7 @@ test "CaptureStore - toggle_audio_device" {
 
     try std.testing.expect(state.capture.audio_devices.list.items[0].selected);
 
-    store.dispatch(.{ .capture = .{ .toggle_audio_device = try .from(std.testing.allocator, "test1") } });
+    store.dispatch(.{ .capture = .{ .toggle_audio_device = try .init(std.testing.allocator, "test1") } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
 
@@ -884,6 +938,7 @@ test "CaptureStore - set_audio_device_gain" {
     defer test_store.deinit();
     const store = test_store.store;
     const state = &store.state.private.value;
+    const allocator = std.testing.allocator;
 
     store.dispatch(.{ .capture = .load_system_audio_devices });
     store.run(.{ .once = true, .wait_for_effects = true });
@@ -891,10 +946,11 @@ test "CaptureStore - set_audio_device_gain" {
     store.run(.{ .once = true, .wait_for_effects = true });
 
     store.dispatch(.{ .capture = .{
-        .set_audio_device_gain = try .init(std.testing.allocator, .{
-            .device_id = "test1",
+        .set_audio_device_gain = .{
+            .allocator = allocator,
+            .device_id = try allocator.dupe(u8, "test1"),
             .gain = 1.25,
-        }),
+        },
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
@@ -904,10 +960,11 @@ test "CaptureStore - set_audio_device_gain" {
 
     // Should clamp to the maximum linear gain.
     store.dispatch(.{ .capture = .{
-        .set_audio_device_gain = try .init(std.testing.allocator, .{
-            .device_id = "test1",
+        .set_audio_device_gain = .{
+            .allocator = allocator,
+            .device_id = try allocator.dupe(u8, "test1"),
             .gain = 5.0,
-        }),
+        },
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
@@ -917,10 +974,11 @@ test "CaptureStore - set_audio_device_gain" {
 
     // Should clamp to the minimum linear gain.
     store.dispatch(.{ .capture = .{
-        .set_audio_device_gain = try .init(std.testing.allocator, .{
-            .device_id = "test1",
+        .set_audio_device_gain = .{
+            .allocator = allocator,
+            .device_id = try allocator.dupe(u8, "test1"),
             .gain = 0,
-        }),
+        },
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
@@ -935,19 +993,23 @@ test "CaptureStore - update_audio_device_level" {
     defer test_store.deinit();
     const store = test_store.store;
     const state = &store.state.private.value;
+    const allocator = std.testing.allocator;
 
     store.dispatch(.{ .capture = .load_system_audio_devices });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    store.dispatch(.{ .capture = .{
-        .update_audio_device_level = try .init(std.testing.allocator, .{
-            .device_id = "test1",
-            .level = 0.42,
-            .updated_at = 123,
-        }),
-    } });
+    store.dispatch(.{
+        .capture = .{
+            .update_audio_device_level = .{
+                .allocator = allocator,
+                .device_id = try allocator.dupe(u8, "test1"),
+                .level = 0.42,
+                .updated_at = 123,
+            },
+        },
+    });
     store.run(.{ .once = true, .wait_for_effects = true });
 
     try std.testing.expectEqual(@as(f32, 0.42), state.capture.audio_devices.list.items[0].audio_level);
@@ -955,11 +1017,12 @@ test "CaptureStore - update_audio_device_level" {
 
     state.capture.audio_devices.list.items[0].selected = false;
     store.dispatch(.{ .capture = .{
-        .update_audio_device_level = try .init(std.testing.allocator, .{
-            .device_id = "test1",
+        .update_audio_device_level = .{
+            .allocator = allocator,
+            .device_id = try allocator.dupe(u8, "test1"),
             .level = 0.5,
             .updated_at = 456,
-        }),
+        },
     } });
     store.run(.{ .once = true, .wait_for_effects = true });
 
@@ -1086,6 +1149,36 @@ test "CaptureStore - sync_replay_buffers - should remove audio frames when the v
         const packet_end = packet.data.*.pts + packet.data.*.duration;
         try std.testing.expect(packet_end > oldest_audio_sample);
     }
+}
+
+test "CaptureStore - screenshot_request - should skip when capture is inactive" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+
+    store.dispatch(.{ .capture = .screenshot_request });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    var requests_locked = store.capture_store.video_session.screenshot_requests.lock();
+    defer requests_locked.unlock();
+    try std.testing.expectEqual(0, requests_locked.unwrap());
+}
+
+test "CaptureStore - screenshot_request - should queue a screenshot when video capture is active" {
+    const TestStore = @import("./store.zig").TestStore;
+    const test_store = try TestStore.init(std.testing.allocator);
+    defer test_store.deinit();
+    const store = test_store.store;
+    const state = &store.state.private.value;
+
+    state.capture.video_capture_active = true;
+    store.dispatch(.{ .capture = .screenshot_request });
+    store.run(.{ .once = true, .wait_for_effects = true });
+
+    var requests_locked = store.capture_store.video_session.screenshot_requests.lock();
+    defer requests_locked.unlock();
+    try std.testing.expectEqual(1, requests_locked.unwrap());
 }
 
 // ----------------------------------------------------------------------------

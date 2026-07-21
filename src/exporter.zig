@@ -1,14 +1,14 @@
-//// Contains functions to export audio/video.
-//// e.g. Export from replay buffers.
+//! Contains functions to export audio, video, images, etc.
 
 const std = @import("std");
 const VideoReplayBuffer = @import("./video/video_replay_buffer.zig").VideoReplayBuffer;
 const AudioReplayBuffer = @import("./audio/audio_replay_buffer.zig");
-const CodecContextInfo = @import("./audio/audio_timeline.zig").CodecContextInfo;
 const SampleWindow = @import("./audio/audio_timeline.zig").SampleWindow;
-const ffmpeg = @import("./ffmpeg.zig").ffmpeg;
-const checkErr = @import("./ffmpeg.zig").check_err;
-const Muxer = @import("./video/muxer.zig").Muxer;
+const Util = @import("util.zig");
+const ffmpeg = @import("./ffmpeg/main.zig");
+const Png = ffmpeg.Png;
+const Muxer = ffmpeg.Muxer;
+const CodecContextInfo = ffmpeg.AudioEncoder.CodecContextInfo;
 
 const log = std.log.scoped(.exporter);
 
@@ -70,7 +70,7 @@ pub fn export_replay_buffers(
 
     if (audio_replay_buffer) |_audio_replay_buffer| {
         if (audio_sample_window) |sample_window| {
-            muxer.set_audio_sample_window(sample_window);
+            muxer.set_audio_sample_window(sample_window.start_sample, sample_window.end_sample);
             _ = try muxer.write_audio_packets(&_audio_replay_buffer.packets);
         }
     }
@@ -78,68 +78,78 @@ pub fn export_replay_buffers(
     try muxer.finish();
 }
 
-/// Export only audio to file.
-pub fn export_audio(allocator: std.mem.Allocator, sample_rate: u32, channels: u32, samples: []const f32) !void {
-    if (samples.len == 0) return error.NoAudioSamples;
+/// Encode raw BGRA image data and save to a file. Currently only supports PNG.
+pub fn export_image_to_file(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    width: u32,
+    height: u32,
+    bgra: []const u8,
+    output_directory: []const u8,
+) ![]u8 {
+    const expected_len: usize = width * height * 4;
+    if (bgra.len != expected_len) return error.InvalidScreenshotPixelData;
 
-    var format_context: *ffmpeg.AVFormatContext = undefined;
+    const rgba = try allocator.alloc(u8, bgra.len);
+    defer allocator.free(rgba);
 
-    const file_name = try std.fmt.allocPrintSentinel(allocator, "audio_{}.wav", .{std.time.nanoTimestamp()}, 0);
+    // Convert to RGBA
+    var i: usize = 0;
+    while (i < rgba.len) : (i += 4) {
+        rgba[i] = bgra[i + 2];
+        rgba[i + 1] = bgra[i + 1];
+        rgba[i + 2] = bgra[i];
+        rgba[i + 3] = 255;
+    }
+
+    const encoded_data = try Png.encode(allocator, width, height, rgba);
+    defer allocator.free(encoded_data);
+
+    try std.Io.Dir.cwd().createDirPath(io, output_directory);
+
+    const file_name = try Util.format_file_name(allocator, io, .{
+        .prefix = "screenshot",
+        .extension = "png",
+    });
     defer allocator.free(file_name);
 
-    var ret = ffmpeg.avformat_alloc_output_context2(@ptrCast(&format_context), null, "wav", file_name);
-    try checkErr(ret);
+    const file_path = try std.fs.path.join(allocator, &.{ output_directory, file_name });
+    errdefer allocator.free(file_path);
 
-    defer ffmpeg.avformat_free_context(format_context);
+    const file = try std.Io.Dir.cwd().createFile(io, file_path, .{ .exclusive = true });
+    defer file.close(io);
 
-    const out_stream = ffmpeg.avformat_new_stream(format_context, null) orelse return error.FFmpegError;
-    const stream_idx = out_stream.*.index;
-
-    const codecpar = out_stream.*.codecpar;
-    codecpar.*.codec_id = ffmpeg.AV_CODEC_ID_PCM_F32LE;
-    codecpar.*.codec_type = ffmpeg.AVMEDIA_TYPE_AUDIO;
-    codecpar.*.format = ffmpeg.AV_SAMPLE_FMT_FLT;
-    codecpar.*.sample_rate = @intCast(sample_rate);
-    ffmpeg.av_channel_layout_default(&codecpar.*.ch_layout, @intCast(channels));
-    codecpar.*.bits_per_coded_sample = 32;
-    codecpar.*.bits_per_raw_sample = 32;
-    codecpar.*.block_align = @intCast(channels * @sizeOf(f32));
-    codecpar.*.bit_rate = @intCast(sample_rate * channels * 32);
-
-    out_stream.*.time_base = ffmpeg.AVRational{ .num = 1, .den = @intCast(sample_rate) };
-
-    if (format_context.oformat.*.flags & ffmpeg.AVFMT_NOFILE == 0) {
-        ret = ffmpeg.avio_open(&format_context.pb, file_name, ffmpeg.AVIO_FLAG_WRITE);
-        try checkErr(ret);
-    }
-    defer {
-        if (format_context.pb != null) {
-            _ = ffmpeg.avio_closep(&format_context.pb);
-        }
-    }
-
-    ret = ffmpeg.avformat_write_header(format_context, null);
-    try checkErr(ret);
-
-    var pkt = ffmpeg.av_packet_alloc() orelse return error.FFmpegError;
-    defer ffmpeg.av_packet_free(&pkt);
-
-    const bytes = std.mem.sliceAsBytes(samples);
-    ret = ffmpeg.av_new_packet(pkt, @intCast(bytes.len));
-    try checkErr(ret);
-    @memcpy(pkt.*.data[0..bytes.len], bytes);
-
-    const frames: usize = if (channels > 0) samples.len / @as(usize, @intCast(channels)) else 0;
-    pkt.*.stream_index = stream_idx;
-    pkt.*.pts = 0;
-    pkt.*.dts = 0;
-    pkt.*.duration = @intCast(frames);
-    pkt.*.flags = 0;
-
-    ret = ffmpeg.av_interleaved_write_frame(format_context, pkt);
-    ffmpeg.av_packet_unref(pkt);
-    try checkErr(ret);
-
-    ret = ffmpeg.av_write_trailer(format_context);
-    try checkErr(ret);
+    try file.writeStreamingAll(io, encoded_data);
+    log.info("[export_image_to_file] wrote {s}", .{file_path});
+    return file_path;
 }
+
+test "Exporter - export_image_to_file writes to the output directory" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var tmp_dir_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const tmp_dir_path_len = try tmp_dir.dir.realPathFile(io, ".", &tmp_dir_path_buffer);
+    const output_directory = try std.fs.path.join(allocator, &.{ tmp_dir_path_buffer[0..tmp_dir_path_len], "screenshots" });
+    defer allocator.free(output_directory);
+
+    const file_path = try export_image_to_file(
+        allocator,
+        io,
+        1,
+        1,
+        &.{ 0x11, 0x22, 0x33, 0xff },
+        output_directory,
+    );
+    defer allocator.free(file_path);
+
+    try std.testing.expectEqualStrings(output_directory, std.fs.path.dirname(file_path).?);
+    const file = try std.Io.Dir.openFileAbsolute(io, file_path, .{});
+    defer file.close(io);
+    try std.testing.expect((try file.stat(io)).size > 0);
+}
+
+// TODO:
+test "Exporter - export_replay_buffers writes to the output directory" {}

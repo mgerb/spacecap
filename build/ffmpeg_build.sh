@@ -55,7 +55,10 @@ common_configure_flags=(
 target_configure_flags=()
 case "$target" in
   linux)
-    target_configure_flags=()
+    target_configure_flags=(
+      --enable-encoder=png
+      --enable-zlib
+    )
     ;;
   windows)
     target_configure_flags=(

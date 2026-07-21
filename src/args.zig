@@ -16,7 +16,7 @@ const shared_params = (
 
 const linux_params = (
     \\-s, --send <command>   Send a command to a running Spacecap instance.
-    \\                       Commands: save-replay, start-replay-buffer, stop-replay-buffer, toggle-replay-buffer, start-recording, stop-recording, toggle-recording
+    \\                       Commands: save-replay, screenshot, start-replay-buffer, stop-replay-buffer, toggle-replay-buffer, start-recording, stop-recording, toggle-recording
     \\
 );
 
@@ -28,6 +28,7 @@ const windows_params_parsed = clap.parseParamsComptime(shared_params ++ windows_
 
 pub const SendCommand = enum {
     @"save-replay",
+    screenshot,
     @"start-replay-buffer",
     @"stop-replay-buffer",
     @"toggle-replay-buffer",

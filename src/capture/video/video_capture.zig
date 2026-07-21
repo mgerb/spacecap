@@ -56,6 +56,7 @@ pub const VideoCapture = struct {
         return self.vtable.close_all_channels(self.ptr);
     }
 
+    /// NOTE: The Vulkan image must not be pending any fence/semaphore.
     pub fn wait_for_frame(self: *Self) ChanError!Arc(VulkanImageBuffer) {
         return self.vtable.wait_for_frame(self.ptr);
     }

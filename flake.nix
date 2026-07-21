@@ -130,6 +130,7 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.vulkan-loader
             pkgs.glib
+            pkgs.zlib
 
             # Required for linux tray icon.
             pkgs.gtk3

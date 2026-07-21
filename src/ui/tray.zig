@@ -19,6 +19,7 @@ pub const Tray = struct {
 
     store: *Store,
     tray: *imguiz.SDL_Tray,
+    screenshot_entry: *imguiz.SDL_TrayEntry,
     replay_buffer_entry: *imguiz.SDL_TrayEntry,
     save_replay_entry: *imguiz.SDL_TrayEntry,
     recording_entry: *imguiz.SDL_TrayEntry,
@@ -41,6 +42,9 @@ pub const Tray = struct {
         const save_replay_entry = try insert_tray_entry(menu, "Save Replay");
         imguiz.SDL_SetTrayEntryCallback(save_replay_entry, save_replay_callback, store);
 
+        const screenshot_entry = try insert_tray_entry(menu, "Screenshot");
+        imguiz.SDL_SetTrayEntryCallback(screenshot_entry, screenshot_callback, store);
+
         try insert_tray_separator(menu);
 
         const replay_buffer_entry = try insert_tray_checkbox_entry(menu, "Replay Buffer");
@@ -60,6 +64,7 @@ pub const Tray = struct {
         return .{
             .store = store,
             .tray = tray,
+            .screenshot_entry = screenshot_entry,
             .replay_buffer_entry = replay_buffer_entry,
             .save_replay_entry = save_replay_entry,
             .recording_entry = recording_entry,
@@ -96,6 +101,7 @@ pub const Tray = struct {
         imguiz.SDL_SetTrayTooltip(self.tray, get_tooltip_for_state(state));
 
         imguiz.SDL_SetTrayEntryEnabled(self.save_replay_entry, state.replay_buffer_active);
+        imguiz.SDL_SetTrayEntryEnabled(self.screenshot_entry, state.video_capture_active);
 
         imguiz.SDL_SetTrayEntryChecked(self.replay_buffer_entry, state.replay_buffer_active);
         imguiz.SDL_SetTrayEntryEnabled(self.replay_buffer_entry, state.video_capture_active or state.replay_buffer_active);
@@ -154,6 +160,12 @@ pub const Tray = struct {
         assert(userdata != null);
         const store: *Store = @ptrCast(@alignCast(userdata));
         store.dispatch(.{ .capture = .save_replay });
+    }
+
+    fn screenshot_callback(userdata: ?*anyopaque, _: ?*imguiz.SDL_TrayEntry) callconv(.c) void {
+        assert(userdata != null);
+        const store: *Store = @ptrCast(@alignCast(userdata));
+        store.dispatch(.{ .capture = .screenshot_request });
     }
 
     fn replay_buffer_callback(userdata: ?*anyopaque, _: ?*imguiz.SDL_TrayEntry) callconv(.c) void {

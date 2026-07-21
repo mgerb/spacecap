@@ -1,5 +1,14 @@
 const std = @import("std");
 
+/// ----------------------------------------------------------------------------
+/// DEPRECATED
+/// ----------------------------------------------------------------------------
+/// NOTE: This is no longer used anywhere and probably shouldn't be used. This
+/// was a clever implemenation, but I think I prefer to minimize abstractions
+/// and send messages (previously actions) as basic structs. Keeping it around
+/// now for a reference of some comptime stuff.
+///
+///
 /// A helper type for actions that require heap allocations.
 /// T must define an 'init' function with (arena, args) parameters.
 /// All allocations in the underlying struct are cleaned up by the

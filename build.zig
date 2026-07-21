@@ -1,9 +1,13 @@
 const std = @import("std");
 const ffmpeg_build_util = @import("build/ffmpeg_build.zig");
 const version = @import("build/version.zig");
+const build_linux_app_image = @import("./build/app_image.zig").build_linux_app_image;
 
 const EXE_NAME = "spacecap";
 const PackageVersion = version.PackageVersion;
+
+// TODO: There are still some issues with the Zig backend. Use LLMV for now...
+const USE_LLVM = true;
 
 fn compile_shader(
     allocator: std.mem.Allocator,
@@ -76,12 +80,6 @@ fn add_shared_dependencies(
         .optimize = optimize,
     }).module("clap");
     exe.root_module.addImport("clap", clap);
-
-    const ffmpeg_build = switch (target.result.os.tag) {
-        .windows => ffmpeg_build_util.build_windows(b),
-        else => ffmpeg_build_util.build_linux(b),
-    };
-    ffmpeg_build_util.link_libs(exe, ffmpeg_build);
 }
 
 fn add_linux_dependencies(
@@ -112,8 +110,32 @@ fn add_linux_dependencies(
     // Vulkan is linked directly, because it is required that the
     // system has the libs installed.
     exe.root_module.linkSystemLibrary("vulkan", .{});
+
+    ffmpeg_build_util.build_linux(b, exe);
 }
 
+fn add_windows_dependencies(
+    allocator: std.mem.Allocator,
+    b: *std.Build,
+    exe: *std.Build.Step.Compile,
+    _: std.Build.ResolvedTarget,
+    _: std.builtin.OptimizeMode,
+) !void {
+    _ = allocator;
+    ffmpeg_build_util.build_windows(b, exe);
+    const vulkan_sdk_path_windows = b.graph.environ_map.get("VULKAN_SDK_PATH_WINDOWS").?;
+    exe.root_module.addLibraryPath(.{ .cwd_relative = vulkan_sdk_path_windows });
+
+    exe.root_module.linkSystemLibrary("vulkan-1", .{});
+
+    // All windows machines should be able to link to this by default
+    exe.root_module.linkSystemLibrary("gdi32", .{});
+}
+
+/// NOTE: This is not used anymore. We are statically linking everything we can
+/// and it is not necessary. Keeping it around in case we need it for Windows
+/// things.
+///
 /// Install a dynamic library in the <target>/lib directory
 /// e.g. zig-out/linux/lib/SDL3.so
 ///
@@ -183,29 +205,11 @@ fn build_windows(
         .name = EXE_NAME,
         .root_module = module,
         .version = package_version.semantic_version,
-        .use_llvm = true,
+        .use_llvm = USE_LLVM,
     });
-    // TODO: seems like rpath is not working
-    exe.root_module.addRPath(b.path("./lib"));
 
     try add_shared_dependencies(allocator, b, exe, target, optimize);
-
-    const vulkan_sdk_path_windows = b.graph.environ_map.get("VULKAN_SDK_PATH_WINDOWS").?;
-    exe.root_module.addLibraryPath(.{ .cwd_relative = vulkan_sdk_path_windows });
-
-    try install_and_link_system_library(.{
-        .allocator = allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = vulkan_sdk_path_windows,
-        .lib_name = "vulkan-1",
-        .target = .windows,
-    });
-
-    // All windows machines should be able to link to this by default
-    exe.root_module.linkSystemLibrary("gdi32", .{});
-    // Required for ffmpeg.
-    exe.root_module.linkSystemLibrary("bcrypt", .{});
+    try add_windows_dependencies(allocator, b, exe, target, optimize);
 
     const install_step = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "windows" } },
@@ -234,9 +238,7 @@ fn build_linux(
         .name = EXE_NAME,
         .root_module = module,
         .version = package_version.semantic_version,
-        // TODO: There are currently some pointer alignment issues
-        // with pipewire using the Zig backend. Just stick to LLVM for now...
-        .use_llvm = true,
+        .use_llvm = USE_LLVM,
     });
 
     if (!nix) {
@@ -270,30 +272,7 @@ fn build_linux(
     return &install_step.step;
 }
 
-fn build_linux_app_image(
-    b: *std.Build,
-    allocator: std.mem.Allocator,
-    linux_install_step: *std.Build.Step,
-) *std.Build.Step {
-    const appimage_step = b.step("appimage", "Build Linux AppImage");
-
-    const buffer = b.build_root.handle.readFileAlloc(
-        b.graph.io,
-        "./build/build_app_image.sh",
-        allocator,
-        .limited(1024 * 1024),
-    ) catch unreachable;
-    defer allocator.free(buffer);
-
-    const cmd = b.addSystemCommand(&.{ "bash", "-lc", buffer });
-
-    cmd.step.dependOn(linux_install_step);
-    appimage_step.dependOn(&cmd.step);
-
-    return appimage_step;
-}
-
-fn build_unit_tests_default(
+fn build_unit_tests(
     allocator: std.mem.Allocator,
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -301,7 +280,7 @@ fn build_unit_tests_default(
     options: *std.Build.Step.Options,
 ) !void {
     const unit_test_files = [_][]const u8{
-        "./src/test.zig",
+        "./src/main.zig",
     };
 
     const test_step = b.step("test", "Run unit tests");
@@ -317,8 +296,7 @@ fn build_unit_tests_default(
         const exe = b.addTest(.{
             .root_module = module,
             .test_runner = .{ .path = b.path("./src/test_runner.zig"), .mode = .simple },
-            // Keep test linking behavior aligned with Linux executable builds.
-            .use_llvm = true,
+            .use_llvm = USE_LLVM,
         });
 
         try add_shared_dependencies(allocator, b, exe, target, optimize);
@@ -407,7 +385,7 @@ pub fn build(b: *std.Build) !void {
         b.getInstallStep().dependOn(appimage_step);
     }
 
-    try build_unit_tests_default(
+    try build_unit_tests(
         allocator,
         b,
         linux_target,

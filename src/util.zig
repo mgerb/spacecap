@@ -63,27 +63,126 @@ pub fn format_duration_label(allocator: std.mem.Allocator, args: struct {
 
 const TimestampString = [27]u8;
 pub fn format_timestamp_utc(timestamp_ms: i64) TimestampString {
-    const epoch_ms: u64 = @intCast(@max(timestamp_ms, 0));
-    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = epoch_ms / std.time.ms_per_s };
-    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const day_seconds = epoch_seconds.getDaySeconds();
+    const timestamp = timestamp_parts_utc(timestamp_ms);
 
     var buffer: TimestampString = undefined;
     _ = std.fmt.bufPrint(
         &buffer,
         "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} UTC",
         .{
-            year_day.year,
-            month_day.month.numeric(),
-            month_day.day_index + 1,
-            day_seconds.getHoursIntoDay(),
-            day_seconds.getMinutesIntoHour(),
-            day_seconds.getSecondsIntoMinute(),
-            epoch_ms % std.time.ms_per_s,
+            timestamp.year,
+            timestamp.month,
+            timestamp.day,
+            timestamp.hour,
+            timestamp.minute,
+            timestamp.second,
+            timestamp.millisecond,
         },
     ) catch @panic("std.fmt.bufPrint error");
     return buffer;
+}
+
+pub fn format_file_name(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    args: struct {
+        prefix: []const u8,
+        extension: []const u8,
+        /// Defaults to now.
+        timestamp_ms: ?i64 = null,
+    },
+) ![]u8 {
+    const timestamp_ms = blk: {
+        if (args.timestamp_ms) |ts| {
+            break :blk ts;
+        } else {
+            const ts: i64 = @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, std.time.ns_per_ms));
+            break :blk ts;
+        }
+    };
+    const timestamp = timestamp_parts_utc(timestamp_ms);
+
+    return try std.fmt.allocPrint(
+        allocator,
+        "{s}_{d:0>4}-{d:0>2}-{d:0>2}_{d:0>2}-{d:0>2}-{d:0>2}-{d:0>3}.{s}",
+        .{
+            args.prefix,
+            timestamp.year,
+            timestamp.month,
+            timestamp.day,
+            timestamp.hour,
+            timestamp.minute,
+            timestamp.second,
+            timestamp.millisecond,
+            args.extension,
+        },
+    );
+}
+
+const UtcTimestampParts = struct {
+    year: u16,
+    month: u9,
+    day: u9,
+    hour: u5,
+    minute: u6,
+    second: u6,
+    millisecond: u10,
+};
+
+fn timestamp_parts_utc(timestamp_ms: i64) UtcTimestampParts {
+    const epoch_ms: u64 = @intCast(@max(timestamp_ms, 0));
+    const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = epoch_ms / std.time.ms_per_s };
+    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
+
+    return .{
+        .year = year_day.year,
+        .month = month_day.month.numeric(),
+        .day = month_day.day_index + 1,
+        .hour = day_seconds.getHoursIntoDay(),
+        .minute = day_seconds.getMinutesIntoHour(),
+        .second = day_seconds.getSecondsIntoMinute(),
+        .millisecond = @intCast(epoch_ms % std.time.ms_per_s),
+    };
+}
+
+test "Util - format_file_name formats Spacecap output file names" {
+    const allocator = std.testing.allocator;
+    const timestamp_ms: i64 = 1234;
+
+    const cases = [_]struct {
+        prefix: []const u8,
+        extension: []const u8,
+        expected: []const u8,
+    }{
+        .{
+            .prefix = "screenshot",
+            .extension = "png",
+            .expected = "screenshot_1970-01-01_00-00-01-234.png",
+        },
+        .{
+            .prefix = "recording",
+            .extension = "mp4",
+            .expected = "recording_1970-01-01_00-00-01-234.mp4",
+        },
+        .{
+            .prefix = "replay",
+            .extension = "mp4",
+            .expected = "replay_1970-01-01_00-00-01-234.mp4",
+        },
+    };
+
+    for (cases) |case| {
+        const file_name = try format_file_name(allocator, std.testing.io, .{
+            .prefix = case.prefix,
+            .extension = case.extension,
+            .timestamp_ms = timestamp_ms,
+        });
+        defer allocator.free(file_name);
+
+        try std.testing.expectEqualStrings(case.expected, file_name);
+    }
 }
 
 /// Write bgrx data to a .bmp file - used for testing
@@ -218,12 +317,19 @@ pub fn get_app_data_dir(allocator: std.mem.Allocator, io: std.Io) std.mem.Alloca
     };
 }
 
+pub const OutputDirectoryType = enum {
+    pictures,
+    videos,
+};
+
 // Falls back to the current working directory when
 // the home-based output directory cannot be resolved or created.
-//
 // Caller owns the memory.
-// e.g. ~/Videos/spacecap
-pub fn get_default_video_output_dir(allocator: std.mem.Allocator, io: std.Io) ![]u8 {
+pub fn get_default_output_dir(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    output_directory_type: OutputDirectoryType,
+) ![]u8 {
     if (@import("builtin").is_test) {
         const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
         assert(TEST_APP_DATA_DIR != null);
@@ -245,20 +351,24 @@ pub fn get_default_video_output_dir(allocator: std.mem.Allocator, io: std.Io) ![
     if (home_dir) |_home_dir| {
         defer allocator.free(_home_dir);
 
-        const output_dir = try std.fs.path.join(allocator, &.{ _home_dir, "Videos", "spacecap" });
+        const home_subdirectory = switch (output_directory_type) {
+            .pictures => "Pictures",
+            .videos => "Videos",
+        };
+        const output_dir = try std.fs.path.join(allocator, &.{ _home_dir, home_subdirectory, "spacecap" });
         errdefer allocator.free(output_dir);
 
         if (std.Io.Dir.cwd().createDirPath(io, output_dir)) {
             return output_dir;
         } else |err| {
-            log.err("[get_default_video_output_dir] failed to create output directory {s}: {}", .{ output_dir, err });
+            log.err("[get_default_output_dir] failed to create output directory {s}: {}", .{ output_dir, err });
             allocator.free(output_dir);
         }
     }
 
-    log.warn("[get_default_video_output_dir] falling back to current working directory", .{});
+    log.warn("[get_default_output_dir] falling back to current working directory", .{});
     return std.process.currentPathAlloc(io, allocator) catch |err| {
-        log.err("[get_default_video_output_dir] failed to get current working directory: {}", .{err});
+        log.err("[get_default_output_dir] failed to get current working directory: {}", .{err});
         return allocator.dupe(u8, ".");
     };
 }

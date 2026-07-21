@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const String = @import("../string.zig").String;
 const util = @import("../util.zig");
@@ -10,6 +11,11 @@ pub const DEFAULT_REPLAY_MAX_BYTES: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// NOTE: This MUST remain JSON serializable.
 pub const UserSettings = struct {
+    pub const OutputDirectory = enum {
+        screenshots,
+        videos,
+    };
+
     pub const AudioDeviceSettings = struct {
         id: []const u8,
         selected: bool = false,
@@ -31,6 +37,7 @@ pub const UserSettings = struct {
     // required to find the directory. It must be set before
     // settings are used anywhere.
     video_output_directory: ?String = null,
+    screenshot_output_directory: ?String = null,
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     /// Read the settings json file if it exists, otherwise use defaults.
@@ -41,7 +48,10 @@ pub const UserSettings = struct {
             if (err != error.FileNotFound) {
                 log.err("[init] error loading settings file: {}", .{err});
             }
-            return try default_settings(allocator, io);
+            const _default_settings = try default_settings(allocator, io);
+            assert(_default_settings.video_output_directory != null);
+            assert(_default_settings.screenshot_output_directory != null);
+            return _default_settings;
         };
     }
 
@@ -69,36 +79,50 @@ pub const UserSettings = struct {
         errdefer loaded.deinit(allocator);
 
         if (loaded.video_output_directory == null) {
-            const video_output_directory = try util.get_default_video_output_dir(allocator, io);
-            defer allocator.free(video_output_directory);
+            const video_output_directory = try util.get_default_output_dir(allocator, io, .videos);
             loaded.video_output_directory = try String.from(allocator, video_output_directory);
+        }
+        if (loaded.screenshot_output_directory == null) {
+            const screenshot_output_directory = try util.get_default_output_dir(allocator, io, .pictures);
+            loaded.screenshot_output_directory = try String.from(allocator, screenshot_output_directory);
         }
 
         return loaded;
     }
 
     pub fn deinit(self: *@This(), allocator: Allocator) void {
-        self.clear_video_output_directory();
+        self.clear_output_directory(.videos);
+        self.clear_output_directory(.screenshots);
         self.clear_audio_device_settings(allocator);
         self.audio_devices.deinit(allocator);
     }
 
     fn default_settings(allocator: Allocator, io: std.Io) !UserSettings {
-        const video_output_directory = try util.get_default_video_output_dir(allocator, io);
-        defer allocator.free(video_output_directory);
-        return .{
-            .video_output_directory = try String.from(allocator, video_output_directory),
-        };
+        var settings: UserSettings = .{};
+        errdefer settings.deinit(allocator);
+        settings.video_output_directory = try String.from(
+            allocator,
+            try util.get_default_output_dir(allocator, io, .videos),
+        );
+        settings.screenshot_output_directory = try String.from(
+            allocator,
+            try util.get_default_output_dir(allocator, io, .pictures),
+        );
+        return settings;
     }
 
     /// directory - Is owned by this method.
-    pub fn set_video_output_directory(
+    pub fn set_output_directory(
         self: *@This(),
+        output_directory: OutputDirectory,
         directory: ?String,
     ) !void {
-        self.clear_video_output_directory();
+        self.clear_output_directory(output_directory);
         if (directory) |_directory| {
-            self.video_output_directory = _directory;
+            switch (output_directory) {
+                .videos => self.video_output_directory = _directory,
+                .screenshots => self.screenshot_output_directory = _directory,
+            }
         }
     }
 
@@ -135,22 +159,35 @@ pub const UserSettings = struct {
         self.audio_devices.map.clearRetainingCapacity();
     }
 
-    fn clear_video_output_directory(self: *@This()) void {
-        if (self.video_output_directory) |*video_output_directory| {
-            video_output_directory.deinit();
-            self.video_output_directory = null;
+    fn clear_output_directory(self: *@This(), output_directory: OutputDirectory) void {
+        const directory = switch (output_directory) {
+            .videos => &self.video_output_directory,
+            .screenshots => &self.screenshot_output_directory,
+        };
+        if (directory.*) |*value| {
+            value.deinit();
+            directory.* = null;
         }
     }
 
     /// Deep copy user settings.
-    pub fn clone(self: @This(), allocator: Allocator) !@This() {
+    pub fn clone(self: @This(), allocator: Allocator) Allocator.Error!@This() {
         var settings_copy = self;
         settings_copy.video_output_directory = null;
+        settings_copy.screenshot_output_directory = null;
         settings_copy.audio_devices = .{};
         errdefer settings_copy.deinit(allocator);
 
-        try settings_copy.set_video_output_directory(
+        try settings_copy.set_output_directory(
+            .videos,
             if (self.video_output_directory) |directory|
+                try directory.clone(allocator)
+            else
+                null,
+        );
+        try settings_copy.set_output_directory(
+            .screenshots,
+            if (self.screenshot_output_directory) |directory|
                 try directory.clone(allocator)
             else
                 null,
@@ -256,6 +293,7 @@ test "UserSettings - load" {
     try std.testing.expect(settings.start_replay_buffer_on_startup);
     try std.testing.expect(!settings.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-output", settings.video_output_directory.?.bytes);
+    try std.testing.expectEqualStrings(Test.TEST_APP_DATA_DIR.?, settings.screenshot_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(settings, "microphone-1", true, 0.5);
 }
 
@@ -272,7 +310,8 @@ test "UserSettings - save" {
         .replay_max_bytes = 256 * 1024 * 1024,
         .start_replay_buffer_on_startup = true,
         .restore_capture_source_on_startup = false,
-        .video_output_directory = try String.from(allocator, "/tmp/spacecap-recordings"),
+        .video_output_directory = try String.init(allocator, "/tmp/spacecap-recordings"),
+        .screenshot_output_directory = try String.init(allocator, "/tmp/spacecap-screenshots"),
     };
     defer settings.deinit(allocator);
     try settings.update_audio_device_settings(allocator, "desktop-audio", true, 1.25);
@@ -289,6 +328,7 @@ test "UserSettings - save" {
     try std.testing.expect(loaded.start_replay_buffer_on_startup);
     try std.testing.expect(!loaded.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-recordings", loaded.video_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/spacecap-screenshots", loaded.screenshot_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(loaded, "desktop-audio", true, 1.25);
 }
 
@@ -300,7 +340,8 @@ test "UserSettings - clone" {
         .capture_bit_rate = 10_000_000,
         .replay_seconds = 30,
         .replay_max_bytes = 128 * 1024 * 1024,
-        .video_output_directory = try String.from(allocator, "/tmp/original"),
+        .video_output_directory = try String.init(allocator, "/tmp/original"),
+        .screenshot_output_directory = try String.init(allocator, "/tmp/original-screenshots"),
     };
     defer original.deinit(allocator);
     try original.update_audio_device_settings(allocator, "device-1", true, 0.75);
@@ -309,11 +350,13 @@ test "UserSettings - clone" {
     defer cloned.deinit(allocator);
 
     try std.testing.expect(original.video_output_directory.?.bytes.ptr != cloned.video_output_directory.?.bytes.ptr);
+    try std.testing.expect(original.screenshot_output_directory.?.bytes.ptr != cloned.screenshot_output_directory.?.bytes.ptr);
     const original_device_before = original.audio_devices.map.get("device-1").?;
     const cloned_device_before = cloned.audio_devices.map.get("device-1").?;
     try std.testing.expect(original_device_before.id.ptr != cloned_device_before.id.ptr);
 
-    try cloned.set_video_output_directory(try String.from(allocator, "/tmp/cloned"));
+    try cloned.set_output_directory(.videos, try String.init(allocator, "/tmp/cloned"));
+    try cloned.set_output_directory(.screenshots, try String.init(allocator, "/tmp/cloned-screenshots"));
     cloned.capture_fps = 120;
     cloned.replay_max_bytes = 512 * 1024 * 1024;
     try cloned.update_audio_device_settings(allocator, "device-1", false, 2.0);
@@ -322,12 +365,14 @@ test "UserSettings - clone" {
     try std.testing.expectEqual(60, original.capture_fps);
     try std.testing.expectEqual(128 * 1024 * 1024, original.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/original", original.video_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/original-screenshots", original.screenshot_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(original, "device-1", true, 0.75);
     try std.testing.expect(original.audio_devices.map.get("device-2") == null);
 
     try std.testing.expectEqual(120, cloned.capture_fps);
     try std.testing.expectEqual(512 * 1024 * 1024, cloned.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/cloned", cloned.video_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/cloned-screenshots", cloned.screenshot_output_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(cloned, "device-1", false, 2.0);
     try TestUtil.expect_audio_device_settings(cloned, "device-2", true, 1.0);
 }

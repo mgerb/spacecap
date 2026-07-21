@@ -1,3 +1,16 @@
+// TODO: This ring buffer needs some work. It has evolved over time and I'm not
+// happy with the quality of the code. Here are some things:
+// - It doesn't behave like a true ring buffer. It just searches through
+//   buffers and picks one that's not in use. If none are available, it silently
+//   doesn't copy any data. It should behave like a true ring buffer and it should
+//   probably panic if there are no buffers available after a number of iterations.
+// - The get_most_recent_buffer function should check for the in_use flag.
+//   Currently it also only works because there is one consumer (the UI). It
+//   should iterate through the ring buffer looking for the most recent one that
+//   is not in use, although it may be fine to use a buffer that is 'in_use' for
+//   things such as displaying it on the UI. Either way I'm not happy with the
+//   current implementation.
+
 const std = @import("std");
 const vk = @import("vulkan");
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
@@ -95,7 +108,7 @@ pub const VulkanImageRingBuffer = struct {
                 continue;
             }
             self.most_recent_index = @intCast(i);
-            try buffer.copy_image(.{
+            try buffer.copy_image_into(.{
                 .src_image = args.src_image,
                 .src_width = args.src_width,
                 .src_height = args.src_height,

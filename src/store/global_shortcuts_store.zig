@@ -6,7 +6,19 @@ const GlobalShortcuts = @import("../global_shortcuts/global_shortcuts.zig").Glob
 pub const GlobalShortcutsStore = struct {
     const Self = @This();
     const log = std.log.scoped(.global_shortcuts_store);
-    pub const Message = union(enum) {};
+    pub const Message = union(enum) {
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                inline else => |payload| {
+                    if (@typeInfo(@TypeOf(payload)) == .@"struct" and
+                        @hasDecl(@TypeOf(payload), "deinit"))
+                    {
+                        @compileError("Payload with 'deinit' must be explicitly handled.");
+                    }
+                },
+            }
+        }
+    };
     pub const State = struct {};
 
     allocator: Allocator,
@@ -43,6 +55,9 @@ pub const GlobalShortcutsStore = struct {
         switch (shortcut) {
             .save_replay => {
                 self.store.dispatch(.{ .capture = .save_replay });
+            },
+            .screenshot => {
+                self.store.dispatch(.{ .capture = .screenshot_request });
             },
             .start_replay_buffer => {
                 self.store.dispatch(.{ .capture = .start_replay_buffer });
