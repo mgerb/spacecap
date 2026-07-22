@@ -35,11 +35,13 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 
 ## Roadmap
 
-- Screenshots.
-- Video player/editor.
-  - Simple video editor (trim start/end).
-  - File browser to select videos to edit.
-- Windows support.
+- ~~Screenshots~~
+- File browser
+- Video editor
+  - Trim clips
+  - Export in a variety of formats
+  - Adjust audio levels
+- Windows support
 
 ## Requirements
 
@@ -52,6 +54,7 @@ be supported, I just have no way of testing at this time.
 
 - Wayland
 - Pipewire
+- Updated graphics drivers (e.g. nvidia-open)
 
 ### Windows
 
@@ -63,27 +66,40 @@ be supported, I just have no way of testing at this time.
 
 ### Linux
 
-[xdg-desktop-portal global
-shortcuts](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
-can be used if your desktop environment supports it, otherwise the Spacecap CLI
-can be used to send commands.
+#### KDE, GNOME, etc.
 
-e.g.
+Shortcuts can be configured in your system settings.
+Spacecap configures global shortcuts via the XDG Desktop Portal. [See the list of supported desktop environments here.](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces)
+
+#### Other Compositors
+
+The Spacecap CLI can be used to send commands:
 
 ```sh
-# Save replay
 spacecap -s save-replay
+```
 
-# List available commands
+See all available commands:
+
+```sh
 spacecap -h
 ```
 
-For example, here is what a config in [niri](https://github.com/YaLTeR/niri) would look like:
+Niri
 
 ```kdl
 binds {
-    Mod+Shift+R hotkey-overlay-title="Spacecap: save replay" { spawn-sh "spacecap -s save-replay && notify-send 'Spacecap' 'Replay saved'"; }
+  Mod+Shift+R { spawn-sh "spacecap -s save-replay"; }
 }
+```
+
+Hyprland
+
+```lua
+hl.bind(
+  "SUPER + SHIFT + R",
+  hl.dsp.exec_cmd("spacecap -s save-replay")
+)
 ```
 
 ## Development

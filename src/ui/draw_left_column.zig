@@ -5,7 +5,7 @@ const util = @import("../util.zig");
 const Store = @import("../store/store.zig").Store;
 const dockspace = @import("./dockspace.zig");
 
-const GROUP_SPACING: f32 = 6;
+const GROUP_SPACING: f32 = 4;
 const CAPTURE_FPS_MIN: c_int = 1;
 const CAPTURE_FPS_MAX: c_int = 500;
 const CAPTURE_BIT_RATE_BPS_PER_KBPS: u64 = 1_000;
@@ -47,19 +47,8 @@ pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Sto
 
             try draw_output_settings(allocator, store);
 
-            // NOTE: Hiding this for now. Linux shortcuts can be configured at the
-            // desktop environment level. See comments regarding `Method.configure_shortcuts`
-            // in `xdg_desktop_portal_global_shortcuts.zig` for more info.
-            //
-            // TODO: Adjust widths so that they match the above.
-            // const help_marker_width = c.ImGui_CalcTextSize("(?)").x;
-            // const spacing = c.ImGui_GetStyle().*.ItemSpacing.x;
-            // const button_width = @max(0.0, c.ImGui_GetContentRegionAvail().x - help_marker_width - spacing);
-            // if (c.ImGui_ButtonEx("Configure Shortcuts", .{ .x = button_width, .y = 0 })) {
-            //     try actor.dispatch(.open_global_shortcuts);
-            // }
-            // c.ImGui_SameLineEx(0, spacing);
-            // imgui_util.help_marker("This button may not work. Configure shortcuts with your system settings.");
+            c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+            draw_misc_settings();
 
             if (util.DEBUG) {
                 c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
@@ -74,6 +63,77 @@ pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Sto
                 c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
                 c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
             }
+        }
+    }
+}
+
+fn draw_misc_settings() void {
+    c.ImGui_SeparatorText("Misc");
+    const popup_title = "Global Shortcuts";
+
+    if (c.ImGui_ButtonEx(popup_title, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+        c.ImGui_OpenPopup(popup_title, c.ImGuiPopupFlags_None);
+    }
+
+    const viewport_size = c.ImGui_GetMainViewport().*.Size;
+    c.ImGui_SetNextWindowSize(.{ .x = @min(800, viewport_size.x), .y = @min(600, viewport_size.y) }, c.ImGuiCond_Appearing);
+    var popup_open = true; // Enables the close icon in the top right.
+    if (c.ImGui_BeginPopupModal(
+        popup_title,
+        &popup_open,
+        c.ImGuiWindowFlags_NoSavedSettings,
+    )) {
+        defer c.ImGui_EndPopup();
+
+        if (c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
+            c.ImGui_CloseCurrentPopup();
+        }
+
+        const instructions: [:0]const u8 =
+            \\KDE, GNOME, etc.
+            \\----------------
+            \\  Shortcuts can be configured in your system settings.
+            \\  Spacecap configures global shortcuts via the XDG Desktop Portal.
+            \\  See the list of supported desktop environments here:
+            \\    https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces
+            \\
+            \\Other Compositors
+            \\-----------------
+            \\  The Spacecap CLI can be used to send commands:
+            \\    spacecap -s save-replay
+            \\
+            \\  See all available commands:
+            \\    spacecap -h
+            \\
+            \\  Examples:
+            \\
+            \\    Niri:
+            \\      binds {
+            \\        Mod+Shift+R { spawn-sh "spacecap -s save-replay"; }
+            \\      }
+            \\   
+            \\    Hyprland:
+            \\      hl.bind(
+            \\        "SUPER + SHIFT + R",
+            \\        hl.dsp.exec_cmd("spacecap -s save-replay")
+            \\      )
+        ;
+        const content_size = c.ImGui_GetContentRegionAvail();
+        _ = c.ImGui_InputTextMultilineEx(
+            "##global_shortcuts_help",
+            @constCast(instructions.ptr),
+            instructions.len + 1,
+            .{
+                .x = imgui_util.WIDTH_FILL,
+                .y = @max(100, content_size.y - c.ImGui_GetFrameHeightWithSpacing()),
+            },
+            c.ImGuiInputTextFlags_ReadOnly,
+            null,
+            null,
+        );
+
+        if (c.ImGui_ButtonEx("Close", .{ .x = content_size.x, .y = 0 })) {
+            c.ImGui_CloseCurrentPopup();
         }
     }
 }
@@ -201,7 +261,7 @@ fn draw_output_settings(allocator: std.mem.Allocator, store: *Store) !void {
 }
 
 fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *Store.State) !void {
-    c.ImGui_SeparatorText("Capture Settings");
+    c.ImGui_SeparatorText("Capture");
 
     const settings = state.user_settings.user_settings;
 
