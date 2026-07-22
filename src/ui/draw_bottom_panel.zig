@@ -7,7 +7,7 @@ const AudioDevice = @import("../store/audio_session.zig").AudioDevice;
 const UIStorage = @import("./ui_storage.zig").UIStorage;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
-const theme = @import("./theme.zig");
+const Colors = @import("./theme.zig").Colors;
 
 const AUDIO_GAIN_DB_MIN: f32 = -60.0;
 const AUDIO_GAIN_DB_MAX: f32 = 12.0;
@@ -16,6 +16,19 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
     _ = c.ImGui_Begin(dockspace.BOTTOM_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
     defer c.ImGui_End();
 
+    {
+        _ = c.ImGui_BeginChild(
+            "##bottom_panel_content",
+            .{ .x = 0, .y = 0 },
+            c.ImGuiChildFlags_None,
+            c.ImGuiWindowFlags_None,
+        );
+        defer c.ImGui_EndChild();
+        try draw_bottom_panel_content(allocator, ui_storage, store, state);
+    }
+}
+
+fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
     // ----------------------------------------------------------------------------
     // Video collapsing header.
     // ----------------------------------------------------------------------------
@@ -79,18 +92,18 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 const replay_buffer_button_label = if (state.capture.replay_buffer_active) " Replay Buffer" else " Replay Buffer";
-                const replay_buffer_button_color = if (state.capture.replay_buffer_active) theme.red.as_vec4() else theme.green.as_vec4();
-                const replay_buffer_button_hover_color = if (state.capture.replay_buffer_active) theme.light_red.as_vec4() else theme.light_green.as_vec4();
                 const replay_buffer_button_disabled = !state.capture.replay_buffer_active and !video_capture_ready;
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, replay_buffer_button_color);
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, replay_buffer_button_hover_color);
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, replay_buffer_button_color);
-                c.ImGui_BeginDisabled(replay_buffer_button_disabled);
-                if (c.ImGui_ButtonEx(replay_buffer_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                    store.dispatch(.{ .capture = if (state.capture.replay_buffer_active) .stop_replay_buffer else .start_replay_buffer });
+
+                {
+                    imgui_util.push_button_color(if (state.capture.replay_buffer_active) .red else .green);
+                    defer imgui_util.pop_button_color();
+                    c.ImGui_BeginDisabled(replay_buffer_button_disabled);
+                    if (c.ImGui_ButtonEx(replay_buffer_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                        store.dispatch(.{ .capture = if (state.capture.replay_buffer_active) .stop_replay_buffer else .start_replay_buffer });
+                    }
+                    c.ImGui_EndDisabled();
                 }
-                c.ImGui_EndDisabled();
-                c.ImGui_PopStyleColorEx(3);
+
                 _ = c.ImGui_TableNextColumn();
                 c.ImGui_Text("%.2fMB", state.capture.replay_buffer_metrics.size_in_mb(.total));
                 if (c.ImGui_BeginItemTooltip()) {
@@ -110,18 +123,16 @@ pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *S
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 const recording_button_label = if (state.capture.recording_to_disk) " Record" else " Record";
-                const recording_button_color = if (state.capture.recording_to_disk) theme.red.as_vec4() else theme.green.as_vec4();
-                const recording_button_hover_color = if (state.capture.recording_to_disk) theme.light_red.as_vec4() else theme.light_green.as_vec4();
-                const recording_button_disabled = !state.capture.recording_to_disk and !video_capture_ready;
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, recording_button_color);
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, recording_button_hover_color);
-                c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, recording_button_color);
-                c.ImGui_BeginDisabled(recording_button_disabled);
-                if (c.ImGui_ButtonEx(recording_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                    store.dispatch(.{ .capture = if (state.capture.recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
+                {
+                    imgui_util.push_button_color(if (state.capture.recording_to_disk) .red else .green);
+                    defer imgui_util.pop_button_color();
+                    const recording_button_disabled = !state.capture.recording_to_disk and !video_capture_ready;
+                    c.ImGui_BeginDisabled(recording_button_disabled);
+                    if (c.ImGui_ButtonEx(recording_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                        store.dispatch(.{ .capture = if (state.capture.recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
+                    }
+                    c.ImGui_EndDisabled();
                 }
-                c.ImGui_EndDisabled();
-                c.ImGui_PopStyleColorEx(3);
                 _ = c.ImGui_TableNextColumn();
                 c.ImGui_Text("%.2fMB", state.capture.recording_metrics.size_in_mb(.total));
                 if (c.ImGui_BeginItemTooltip()) {
@@ -338,11 +349,11 @@ fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDev
     // Pick the meter color and draw the progress bar.
     // ----------------------------------------------------------------------------
     const color = if (audio_level_linear >= 0.9)
-        theme.red.as_vec4()
+        Colors.red.as_vec4()
     else if (audio_level_linear >= 0.75)
-        theme.accent.as_vec4()
+        Colors.accent.as_vec4()
     else
-        theme.green.as_vec4();
+        Colors.green.as_vec4();
     const size = c.ImVec2{
         .x = c.ImGui_GetContentRegionAvail().x,
         .y = c.ImGui_GetFrameHeight(),

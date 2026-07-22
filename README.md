@@ -29,19 +29,19 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 
 - Desktop/window capture.
 - Screen recording.
+- Screenshots.
 - Replay buffer - save last n seconds of video (buffered in memory).
 - Capture preview.
 - Global keybinds.
 
 ## Roadmap
 
-- ~~Screenshots~~
-- File browser
-- Video editor
-  - Trim clips
-  - Export in a variety of formats
-  - Adjust audio levels
-- Windows support
+- File browser.
+- Video editor.
+  - Trim clips.
+  - Export in a variety of formats.
+  - Adjust audio levels.
+- Windows support.
 
 ## Requirements
 

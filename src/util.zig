@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const log = std.log.scoped(.util);
 const Env = @import("./env.zig");
@@ -23,7 +24,7 @@ pub fn print_elapsed(io: std.Io, start_time: i128, prefix: []const u8) void {
 pub fn format_duration_label(allocator: std.mem.Allocator, args: struct {
     seconds: f64,
     max: ?u32 = null,
-}) ![:0]u8 {
+}) Allocator.Error![:0]u8 {
     const input_seconds = @max(args.seconds, 0.0);
     // If max is provided, round seconds up and then take
     // the min of the two. This prevents any flicker on the UI
