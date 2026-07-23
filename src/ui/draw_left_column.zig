@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const c = @import("imguiz").imguiz;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
@@ -35,35 +36,64 @@ pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Sto
     _ = c.ImGui_Begin(dockspace.LEFT_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
     defer c.ImGui_End();
 
-    if (c.ImGui_BeginTabBar("MainTabBar", 0)) {
-        defer c.ImGui_EndTabBar();
+    const footer_height = c.ImGui_GetFrameHeight();
+    // ----------------------------------------------------------------------------
+    // Content
+    // ----------------------------------------------------------------------------
+    {
+        _ = c.ImGui_BeginChild(
+            "##left_column_content",
+            .{ .x = 0, .y = -footer_height },
+            c.ImGuiChildFlags_None,
+            c.ImGuiWindowFlags_None,
+        );
+        defer c.ImGui_EndChild();
+        if (c.ImGui_BeginTabBar("main_tab_bar", 0)) {
+            defer c.ImGui_EndTabBar();
 
-        if (c.ImGui_BeginTabItem(" Settings", null, 0)) {
-            defer c.ImGui_EndTabItem();
+            if (c.ImGui_BeginTabItem(" Settings", null, 0)) {
+                defer c.ImGui_EndTabItem();
 
-            try draw_capture_settings(allocator, store, state);
+                try draw_capture_settings(allocator, store, state);
 
-            c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
-
-            try draw_output_settings(allocator, store);
-
-            c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
-            draw_misc_settings();
-
-            if (util.DEBUG) {
                 c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
-                c.ImGui_SeparatorText("IMGUI Debug");
 
-                if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
-                    store.dispatch(.show_demo);
+                try draw_output_settings(allocator, store);
+
+                c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+                draw_misc_settings();
+
+                if (util.DEBUG) {
+                    c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+                    c.ImGui_SeparatorText("IMGUI Debug");
+
+                    if (c.ImGui_ButtonEx("Show Demo", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                        store.dispatch(.show_demo);
+                    }
+
+                    c.ImGui_Spacing();
+                    const io = c.ImGui_GetIO();
+                    c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
+                    c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
                 }
-
-                c.ImGui_Spacing();
-                const io = c.ImGui_GetIO();
-                c.ImGui_TextDisabled("%.3f ms/frame", 1000.0 / io.*.Framerate);
-                c.ImGui_TextDisabled("%.1f fps", io.*.Framerate);
             }
         }
+    }
+
+    // ----------------------------------------------------------------------------
+    // Footer
+    // ----------------------------------------------------------------------------
+    {
+        _ = c.ImGui_BeginChild(
+            "##left_column_footer",
+            .{ .x = 0, .y = 0 },
+            c.ImGuiChildFlags_None,
+            c.ImGuiWindowFlags_None,
+        );
+        defer c.ImGui_EndChild();
+        const version_label = std.fmt.comptimePrint("{s}", .{build_options.version});
+        imgui_util.center_next_text(version_label);
+        c.ImGui_TextDisabled(version_label);
     }
 }
 
@@ -74,6 +104,18 @@ fn draw_misc_settings() void {
     if (c.ImGui_ButtonEx(popup_title, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
         c.ImGui_OpenPopup(popup_title, c.ImGuiPopupFlags_None);
     }
+
+    c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+
+    const report_an_issue_text = "Report Issue";
+    imgui_util.center_next_text(report_an_issue_text);
+    _ = c.ImGui_TextLinkOpenURLEx(report_an_issue_text, "https://github.com/mgerb/spacecap/issues/new");
+
+    c.ImGui_Dummy(.{ .x = 0, .y = GROUP_SPACING });
+
+    const source_text = " Source";
+    imgui_util.center_next_text(source_text);
+    _ = c.ImGui_TextLinkOpenURLEx(source_text, "https://github.com/mgerb/spacecap");
 
     const viewport_size = c.ImGui_GetMainViewport().*.Size;
     c.ImGui_SetNextWindowSize(.{ .x = @min(800, viewport_size.x), .y = @min(600, viewport_size.y) }, c.ImGuiCond_Appearing);
