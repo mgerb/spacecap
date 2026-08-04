@@ -21,8 +21,8 @@
             .hash = "imguiz-0.0.0-sI63z7CJegT7FurmE0j1tYdNM5s_cFZ5us8e9Wo7xB0Z",
         },
         .ffmpeg = .{
-            .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.1.tar.gz",
-            .hash = "N-V-__8AAH4RHQXHEafp_hkUel3EMeK1wjHBfaIYYxYsKdiM",
+            .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.tar.gz",
+            .hash = "N-V-__8AAJpxYgW29IA1MGBOmQ-DaqXIv39OFUDYrokatb7C",
         },
         .clap = .{
             .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",

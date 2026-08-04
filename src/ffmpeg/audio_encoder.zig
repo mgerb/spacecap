@@ -66,28 +66,7 @@ pub const AudioEncoder = struct {
         audio_codec_ctx.*.time_base = c.AVRational{ .num = 1, .den = @intCast(sample_rate) };
         audio_codec_ctx.*.bit_rate = AUDIO_BIT_RATE;
 
-        // Prefer floating-point formats so the replay mixer can hand PCM to the
-        // encoder without an extra sample conversion stage.
-        var chosen_fmt: c.AVSampleFormat = c.AV_SAMPLE_FMT_NONE;
-        if (audio_codec.*.sample_fmts != null) {
-            var fmt_ptr = audio_codec.*.sample_fmts;
-            while (fmt_ptr[0] != c.AV_SAMPLE_FMT_NONE) : (fmt_ptr += 1) {
-                if (fmt_ptr[0] == c.AV_SAMPLE_FMT_FLTP) {
-                    chosen_fmt = c.AV_SAMPLE_FMT_FLTP;
-                    break;
-                }
-                if (fmt_ptr[0] == c.AV_SAMPLE_FMT_FLT and chosen_fmt == c.AV_SAMPLE_FMT_NONE) {
-                    chosen_fmt = c.AV_SAMPLE_FMT_FLT;
-                }
-            }
-        } else {
-            chosen_fmt = c.AV_SAMPLE_FMT_FLTP;
-        }
-
-        if (chosen_fmt == c.AV_SAMPLE_FMT_NONE) {
-            return error.UnsupportedAudioSampleFormat;
-        }
-        audio_codec_ctx.*.sample_fmt = chosen_fmt;
+        audio_codec_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
         audio_codec_ctx.*.profile = c.AV_PROFILE_AAC_LOW;
 
         _ = c.av_opt_set(audio_codec_ctx.*.priv_data, "aac_coder", "fast", 0);
@@ -229,28 +208,17 @@ pub const AudioEncoder = struct {
         var ret = c.av_frame_make_writable(frame);
         try check_err(ret);
 
-        if (self.audio_codec_ctx.*.sample_fmt == c.AV_SAMPLE_FMT_FLTP) {
-            // Planar float expects one channel per FFmpeg plane.
-            var ch: usize = 0;
-            while (ch < self.channels) : (ch += 1) {
-                const dst: [*]f32 = @ptrCast(@alignCast(frame[0].data[ch]));
-                if (submitted_samples < codec_samples_per_packet) {
-                    @memset(dst[0..codec_samples_per_packet], 0.0);
-                }
-                var i: usize = 0;
-                while (i < submitted_samples) : (i += 1) {
-                    dst[i] = source_pcm[i * self.channels + ch];
-                }
-            }
-        } else if (self.audio_codec_ctx.*.sample_fmt == c.AV_SAMPLE_FMT_FLT) {
-            // Interleaved float stores all channels in the first plane.
-            const dst: [*]f32 = @ptrCast(@alignCast(frame[0].data[0]));
+        // Planar float expects one channel per FFmpeg plane.
+        var ch: usize = 0;
+        while (ch < self.channels) : (ch += 1) {
+            const dst: [*]f32 = @ptrCast(@alignCast(frame[0].data[ch]));
             if (submitted_samples < codec_samples_per_packet) {
-                @memset(dst[0 .. codec_samples_per_packet * self.channels], 0.0);
+                @memset(dst[0..codec_samples_per_packet], 0.0);
             }
-            @memcpy(dst[0..source_pcm.len], source_pcm);
-        } else {
-            return error.UnsupportedAudioSampleFormat;
+            var i: usize = 0;
+            while (i < submitted_samples) : (i += 1) {
+                dst[i] = source_pcm[i * self.channels + ch];
+            }
         }
 
         frame.*.nb_samples = @intCast(submitted_samples);
