@@ -3,15 +3,14 @@
 </p>
 <h1 align="center">Spacecap</h1>
 
-A hardware accelerated screen recording tool for Linux. _Still in early
-development (see features/roadmap below)_.
+Hardware accelerated screen recording software for Linux. _Still pre-alpha (see features/roadmap below)_.
 
-- Written in [Zig](https://ziglang.org/) (0.16.0).
-- Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig)).
-- UI built with [imgui](https://github.com/ocornut/imgui)/[SDL3](https://github.com/allyourcodebase/SDL3).
-- Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/).
+- Written in [Zig (0.16.0)](https://ziglang.org/)
+- Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig))
+- UI built with [imgui](https://github.com/ocornut/imgui) and [SDL3](https://github.com/allyourcodebase/SDL3)
+- Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/)
 
-![screenshot2](./docs/screenshot_4.png)
+![screenshot5](./docs/screenshot_5.png)
 
 ## Installation
 
@@ -27,25 +26,25 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 
 ## Features
 
-- Desktop/window capture.
-- Screen recording.
-- Screenshots.
-- Replay buffer - save last n seconds of video (buffered in memory).
-- Capture preview.
-- Global keybinds.
+- Replay buffer (in memory)
+- Recording
+- Screenshots
+- Global keybinds
+- Desktop/window capture
+- Capture preview
 
 ## Roadmap
 
-- File browser.
-- Video editor.
-  - Trim clips.
-  - Export in a variety of formats.
-  - Adjust audio levels.
-- Windows support.
+- File browser
+- Video editor
+  - Trim clips
+  - Export in a variety of formats
+  - Adjust audio levels
+- Windows support
 
 ## Requirements
 
-- A GPU that supports Vulkan Video encoding.
+- A GPU that supports Vulkan Video encoding
 
 **NOTE:** So far this has only been tested on an Nvidia GPU (RTX 3080). AMD will
 be supported, I just have no way of testing at this time.
