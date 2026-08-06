@@ -10,8 +10,8 @@ const Arc = @import("../arc.zig").Arc;
 /// finalized audio timeline.
 pub const PendingChunkNode = struct {
     data: Arc(AudioCaptureData),
-    start_frame: i64,
-    end_frame: i64,
+    start_sample: i64,
+    end_sample: i64,
     node: std.DoublyLinkedList.Node = .{},
     allocator: Allocator,
 
@@ -25,8 +25,8 @@ pub const PendingChunkNode = struct {
         const self = try allocator.create(@This());
         self.* = .{
             .data = data,
-            .start_frame = start_sample,
-            .end_frame = end_sample,
+            .start_sample = start_sample,
+            .end_sample = end_sample,
             .allocator = allocator,
         };
         return self;
@@ -106,7 +106,7 @@ pub const AudioTimeline = struct {
         self.encoder.deinit(self.allocator);
     }
 
-    /// Takes ownership of data.
+    /// Clone data before calling.
     pub fn add_data(self: *Self, data: Arc(AudioCaptureData)) !void {
         defer data.deinit();
         const audio_capture_data = data.as_ptr();
@@ -248,7 +248,7 @@ pub const AudioTimeline = struct {
             while (node) |current| {
                 const next = current.next;
                 const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", current));
-                if (chunk_node.end_frame <= self.encoded_until_sample) {
+                if (chunk_node.end_sample <= self.encoded_until_sample) {
                     entry.value_ptr.chunks.remove(current);
                     chunk_node.deinit();
                 } else {

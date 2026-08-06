@@ -26,8 +26,8 @@ pub const AudioMixer = struct {
             var node = entry.value_ptr.chunks.first;
             while (node) |current| : (node = current.next) {
                 const chunk_node: *PendingChunkNode = @alignCast(@fieldParentPtr("node", current));
-                const chunk_start_sample = chunk_node.start_frame;
-                const chunk_end_sample = chunk_node.end_frame;
+                const chunk_start_sample = chunk_node.start_sample;
+                const chunk_end_sample = chunk_node.end_sample;
 
                 const overlap_start_sample = @max(start_sample, chunk_start_sample);
                 const overlap_end_sample = @min(end_sample, chunk_end_sample);
@@ -35,23 +35,34 @@ pub const AudioMixer = struct {
                     continue;
                 }
 
-                const sample_positions_to_mix: usize = @intCast(overlap_end_sample - overlap_start_sample);
-                const input_start_sample: usize = @intCast(overlap_start_sample - chunk_start_sample);
-                const output_start_sample: usize = @intCast(overlap_start_sample - start_sample);
                 const data_ptr = chunk_node.data.as_ptr();
                 // No need to iterate if the device gain is 0.
                 if (data_ptr.gain == 0.0) {
                     continue;
                 }
-                const src_channels: usize = @intCast(data_ptr.channels);
 
-                for (0..sample_positions_to_mix) |sample_idx| {
-                    const output_pcm_offset = (output_start_sample + sample_idx) * channels;
-                    const input_pcm_offset = (input_start_sample + sample_idx) * src_channels;
-                    for (0..channels) |channel_idx| {
-                        mixed_pcm.items[output_pcm_offset + channel_idx] +=
-                            data_ptr.pcm_data[input_pcm_offset + channel_idx] * data_ptr.gain;
-                    }
+                var i: usize = 0;
+                const vector_len = std.simd.suggestVectorLength(f32) orelse 1;
+                const Vector = @Vector(vector_len, f32);
+                const gain_vector: Vector = @splat(data_ptr.gain);
+
+                const output_start: usize = @intCast((overlap_start_sample - start_sample) * channels);
+                const input_start: usize = @intCast((overlap_start_sample - chunk_start_sample) * channels);
+                const samples_to_mix: usize = @intCast((overlap_end_sample - overlap_start_sample) * channels);
+
+                const output = mixed_pcm.items[output_start..][0..samples_to_mix];
+                const input = data_ptr.pcm_data[input_start..][0..samples_to_mix];
+
+                // Mix with SIMD.
+                while (i + vector_len <= output.len) : (i += vector_len) {
+                    const output_vec: Vector = output[i..][0..vector_len].*;
+                    const input_vec: Vector = input[i..][0..vector_len].*;
+                    output[i..][0..vector_len].* = output_vec + (gain_vector * input_vec);
+                }
+
+                // Mix the remaining scalers.
+                while (i < output.len) : (i += 1) {
+                    output[i] += input[i] * data_ptr.gain;
                 }
             }
         }
@@ -61,6 +72,9 @@ pub const AudioMixer = struct {
 };
 
 const TestUtil = struct {
+    const SAMPLE_RATE = 48_000;
+    const vector_len = std.simd.suggestVectorLength(f32) orelse 1;
+
     fn add_test_chunk(
         allocator: Allocator,
         device_map: *std.StringHashMap(DeviceState),
@@ -81,7 +95,7 @@ const TestUtil = struct {
             id,
             pcm,
             0,
-            48_000,
+            SAMPLE_RATE,
             channels,
         );
         errdefer audio_capture_data.deinit();
@@ -112,15 +126,19 @@ test "AudioMixer - mix mixes a single aligned mono chunk" {
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
-    const pcm = [_]f32{ 0.1, 0.2, 0.3, 0.4, 0.5 };
+    const sample_count = (TestUtil.vector_len * 100) + 1;
+    var pcm: [sample_count]f32 = undefined;
+    for (&pcm, 0..) |*sample, i| {
+        sample.* = @floatFromInt((i % 100) / 100);
+    }
     try TestUtil.add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 1.0);
 
-    var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 5);
+    var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, pcm.len);
     defer mixed.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, pcm.len), mixed.items.len);
-    for (pcm, 0..) |expected, idx| {
-        try std.testing.expectEqual(expected, mixed.items[idx]);
+    try std.testing.expectEqual(pcm.len, mixed.items.len);
+    for (pcm, 0..) |expected, i| {
+        try std.testing.expectEqual(expected, mixed.items[i]);
     }
 }
 
@@ -129,15 +147,19 @@ test "AudioMixer - mix mixes a single aligned stereo chunk" {
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
-    const pcm = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    const sample_count = (TestUtil.vector_len * 100) + 1;
+    var pcm: [sample_count * 2]f32 = undefined;
+    for (&pcm, 0..) |*sample, i| {
+        sample.* = @floatFromInt((i % 100) / 100);
+    }
     try TestUtil.add_test_chunk(allocator, &device_map, "stereo", &pcm, 0, 2, 1.0);
 
-    var mixed = try AudioMixer.mix(allocator, &device_map, 2, 0, 3);
+    var mixed = try AudioMixer.mix(allocator, &device_map, 2, 0, sample_count);
     defer mixed.deinit(allocator);
 
-    try std.testing.expectEqual(@as(usize, pcm.len), mixed.items.len);
-    for (pcm, 0..) |expected, idx| {
-        try std.testing.expectEqual(expected, mixed.items[idx]);
+    try std.testing.expectEqual(pcm.len, mixed.items.len);
+    for (pcm, 0..) |expected, i| {
+        try std.testing.expectEqual(expected, mixed.items[i]);
     }
 }
 
@@ -146,15 +168,47 @@ test "AudioMixer - mix applies capture gain" {
     var device_map = std.StringHashMap(DeviceState).init(allocator);
     defer TestUtil.deinit_test_device_map(allocator, &device_map);
 
-    const pcm = [_]f32{ 1.0, 0.5, 0.25 };
-    try TestUtil.add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, 0.5);
+    const sample_count = (TestUtil.vector_len * 100) + 1;
+    var pcm: [sample_count]f32 = undefined;
+    for (&pcm, 0..) |*sample, i| {
+        sample.* = @floatFromInt((i % 100) / 100);
+    }
+    const gain: f32 = 0.5;
+    try TestUtil.add_test_chunk(allocator, &device_map, "mic", &pcm, 0, 1, gain);
 
-    var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, 3);
+    var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, pcm.len);
     defer mixed.deinit(allocator);
 
-    const expected = [_]f32{ 0.5, 0.25, 0.125 };
-    try std.testing.expectEqual(@as(usize, expected.len), mixed.items.len);
-    for (expected, 0..) |sample, idx| {
-        try std.testing.expectApproxEqAbs(sample, mixed.items[idx], 0.0001);
+    try std.testing.expectEqual(pcm.len, mixed.items.len);
+    for (pcm, 0..) |sample, i| {
+        try std.testing.expectApproxEqAbs(sample * gain, mixed.items[i], 0.0001);
+    }
+}
+
+test "AudioMixer - mix accumulates overlapping chunks with capture gain" {
+    const allocator = std.testing.allocator;
+    var device_map = std.StringHashMap(DeviceState).init(allocator);
+    defer TestUtil.deinit_test_device_map(allocator, &device_map);
+
+    const sample_count = (TestUtil.vector_len * 100) + 1;
+    var first_pcm: [sample_count]f32 = undefined;
+    var second_pcm: [sample_count]f32 = undefined;
+    for (&first_pcm, &second_pcm, 0..) |*first_sample, *second_sample, i| {
+        first_sample.* = @floatFromInt((i % 100) / 100);
+        second_sample.* = @floatFromInt((i % 25) / 25);
+    }
+
+    const first_gain: f32 = 0.5;
+    const second_gain: f32 = 0.25;
+    try TestUtil.add_test_chunk(allocator, &device_map, "mic", &first_pcm, 0, 1, first_gain);
+    try TestUtil.add_test_chunk(allocator, &device_map, "desktop", &second_pcm, 0, 1, second_gain);
+
+    var mixed = try AudioMixer.mix(allocator, &device_map, 1, 0, sample_count);
+    defer mixed.deinit(allocator);
+
+    try std.testing.expectEqual(sample_count, mixed.items.len);
+    for (first_pcm, second_pcm, 0..) |first_sample, second_sample, i| {
+        const expected = first_sample * first_gain + second_sample * second_gain;
+        try std.testing.expectApproxEqAbs(expected, mixed.items[i], 0.0001);
     }
 }
