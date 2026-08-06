@@ -3,6 +3,7 @@ const std = @import("std");
 const log = std.log.scoped(.ffmpeg);
 
 pub const c = @cImport({
+    @cInclude("errno.h");
     @cInclude("libavutil/opt.h");
     @cInclude("libavutil/frame.h");
     @cInclude("libavutil/pixfmt.h");

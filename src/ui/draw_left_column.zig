@@ -320,7 +320,7 @@ fn draw_capture_settings(allocator: std.mem.Allocator, store: *Store, state: *St
     // FPS
     {
         var fps = capture_fps_local orelse current_capture_fps;
-        c.ImGui_Text("Max FPS");
+        c.ImGui_Text("FPS");
         c.ImGui_SameLine();
         imgui_util.help_marker("The maximum capture rate (frames per second). If your system can't keep up, it may be slower than the desired FPS.");
         imgui_util.set_next_item_width_fill();
