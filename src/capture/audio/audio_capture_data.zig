@@ -30,8 +30,27 @@ pub fn init(
     const pcm_copy = try allocator.alloc(f32, pcm_data.len);
     errdefer allocator.free(pcm_copy);
 
-    var peak_level: f32 = 0.0;
-    for (pcm_data, pcm_copy) |sample, *dest| {
+    // Use SIMD to find the peak audo level, while copying the data.
+    const vector_len = std.simd.suggestVectorLength(f32) orelse 1;
+    const Vector = @Vector(vector_len, f32);
+    const zero: Vector = @splat(0.0);
+    const infinity: Vector = @splat(std.math.inf(f32));
+
+    var peak_level_vector: Vector = zero;
+    var i: usize = 0;
+    while (i + vector_len <= pcm_data.len) : (i += vector_len) {
+        // Convert the sample window to a vector.
+        const samples: Vector = pcm_data[i..][0..vector_len].*;
+        // Copy the data into the output buffer.
+        pcm_copy[i..][0..vector_len].* = samples;
+
+        const magnitudes = @abs(samples);
+        const finite_magnitudes = @select(f32, magnitudes < infinity, magnitudes, zero);
+        peak_level_vector = @max(peak_level_vector, finite_magnitudes);
+    }
+
+    var peak_level = @reduce(.Max, peak_level_vector);
+    for (pcm_data[i..], pcm_copy[i..]) |sample, *dest| {
         dest.* = sample;
         if (!std.math.isFinite(sample)) {
             continue;
@@ -124,7 +143,7 @@ test "AudioCaptureData - init stores peak level" {
     const data = try @This().init(allocator, "mic", &pcm, 0, 48_000, 1);
     defer data.deinit();
 
-    try std.testing.expectEqual(@as(f32, 0.75), data.peak_level);
+    try std.testing.expectEqual(0.75, data.peak_level);
 }
 
 test "AudioCaptureData - clone preserves peak level" {

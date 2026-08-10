@@ -4,16 +4,12 @@
     .fingerprint = 0xdc2511c12abe6e80,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .win32 = .{
-            .url = "git+https://github.com/marlersoft/zigwin32#ec98bb4d9eea532320a8551720a9e3ec6de64994",
-            .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
-        },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.315.tar.gz",
             .hash = "N-V-__8AAPJS7wFRVAIGhMZ7cis5e-y5LZfn2KfO5O2jiHGH",
         },
         .vulkan_zig = .{
-            .url = "git+https://github.com/Snektron/vulkan-zig?ref=master#b496a6a561ffbbeb530b0f9ed4e059f88c0723a5",
+            .url = "git+https://github.com/Snektron/vulkan-zig?ref=zig-0.16-compat#b496a6a561ffbbeb530b0f9ed4e059f88c0723a5",
             .hash = "vulkan-0.0.0-r7Ytx7N9AwD7IZt5_XNHtkJ4G9qY0pCH-cpcOsbL8wzD",
         },
         .imguiz = .{
