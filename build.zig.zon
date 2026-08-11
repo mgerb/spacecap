@@ -1,6 +1,6 @@
 .{
     .name = .spacecap,
-    .version = "0.4.0",
+    .version = "0.5.0",
     .fingerprint = 0xdc2511c12abe6e80,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

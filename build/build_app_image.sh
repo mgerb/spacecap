@@ -12,7 +12,7 @@ rm -f zig-out/linux/spacecap-linux-x86_64.AppImage
 LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" linuxdeploy \
   --appdir AppDir \
   --executable zig-out/linux/spacecap \
-  --desktop-file packaging/linux/spacecap.desktop \
+  --desktop-file packaging/linux/org.spacecap.spacecap.desktop \
   --icon-file packaging/spacecap.svg \
   --exclude-library libvulkan.so.1 \
   --exclude-library libxkbcommon.so.0 \

@@ -1,11 +1,12 @@
 const std = @import("std");
+const XdgDesktopPortal = @import("./xdg_desktop_portal.zig");
 
 /// Caller owns the memory
 pub fn get_request_path(allocator: std.mem.Allocator, unique_name: [:0]const u8, token: [:0]const u8) std.mem.Allocator.Error![:0]const u8 {
     // Generate the path
     const path: [:0]u8 = try std.fmt.allocPrintSentinel(
         allocator,
-        "/org/freedesktop/portal/desktop/request/{s}/{s}",
+        XdgDesktopPortal.DBUS_OBJECT_PATH ++ "/request/{s}/{s}",
         .{ unique_name, token },
         0,
     );

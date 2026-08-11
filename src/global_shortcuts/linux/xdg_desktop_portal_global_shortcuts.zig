@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const TokenManager = @import("../../common/linux/token_manager.zig");
-const TokenStorage = @import("../../common/linux/token_storage.zig");
+const XdgDesktopPortal = @import("../../common/linux/xdg_desktop_portal.zig");
 const GlobalShortcuts = @import("../global_shortcuts.zig").GlobalShortcuts;
 const assert = std.debug.assert;
 
@@ -18,7 +18,6 @@ const Actions = std.StringArrayHashMapUnmanaged(Action);
 
 pub const XdgDesktopPortalGlobalShortcuts = struct {
     const Self = @This();
-    const Token = [16]u8;
 
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -26,9 +25,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
     main_loop: ?*c.GMainLoop = null,
     run_thread: ?std.Thread = null,
     ctx: ?*c.GMainContext = null,
-    // actions: *Actions,
     actions: Actions,
-    session_token: ?[:0]u8 = null,
     registeredShortcutHandler: ?GlobalShortcuts.ShortcutHandler = null,
 
     /// The handle of the current global shortcuts portal session,
@@ -96,10 +93,6 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             run_thread.join();
         }
 
-        if (self.session_token) |session_token| {
-            self.allocator.free(session_token);
-        }
-
         self.actions.deinit(self.allocator);
     }
 
@@ -118,10 +111,10 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             // Close existing session
             c.g_dbus_connection_call(
                 self.dbus,
-                "org.freedesktop.portal.Desktop",
+                XdgDesktopPortal.DBUS_DESTINATION.ptr,
                 handle.ptr,
-                "org.freedesktop.portal.Session",
-                "Close",
+                XdgDesktopPortal.SESSION_INTERFACE.ptr,
+                XdgDesktopPortal.CLOSE_METHOD.ptr,
                 null,
                 null,
                 c.G_DBUS_CALL_FLAGS_NONE,
@@ -158,7 +151,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                 c.g_main_context_push_thread_default(_self.ctx.?);
                 defer c.g_main_context_pop_thread_default(_self.ctx.?);
 
-                _self.request(.{ .create_session = .{ .restore_session = true } }) catch |err| {
+                _self.request(.create_session) catch |err| {
                     log.err("create session error: {}\n", .{err});
                 };
 
@@ -221,10 +214,10 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
         const result = c.g_dbus_connection_call_sync(
             self.dbus,
-            "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.GlobalShortcuts",
-            "ConfigureShortcuts",
+            XdgDesktopPortal.DBUS_DESTINATION.ptr,
+            XdgDesktopPortal.DBUS_OBJECT_PATH.ptr,
+            XdgDesktopPortal.GLOBAL_SHORTCUTS_INTERFACE.ptr,
+            XdgDesktopPortal.CONFIGURE_SHORTCUTS_METHOD.ptr,
             payload,
             null,
             c.G_DBUS_CALL_FLAGS_NONE,
@@ -269,18 +262,14 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         }
     }
 
-    const Method = union(enum) {
-        create_session: struct {
-            /// Whether or not to use the existing session token. We probably always want to do this.
-            /// Keeping this functionality around for future changes.
-            restore_session: bool,
-        },
+    const Method = enum {
+        create_session,
         bind_shortcuts,
 
         fn name(self: Method) [:0]const u8 {
             return switch (self) {
-                .create_session => "CreateSession",
-                .bind_shortcuts => "BindShortcuts",
+                .create_session => XdgDesktopPortal.CREATE_SESSION_METHOD,
+                .bind_shortcuts => XdgDesktopPortal.BIND_SHORTCUTS_METHOD,
             };
         }
 
@@ -293,30 +282,16 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
             switch (self) {
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-createsession
                 .create_session => {
-                    if (self.create_session.restore_session) {
-                        shortcuts.session_token = TokenStorage.load_token_z(shortcuts.allocator, shortcuts.io, "session_token") catch |err| {
-                            log.err("[make_payload] TokenStorage.load_token_z error: {}", .{err});
-                            return null;
-                        };
-                    }
-
-                    if (shortcuts.session_token == null) {
-                        shortcuts.session_token = @constCast(TokenManager.generate_token(shortcuts.allocator, shortcuts.io) catch |err| {
-                            log.err("[make_payload] TokenStorage.generate_token error: {}", .{err});
-                            return null;
-                        });
-                        TokenStorage.save_token(shortcuts.allocator, shortcuts.io, "session_token", shortcuts.session_token.?) catch |err| {
-                            log.err("[make_payload] TokenStorage.save_token error: {}", .{err});
-                            return null;
-                        };
-                    }
-
-                    assert(shortcuts.session_token != null);
+                    const session_handle_token = TokenManager.generate_token(shortcuts.allocator, shortcuts.io) catch |err| {
+                        log.err("[make_payload] TokenManager.generate_token error: {}", .{err});
+                        return null;
+                    };
+                    defer shortcuts.allocator.free(session_handle_token);
 
                     return c.g_variant_new_parsed(
                         "({'handle_token': <%s>, 'session_handle_token': <%s>},)",
                         request_token.ptr,
-                        shortcuts.session_token.?.ptr,
+                        session_handle_token.ptr,
                     );
                 },
                 // See https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html#org-freedesktop-portal-globalshortcuts-bindshortcuts
@@ -386,9 +361,9 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                     shortcuts.activate_subscription = c.g_dbus_connection_signal_subscribe(
                         shortcuts.dbus,
                         null,
-                        "org.freedesktop.portal.GlobalShortcuts",
-                        "Activated",
-                        "/org/freedesktop/portal/desktop",
+                        XdgDesktopPortal.GLOBAL_SHORTCUTS_INTERFACE.ptr,
+                        XdgDesktopPortal.ACTIVATED_SIGNAL.ptr,
+                        XdgDesktopPortal.DBUS_OBJECT_PATH.ptr,
                         handle,
                         c.G_DBUS_SIGNAL_FLAGS_MATCH_ARG0_PATH,
                         shortcut_activated,
@@ -539,8 +514,8 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
         self.response_subscription = c.g_dbus_connection_signal_subscribe(
             self.dbus,
             null,
-            "org.freedesktop.portal.Request",
-            "Response",
+            XdgDesktopPortal.REQUEST_INTERFACE.ptr,
+            XdgDesktopPortal.RESPONSE_SIGNAL.ptr,
             request_path,
             null,
             c.G_DBUS_SIGNAL_FLAGS_NONE,
@@ -551,9 +526,9 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
 
         c.g_dbus_connection_call(
             self.dbus,
-            "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.GlobalShortcuts",
+            XdgDesktopPortal.DBUS_DESTINATION.ptr,
+            XdgDesktopPortal.DBUS_OBJECT_PATH.ptr,
+            XdgDesktopPortal.GLOBAL_SHORTCUTS_INTERFACE.ptr,
             method.name(),
             payload,
             null,

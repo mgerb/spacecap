@@ -1,4 +1,6 @@
 const std = @import("std");
+const build_options = @import("build_options");
+const app_identity = @import("../common/linux/app_identity.zig");
 const util = @import("../util.zig");
 const imguiz = @import("imguiz").imguiz;
 
@@ -46,8 +48,14 @@ pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensi
 
 /// If Linux, try Wayland, fallback to x11, which causes a panic because it's not supported.
 pub fn init() !void {
-    _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_APP_NAME, "Spacecap");
-    _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_APP_ID, "spacecap");
+    if (!imguiz.SDL_SetAppMetadata(
+        app_identity.APP_NAME.ptr,
+        build_options.version.ptr,
+        app_identity.APP_ID.ptr,
+    )) {
+        log.err("[init] failed to set app metadata: {s}", .{imguiz.SDL_GetError()});
+        return error.SDLSetAppMetadataFailure;
+    }
 
     if (util.is_linux()) {
         if (try try_sdl_init_with_hint("wayland")) {

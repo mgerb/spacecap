@@ -30,7 +30,10 @@ pub const Tray = struct {
     },
 
     pub fn init(store: *Store, app_icon: *AppIcon) !Self {
-        const tray = imguiz.SDL_CreateTray(app_icon.app_icon_surface_blue, "Spacecap") orelse return error.TrayInitCreateTray;
+        const tray = imguiz.SDL_CreateTray(app_icon.app_icon_surface_blue, "Spacecap") orelse {
+            log.err("[init] SDL_CreateTray failed: {s}", .{imguiz.SDL_GetError()});
+            return error.TrayInitCreateTray;
+        };
         errdefer {
             imguiz.SDL_DestroyTray(tray);
         }
