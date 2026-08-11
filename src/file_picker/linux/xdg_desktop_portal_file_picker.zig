@@ -123,7 +123,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         defer allocator.free(request_token);
 
         const initial_directory_z = if (initial_directory) |directory|
-            try allocator.dupeZ(u8, directory)
+            try allocator.dupeSentinel(u8, directory, 0)
         else
             null;
         defer if (initial_directory_z) |directory| allocator.free(directory);

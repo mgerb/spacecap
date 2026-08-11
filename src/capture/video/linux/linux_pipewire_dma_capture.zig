@@ -124,6 +124,9 @@ pub const LinuxPipewireDmaCapture = struct {
         }
     }
 
+    // TODO: Add `interface` variable on the struct and use that instead.
+    // It follows Zig conventions more closely - see the Writer interface for
+    // example.
     pub fn video_capture(self: *Self) VideoCapture {
         return .{
             .ptr = self,

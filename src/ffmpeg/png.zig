@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @import("./c.zig").c;
-const check_err = @import("./c.zig").check_err;
+const c = @import("ffmpeg_c");
+const check_err = @import("./util.zig").check_err;
 
 pub const Png = struct {
     pub fn encode(

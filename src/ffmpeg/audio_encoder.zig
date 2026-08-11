@@ -3,8 +3,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const c = @import("./c.zig").c;
-const check_err = @import("./c.zig").check_err;
+const c = @import("ffmpeg_c");
+const check_err = @import("./util.zig").check_err;
 
 pub const AudioEncoder = struct {
     const Self = @This();

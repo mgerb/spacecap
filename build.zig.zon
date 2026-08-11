@@ -2,35 +2,35 @@
     .name = .spacecap,
     .version = "0.5.0",
     .fingerprint = 0xdc2511c12abe6e80,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.315.tar.gz",
             .hash = "N-V-__8AAPJS7wFRVAIGhMZ7cis5e-y5LZfn2KfO5O2jiHGH",
         },
         .vulkan_zig = .{
-            .url = "git+https://github.com/Snektron/vulkan-zig?ref=zig-0.16-compat#b496a6a561ffbbeb530b0f9ed4e059f88c0723a5",
-            .hash = "vulkan-0.0.0-r7Ytx7N9AwD7IZt5_XNHtkJ4G9qY0pCH-cpcOsbL8wzD",
+            .url = "git+https://github.com/Snektron/vulkan-zig#6994c93a6e882bac855aed606cf97a91e3f71d1f",
+            .hash = "vulkan-0.0.0-r7Ytx_6DAwDB1QJAbIew5IzR2PiiAtJENX5kdJHf449X",
         },
         .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#62e04b1b18f5bf433914b552cd079094e2ad76d5",
-            .hash = "imguiz-0.0.0-sI63z7CJegT7FurmE0j1tYdNM5s_cFZ5us8e9Wo7xB0Z",
+            .url = "git+https://github.com/mgerb/imguiz#8b69dd7c4041aaec45794255abd1ac354fa0509e",
+            .hash = "imguiz-0.0.0-sI63z-uTegTvxpsxmpPCQKYy2f9IVWcubzNA7sJrIlAh",
         },
         .ffmpeg = .{
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.tar.gz",
             .hash = "N-V-__8AAJpxYgW29IA1MGBOmQ-DaqXIv39OFUDYrokatb7C",
         },
         .clap = .{
-            .url = "https://github.com/Hejsil/zig-clap/archive/refs/tags/0.12.0.tar.gz",
-            .hash = "clap-0.12.0-oBajB7foAQDqlSwaSG5g0yq7xGbQARUsBk5T64gAOqP5",
+            .url = "git+https://github.com/Hejsil/zig-clap#e91d66b1abba2024cd2e816426f14d233d3dad9a",
+            .hash = "clap-0.12.0-oBajB2LpAQD1BQpAukHcuwhIUoHWYNy2DzU6lDW2v2N8",
         },
         .pipewire = .{
-            .url = "git+https://github.com/mgerb/pipewire#80b7f695e14d2726ba59f2ad03cbc7cdd6066d12",
-            .hash = "pipewire-1.6.3-tKslQ1aLAQAzbaWMWTqfvQKzzUaKx34CBpE6hWT4HRNY",
+            .url = "git+https://github.com/mgerb/pipewire#266d8e3ddcb2f09c475f239bc617cd048d2a8680",
+            .hash = "pipewire-1.6.3-tKslQ7GMAQDta-snC1w81e-MLStcOtbSmgf-ZVldYrvt",
         },
         .libportal_zig = .{
-            .url = "git+https://github.com/mgerb/libportal-zig#60f9de1ede1847d2c5cbc1c66a0fb71dada8921c",
-            .hash = "libportal_zig-0.10.0-G2meOw8fAACBQ9TE_YkpiSA6_5i1R5bvQWmX-pHJH8LR",
+            .url = "git+https://github.com/mgerb/libportal-zig#dbfdd1479855e597e796f473a50896c66f4b57c8",
+            .hash = "libportal_zig-0.10.0-G2meOyIfAACzPKGWbl0vSwRol-kYCeGq-FIhWvUyuRtZ",
         },
     },
     .paths = .{

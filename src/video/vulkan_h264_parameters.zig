@@ -52,7 +52,7 @@ pub fn get_std_video_h264_sequence_parameter_set(
     ret.pic_width_in_mbs_minus_1 = mb_aligned_width / H264MbSizeAlignment - 1;
     ret.pic_height_in_map_units_minus_1 = mb_aligned_height / H264MbSizeAlignment - 1;
     ret.flags = .{
-        .direct_8x_8_inference_flag = true,
+        .direct_8x8_inference_flag = true,
         .frame_mbs_only_flag = true,
         .vui_parameters_present_flag = true,
     };

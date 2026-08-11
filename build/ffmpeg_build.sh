@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 4 ]; then
-  echo "usage: $0 <linux|windows> <build_dir> <install_prefix> <ffmpeg_src_dir>" >&2
+if [ "$#" -ne 3 ]; then
+  echo "usage: $0 <linux|windows> <output_dir> <ffmpeg_src_dir>" >&2
   exit 2
 fi
 
 target="$1"
-build_dir="$2"
-install_prefix="$3"
-ffmpeg_src_dir="$4"
+output_dir="$2"
+ffmpeg_src_dir="$3"
+build_dir="$output_dir/build"
+install_prefix="$output_dir/install"
 
 rm -rf "$build_dir/src" "$install_prefix"
 mkdir -p "$build_dir/src"

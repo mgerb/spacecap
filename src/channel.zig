@@ -20,7 +20,7 @@ pub fn BufferedChan(comptime T: type, comptime buf_size: u32) type {
         const bufType = [buf_size]?T;
 
         /// Ring buffer.
-        ring_buffer: bufType = [_]?T{null} ** buf_size,
+        ring_buffer: bufType = @splat(null),
         len: u32 = 0,
         /// Head is the next item to receive.
         head: u32 = 0,

@@ -26,7 +26,7 @@ pub const PipewireVideo = struct {
     const SpaPodParams = struct {
         allocator: Allocator,
         // This should be plenty of room.
-        buffer: [8192]u8 = .{0} ** 8192,
+        buffer: [8192]u8 = @splat(0),
         params: std.ArrayList(*pw.spa_pod),
 
         fn init(allocator: Allocator) !@This() {
@@ -253,10 +253,10 @@ pub const PipewireVideo = struct {
             _ = pw.spa_pod_builder_push_choice(spa_pod_builder, &modifier_frame, pw.SPA_CHOICE_Enum, 0);
 
             for (modifiers) |mod| {
-                _ = c_def.spa_pod_builder_long(spa_pod_builder, @intCast(mod));
+                _ = pw.spa_pod_builder_long(spa_pod_builder, @intCast(mod));
             }
 
-            _ = c_def.spa_pod_builder_pop(spa_pod_builder, &modifier_frame);
+            _ = pw.spa_pod_builder_pop(spa_pod_builder, &modifier_frame);
         }
 
         const default_fps = pw.SPA_FRACTION(fps, 1);
@@ -279,7 +279,7 @@ pub const PipewireVideo = struct {
             @as(i32, 0),
         );
 
-        const ptr = c_def.spa_pod_builder_pop(spa_pod_builder, &format_frame);
+        const ptr = pw.spa_pod_builder_pop(spa_pod_builder, &format_frame);
 
         if (ptr != null) {
             return @ptrCast(@alignCast(ptr));
@@ -614,7 +614,7 @@ pub const PipewireVideo = struct {
         var media_type: u32 = undefined;
         var media_subtype: u32 = undefined;
 
-        const fmt = c_def.spa_format_parse(param, &media_type, &media_subtype);
+        const fmt = pw.spa_format_parse(param, &media_type, &media_subtype);
 
         if (fmt < 0 or
             media_type != pw.SPA_MEDIA_TYPE_video or
@@ -626,7 +626,7 @@ pub const PipewireVideo = struct {
 
         self.info = std.mem.zeroes(pw.spa_video_info_raw);
 
-        if (c_def.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
+        if (pw.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
             log.debug("[stream_param_changed_callback] failed to parse video info", .{});
             return;
         }

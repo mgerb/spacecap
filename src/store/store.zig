@@ -325,17 +325,17 @@ pub const Store = struct {
             @compileError("effects must be a struct literal, e.g. .{ .start = effect_start }");
         }
 
-        inline for (effects_info.@"struct".fields) |effect_field| {
-            if (!comptime union_has_tag(MessageType, effect_field.name)) {
-                @compileError("effect key '" ++ effect_field.name ++
+        inline for (effects_info.@"struct".field_names) |effect_name| {
+            if (!comptime union_has_tag(MessageType, effect_name)) {
+                @compileError("effect key '" ++ effect_name ++
                     "' does not match any tag in " ++ @typeName(MessageType));
             }
         }
     }
 
     fn union_has_tag(comptime UnionType: type, comptime name: []const u8) bool {
-        inline for (@typeInfo(UnionType).@"union".fields) |field| {
-            if (std.mem.eql(u8, field.name, name)) {
+        inline for (@typeInfo(UnionType).@"union".field_names) |field_name| {
+            if (std.mem.eql(u8, field_name, name)) {
                 return true;
             }
         }

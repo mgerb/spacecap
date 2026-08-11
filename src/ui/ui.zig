@@ -66,60 +66,60 @@ fn setup_imgui_style() void {
     style.*.ButtonTextAlign = c.ImVec2{ .x = 0.5, .y = 0.5 };
     style.*.SelectableTextAlign = c.ImVec2{ .x = 0.0, .y = 0.0 };
 
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Text))] = Colors.text.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextDisabled))] = Colors.text.as_vec4_with_alpha(0.5);
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_WindowBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ChildBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PopupBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Border))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_BorderShadow))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBg))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgHovered))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_FrameBgActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TitleBgCollapsed))] = Colors.dark_1.as_vec4_with_alpha(0.5);
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_MenuBarBg))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrab))] = Colors.accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabHovered))] = Colors.light_accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabActive))] = Colors.light_accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckMark))] = Colors.light_accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_CheckboxSelectedBg))] = Colors.dark_blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrab))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SliderGrabActive))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Button))] = Colors.dark_blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonHovered))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ButtonActive))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Header))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderHovered))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_HeaderActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Separator))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorHovered))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_SeparatorActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGrip))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripHovered))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ResizeGripActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_Tab))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabHovered))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabActive))] = Colors.dark_blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocused))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TabUnfocusedActive))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLines))] = Colors.accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotLinesHovered))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogram))] = Colors.accent.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_PlotHistogramHovered))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableHeaderBg))] = Colors.dark_2.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderStrong))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableBorderLight))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBg))] = Colors.dark_1.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TableRowBgAlt))] = Colors.text.as_vec4_with_alpha(0.06);
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_TextSelectedBg))] = Colors.dark_3.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_DragDropTarget))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavHighlight))] = Colors.blue.as_vec4();
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingHighlight))] = Colors.text.as_vec4_with_alpha(0.19607843);
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_NavWindowingDimBg))] = Colors.text.as_vec4_with_alpha(0.19742489);
-    style.*.Colors[0][@as(usize, @intCast(c.ImGuiCol_ModalWindowDimBg))] = Colors.text.as_vec4_with_alpha(0.19742489);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Text))] = Colors.text.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TextDisabled))] = Colors.text.as_vec4_with_alpha(0.5);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_WindowBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ChildBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_PopupBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Border))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_BorderShadow))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_FrameBg))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_FrameBgHovered))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_FrameBgActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TitleBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TitleBgActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TitleBgCollapsed))] = Colors.dark_1.as_vec4_with_alpha(0.5);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_MenuBarBg))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ScrollbarBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ScrollbarGrab))] = Colors.accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabHovered))] = Colors.light_accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ScrollbarGrabActive))] = Colors.light_accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_CheckMark))] = Colors.light_accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_CheckboxSelectedBg))] = Colors.dark_blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_SliderGrab))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_SliderGrabActive))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Button))] = Colors.dark_blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ButtonHovered))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ButtonActive))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Header))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_HeaderHovered))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_HeaderActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Separator))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_SeparatorHovered))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_SeparatorActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ResizeGrip))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ResizeGripHovered))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ResizeGripActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_Tab))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TabHovered))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TabActive))] = Colors.dark_blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TabUnfocused))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TabUnfocusedActive))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_PlotLines))] = Colors.accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_PlotLinesHovered))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_PlotHistogram))] = Colors.accent.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_PlotHistogramHovered))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TableHeaderBg))] = Colors.dark_2.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TableBorderStrong))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TableBorderLight))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TableRowBg))] = Colors.dark_1.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TableRowBgAlt))] = Colors.text.as_vec4_with_alpha(0.06);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_TextSelectedBg))] = Colors.dark_3.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_DragDropTarget))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_NavHighlight))] = Colors.blue.as_vec4();
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_NavWindowingHighlight))] = Colors.text.as_vec4_with_alpha(0.19607843);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_NavWindowingDimBg))] = Colors.text.as_vec4_with_alpha(0.19742489);
+    style.*.Colors[@as(usize, @intCast(c.ImGuiCol_ModalWindowDimBg))] = Colors.text.as_vec4_with_alpha(0.19742489);
 }
 
 pub const UI = struct {
@@ -302,7 +302,7 @@ pub const UI = struct {
         defer self.allocator.free(app_data_dir);
         const imgui_ini_path = try std.fs.path.join(self.allocator, &.{ app_data_dir, "imgui.ini" });
         defer self.allocator.free(imgui_ini_path);
-        self.imgui_ini_path = try self.allocator.dupeZ(u8, imgui_ini_path);
+        self.imgui_ini_path = try self.allocator.dupeSentinel(u8, imgui_ini_path, 0);
         errdefer {
             self.allocator.free(self.imgui_ini_path.?);
             self.imgui_ini_path = null;
@@ -336,7 +336,7 @@ pub const UI = struct {
 
         const pool_info = vk.DescriptorPoolCreateInfo{
             .flags = .{
-                .free_descriptor_set_bit = true,
+                .free_descriptor_set = true,
             },
             // NOTE: If we create more textures then this number
             // needs to increase, otherwise we'll get segfaults.
@@ -608,7 +608,7 @@ pub const UI = struct {
         {
             try self.vulkan.device.resetCommandPool(@enumFromInt(@intFromPtr(fd.CommandPool)), .{});
             const info = vk.CommandBufferBeginInfo{
-                .flags = .{ .one_time_submit_bit = true },
+                .flags = .{ .one_time_submit = true },
             };
             try self.vulkan.device.beginCommandBuffer(@enumFromInt(@intFromPtr(fd.CommandBuffer)), @ptrCast(&info));
         }
@@ -632,7 +632,7 @@ pub const UI = struct {
         // Submit command buffer
         self.vulkan.device.cmdEndRenderPass(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
         {
-            var wait_stage = vk.PipelineStageFlags{ .color_attachment_output_bit = true };
+            var wait_stage = vk.PipelineStageFlags{ .color_attachment_output = true };
             const info = vk.SubmitInfo{
                 .wait_semaphore_count = 1,
                 .p_wait_semaphores = @ptrCast(&image_acquired_semaphore),

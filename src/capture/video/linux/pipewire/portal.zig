@@ -344,7 +344,7 @@ pub const Portal = struct {
             return;
         }
 
-        const duped = try self.allocator.dupeZ(u8, std.mem.span(token_ptr));
+        const duped = try self.allocator.dupeSentinel(u8, std.mem.span(token_ptr), 0);
 
         if (self.restore_token) |restore_token| {
             self.allocator.free(restore_token);

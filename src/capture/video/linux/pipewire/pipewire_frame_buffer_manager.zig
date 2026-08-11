@@ -158,7 +158,7 @@ pub const PipewireFrameBufferManager = struct {
         };
 
         const external_memory_image_info = vk.ExternalMemoryImageCreateInfo{
-            .handle_types = .{ .dma_buf_bit_ext = true },
+            .handle_types = .{ .dma_buf_ext = true },
             .p_next = &modifier_info,
         };
 
@@ -169,12 +169,12 @@ pub const PipewireFrameBufferManager = struct {
             .extent = .{ .depth = 1, .width = info.size.width, .height = info.size.height },
             .mip_levels = 1,
             .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
+            .samples = .{ .@"1" = true },
             .tiling = .drm_format_modifier_ext,
             .usage = .{
-                .storage_bit = true,
-                .color_attachment_bit = true,
-                .transfer_src_bit = true,
+                .storage = true,
+                .color_attachment = true,
+                .transfer_src = true,
             },
             .sharing_mode = .exclusive,
             .initial_layout = .undefined,
@@ -186,7 +186,7 @@ pub const PipewireFrameBufferManager = struct {
         const mem_reqs = self.vulkan.device.getImageMemoryRequirements(image);
 
         var import_fd_info = vk.ImportMemoryFdInfoKHR{
-            .handle_type = .{ .dma_buf_bit_ext = true },
+            .handle_type = .{ .dma_buf_ext = true },
             // TODO: This could error (-1). We should probably handle this scenario.
             .fd = @intCast(std.os.linux.fcntl(@intCast(fd), std.os.linux.F.DUPFD_CLOEXEC, 0)),
         };
@@ -199,7 +199,7 @@ pub const PipewireFrameBufferManager = struct {
         import_fd_info.p_next = &memory_dedicated_allocate_info;
 
         // CRITICAL: If this call succeeds, Vulkan owns the FD.
-        const device_memory = try self.vulkan.allocate(mem_reqs, .{ .device_local_bit = true }, @ptrCast(&import_fd_info));
+        const device_memory = try self.vulkan.allocate(mem_reqs, .{ .device_local = true }, @ptrCast(&import_fd_info));
         errdefer self.vulkan.device.freeMemory(device_memory, null);
 
         try self.vulkan.device.bindImageMemory(image, device_memory, 0);
@@ -209,7 +209,7 @@ pub const PipewireFrameBufferManager = struct {
             .view_type = .@"2d",
             .format = pipewire_util.spa_to_vk_format(info.format),
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
