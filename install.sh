@@ -3,11 +3,12 @@
 set -eu
 
 APP_NAME="spacecap"
+APP_ID="org.spacecap.spacecap"
 ARTIFACT_NAME="spacecap-linux-x86_64.AppImage"
 CHECKSUMS_NAME="SHA256SUMS.txt"
 RELEASES_URL="https://github.com/mgerb/spacecap/releases"
 RAW_URL="https://raw.githubusercontent.com/mgerb/spacecap/main"
-DESKTOP_URL="$RAW_URL/packaging/linux/spacecap.desktop"
+DESKTOP_URL="$RAW_URL/packaging/linux/$APP_ID.desktop"
 ICON_URL="$RAW_URL/packaging/spacecap.svg"
 CHANNEL="nightly"
 MODE="install"
@@ -72,7 +73,9 @@ INSTALL_DIR="$HOME/.local/bin"
 INSTALL_PATH="$INSTALL_DIR/$APP_NAME"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 DESKTOP_DIR="$DATA_DIR/applications"
-DESKTOP_PATH="$DESKTOP_DIR/$APP_NAME.desktop"
+DESKTOP_PATH="$DESKTOP_DIR/$APP_ID.desktop"
+# NOTE: Remove this eventually.
+LEGACY_DESKTOP_PATH="$DESKTOP_DIR/$APP_NAME.desktop"
 ICON_DIR="$DATA_DIR/icons/hicolor/scalable/apps"
 ICON_PATH="$ICON_DIR/$APP_NAME.svg"
 WAS_INSTALLED=0
@@ -82,7 +85,7 @@ fi
 
 if [ "$MODE" = "uninstall" ]; then
     REMOVED=0
-    for path in "$INSTALL_PATH" "$DESKTOP_PATH" "$ICON_PATH"; do
+    for path in "$INSTALL_PATH" "$DESKTOP_PATH" "$LEGACY_DESKTOP_PATH" "$ICON_PATH"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             rm -f "$path"
             echo "Removed $path."
@@ -121,7 +124,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 APPIMAGE_TMP="$TMP_DIR/$ARTIFACT_NAME"
 CHECKSUMS_TMP="$TMP_DIR/$CHECKSUMS_NAME"
-DESKTOP_TMP="$TMP_DIR/$APP_NAME.desktop"
+DESKTOP_TMP="$TMP_DIR/$APP_ID.desktop"
 ICON_TMP="$TMP_DIR/$APP_NAME.svg"
 
 echo "Downloading $APP_NAME ($CHANNEL) from $DOWNLOAD_URL."
@@ -143,6 +146,9 @@ mkdir -p "$INSTALL_DIR" "$DESKTOP_DIR" "$ICON_DIR"
 mv "$APPIMAGE_TMP" "$INSTALL_PATH"
 mv "$DESKTOP_TMP" "$DESKTOP_PATH"
 mv "$ICON_TMP" "$ICON_PATH"
+if [ "$LEGACY_DESKTOP_PATH" != "$DESKTOP_PATH" ]; then
+    rm -f "$LEGACY_DESKTOP_PATH"
+fi
 
 VERSION="$("$INSTALL_PATH" --version)"
 if [ "$WAS_INSTALLED" -eq 1 ]; then

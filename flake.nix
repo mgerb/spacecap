@@ -18,7 +18,15 @@
       system: let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [];
+          overlays = [
+            (_final: prev: {
+              # NOTE: This can be removed with: https://github.com/mgerb/spacecap/issues/144
+              # GTK's optional file-search integration pulls TinySPARQL into the
+              # AppImage, which then tries to link sqlite3. This can be avoided
+              # by disabling it here.
+              gtk3 = prev.gtk3.override {trackerSupport = false;};
+            })
+          ];
         };
         zigpkgs = zig.packages.${system};
       in {

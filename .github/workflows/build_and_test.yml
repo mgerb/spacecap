@@ -42,3 +42,13 @@ jobs:
 
       - name: Build AppImage
         run: nix develop -c zig build -Dappimage -Doptimize=ReleaseSafe
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spacecap-linux-${{ github.event.pull_request.number }}
+          path: |
+            zig-out/linux/spacecap
+            zig-out/linux/spacecap-linux-x86_64.AppImage
+          retention-days: 7
+          if-no-files-found: error

@@ -1,19 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const TokenManager = @import("../../common/linux/token_manager.zig");
+const XdgDesktopPortal = @import("../../common/linux/xdg_desktop_portal.zig");
 const FilePicker = @import("../file_picker.zig").FilePicker;
 const FilePickerError = @import("../file_picker.zig").FilePickerError;
 
 const c = @import("libportal");
 
 const log = std.log.scoped(.xdg_desktop_portal_file_picker);
-
-const DBUS_DESTINATION: [:0]const u8 = "org.freedesktop.portal.Desktop";
-const DBUS_OBJECT_PATH: [:0]const u8 = "/org/freedesktop/portal/desktop";
-const FILE_CHOOSER_INTERFACE: [:0]const u8 = "org.freedesktop.portal.FileChooser";
-const REQUEST_INTERFACE: [:0]const u8 = "org.freedesktop.portal.Request";
-const OPEN_FILE_METHOD: [:0]const u8 = "OpenFile";
-const RESPONSE_SIGNAL: [:0]const u8 = "Response";
 
 fn variant_type(comptime signature: [:0]const u8) *const c.GVariantType {
     return @ptrCast(signature.ptr);
@@ -145,8 +139,8 @@ pub const XdgDesktopPortalFilePicker = struct {
         var subscription_id = c.g_dbus_connection_signal_subscribe(
             self.dbus,
             null,
-            REQUEST_INTERFACE.ptr,
-            RESPONSE_SIGNAL.ptr,
+            XdgDesktopPortal.REQUEST_INTERFACE.ptr,
+            XdgDesktopPortal.RESPONSE_SIGNAL.ptr,
             request_path.ptr,
             null,
             c.G_DBUS_SIGNAL_FLAGS_NONE,
@@ -164,10 +158,10 @@ pub const XdgDesktopPortalFilePicker = struct {
         var err: ?*c.GError = null;
         const request_handle = c.g_dbus_connection_call_sync(
             self.dbus,
-            DBUS_DESTINATION.ptr,
-            DBUS_OBJECT_PATH.ptr,
-            FILE_CHOOSER_INTERFACE.ptr,
-            OPEN_FILE_METHOD.ptr,
+            XdgDesktopPortal.DBUS_DESTINATION.ptr,
+            XdgDesktopPortal.DBUS_OBJECT_PATH.ptr,
+            XdgDesktopPortal.FILE_CHOOSER_INTERFACE.ptr,
+            XdgDesktopPortal.OPEN_FILE_METHOD.ptr,
             payload,
             null,
             c.G_DBUS_CALL_FLAGS_NONE,
@@ -205,8 +199,8 @@ pub const XdgDesktopPortalFilePicker = struct {
             subscription_id = c.g_dbus_connection_signal_subscribe(
                 self.dbus,
                 null,
-                REQUEST_INTERFACE.ptr,
-                RESPONSE_SIGNAL.ptr,
+                XdgDesktopPortal.REQUEST_INTERFACE.ptr,
+                XdgDesktopPortal.RESPONSE_SIGNAL.ptr,
                 actual_request_path,
                 null,
                 c.G_DBUS_SIGNAL_FLAGS_NONE,

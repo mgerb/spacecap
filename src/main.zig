@@ -15,6 +15,7 @@ const ipc_module = @import("./ipc/ipc.zig");
 const IpcCommand = ipc_module.IpcCommand;
 const Env = @import("./env.zig");
 const Logger = @import("./logger.zig");
+const PlatformAppRegistration = @import("./app_registration/platform_app_registration.zig").PlatformAppRegistration;
 
 const log = std.log.scoped(.main);
 
@@ -88,6 +89,9 @@ fn cli_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !b
 /// and launch the UI/event loop.
 fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !void {
     _ = parsed_args;
+    var app_registration = try PlatformAppRegistration.init();
+    defer app_registration.deinit();
+
     PlatformCaptureSetup.init();
     defer PlatformCaptureSetup.deinit();
 
