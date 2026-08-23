@@ -34,9 +34,12 @@ const BuildZonFile = struct {
 };
 
 pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version_check: bool) !PackageVersion {
-    const manifest_source = try b.build_root.handle.readFileAllocOptions(
+    const manifest_path = try b.root.join(allocator, "build.zig.zon");
+    defer allocator.free(manifest_path.sub_path);
+
+    const manifest_source = try manifest_path.root_dir.handle.readFileAllocOptions(
         b.graph.io,
-        "build.zig.zon",
+        manifest_path.sub_path,
         allocator,
         .limited(1024 * 1024 * 10),
         .of(u8),
@@ -88,11 +91,14 @@ fn get_nightly_version(
         return allocator.dupe(u8, release_version);
     }
 
+    const build_root = try b.root.toString(allocator);
+    defer allocator.free(build_root);
+
     const result = std.process.run(allocator, b.graph.io, .{
         .argv = &.{
             "git",
             "-C",
-            b.build_root.path orelse ".",
+            build_root,
             "--git-dir",
             ".git",
             "describe",

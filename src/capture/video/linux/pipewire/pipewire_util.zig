@@ -37,8 +37,8 @@ pub fn dmabuf_export_sync_file(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Se
 
     const import_info = vk.ImportSemaphoreFdInfoKHR{
         .p_next = null,
-        .handle_type = .{ .sync_fd_bit = true },
-        .flags = .{ .temporary_bit = true },
+        .handle_type = .{ .sync_fd = true },
+        .flags = .{ .temporary = true },
         .semaphore = semaphore,
         .fd = data.fd,
     };

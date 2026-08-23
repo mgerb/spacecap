@@ -128,12 +128,12 @@ pub const VulkanVideoEncoder = struct {
             .wait_semaphores = try .initCapacity(allocator, 0),
             .wait_stage_masks = try .initCapacity(allocator, 0),
 
-            .encode_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
-            .compute_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null),
+            .encode_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled = true } }, null),
+            .compute_finished_fence = try vulkan.device.createFence(&.{ .flags = .{ .signaled = true } }, null),
         };
 
         try self.wait_semaphores.append(self.allocator, self.encode_semaphore);
-        try self.wait_stage_masks.append(self.allocator, .{ .all_commands_bit = true });
+        try self.wait_stage_masks.append(self.allocator, .{ .all_commands = true });
 
         try self.create_command_pools();
         errdefer {
@@ -197,7 +197,7 @@ pub const VulkanVideoEncoder = struct {
         defer self.vulkan.device.freeCommandBuffers(self.encode_command_pool.?, &.{command_buffer});
 
         const begin_info = vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
+            .flags = .{ .one_time_submit = true },
         };
 
         try self.vulkan.device.beginCommandBuffer(command_buffer, &begin_info);
@@ -228,23 +228,23 @@ pub const VulkanVideoEncoder = struct {
 
     fn create_command_pools(self: *Self) !void {
         const create_info = vk.CommandPoolCreateInfo{
-            .flags = .{ .reset_command_buffer_bit = true },
+            .flags = .{ .reset_command_buffer = true },
             .queue_family_index = self.vulkan.video_encode_queue.?.family,
         };
         self.encode_command_pool = try self.vulkan.device.createCommandPool(&create_info, null);
         self.graphics_command_pool = try self.vulkan.device.createCommandPool(&.{
             .queue_family_index = self.vulkan.graphics_queue.family,
-            .flags = .{ .reset_command_buffer_bit = true },
+            .flags = .{ .reset_command_buffer = true },
         }, null);
     }
 
     fn create_video_session(self: *Self) !void {
         const video_encode_h264_profile_info = vk.VideoEncodeH264ProfileInfoKHR{ .std_profile_idc = .main };
         self.video_profile = vk.VideoProfileInfoKHR{
-            .video_codec_operation = .{ .encode_h264_bit_khr = true },
-            .chroma_subsampling = .{ .@"420_bit_khr" = true },
-            .chroma_bit_depth = .{ .@"8_bit_khr" = true },
-            .luma_bit_depth = .{ .@"8_bit_khr" = true },
+            .video_codec_operation = .{ .encode_h264_khr = true },
+            .chroma_subsampling = .{ .@"420_khr" = true },
+            .chroma_bit_depth = .{ .@"8_khr" = true },
+            .luma_bit_depth = .{ .@"8_khr" = true },
             .p_next = &video_encode_h264_profile_info,
             .s_type = .video_profile_info_khr,
         };
@@ -269,12 +269,12 @@ pub const VulkanVideoEncoder = struct {
         try self.vulkan.instance.getPhysicalDeviceVideoCapabilitiesKHR(self.vulkan.physical_device, &self.video_profile.?, &capabilities);
 
         self.chosen_rate_control_mode = std.mem.zeroes(vk.VideoEncodeRateControlModeFlagsKHR);
-        if (encode_capabilities.rate_control_modes.vbr_bit_khr) {
-            self.chosen_rate_control_mode = .{ .vbr_bit_khr = true };
-        } else if (encode_capabilities.rate_control_modes.cbr_bit_khr) {
-            self.chosen_rate_control_mode = .{ .cbr_bit_khr = true };
-        } else if (encode_capabilities.rate_control_modes.disabled_bit_khr) {
-            self.chosen_rate_control_mode = .{ .disabled_bit_khr = true };
+        if (encode_capabilities.rate_control_modes.vbr_khr) {
+            self.chosen_rate_control_mode = .{ .vbr_khr = true };
+        } else if (encode_capabilities.rate_control_modes.cbr_khr) {
+            self.chosen_rate_control_mode = .{ .cbr_khr = true };
+        } else if (encode_capabilities.rate_control_modes.disabled_khr) {
+            self.chosen_rate_control_mode = .{ .disabled_khr = true };
         }
 
         var quality_level_info = std.mem.zeroes(vk.PhysicalDeviceVideoEncodeQualityLevelInfoKHR);
@@ -298,7 +298,7 @@ pub const VulkanVideoEncoder = struct {
         var video_format_info = std.mem.zeroes(vk.PhysicalDeviceVideoFormatInfoKHR);
         video_format_info.s_type = .physical_device_video_format_info_khr;
         video_format_info.p_next = &self.video_profile_list;
-        video_format_info.image_usage = .{ .video_encode_src_bit_khr = true, .transfer_dst_bit = true };
+        video_format_info.image_usage = .{ .video_encode_src_khr = true, .transfer_dst = true };
 
         var video_format_property_count: u32 = undefined;
 
@@ -345,7 +345,7 @@ pub const VulkanVideoEncoder = struct {
         }
 
         video_format_info.image_usage = std.mem.zeroes(vk.ImageUsageFlags);
-        video_format_info.image_usage = .{ .video_encode_dpb_bit_khr = true };
+        video_format_info.image_usage = .{ .video_encode_dpb_khr = true };
 
         result = try self.vulkan.instance.getPhysicalDeviceVideoFormatPropertiesKHR(
             self.vulkan.physical_device,
@@ -536,7 +536,7 @@ pub const VulkanVideoEncoder = struct {
         var buffer_info = std.mem.zeroes(vk.BufferCreateInfo);
         buffer_info.s_type = .buffer_create_info;
         buffer_info.size = 4 * 1024 * 1024;
-        buffer_info.usage = .{ .video_encode_dst_bit_khr = true };
+        buffer_info.usage = .{ .video_encode_dst_khr = true };
         buffer_info.sharing_mode = .exclusive;
         buffer_info.p_next = &self.video_profile_list.?;
 
@@ -545,7 +545,7 @@ pub const VulkanVideoEncoder = struct {
         const memory_reqs = self.vulkan.device.getBufferMemoryRequirements(self.bit_stream_buffer.?);
 
         self.bit_stream_memory = try self.vulkan.allocate(memory_reqs, .{
-            .host_visible_bit = true,
+            .host_visible = true,
         }, null);
         errdefer self.vulkan.device.freeMemory(self.bit_stream_memory.?, null);
 
@@ -564,9 +564,9 @@ pub const VulkanVideoEncoder = struct {
                 .extent = .{ .height = self.height, .width = self.width, .depth = 1 },
                 .mip_levels = 1,
                 .array_layers = 1,
-                .samples = .{ .@"1_bit" = true },
+                .samples = .{ .@"1" = true },
                 .tiling = .optimal,
-                .usage = .{ .video_encode_dpb_bit_khr = true },
+                .usage = .{ .video_encode_dpb_khr = true },
                 .sharing_mode = .exclusive,
                 .queue_family_index_count = 1,
                 .p_queue_family_indices = @ptrCast(&self.vulkan.video_encode_queue.?.family),
@@ -586,7 +586,7 @@ pub const VulkanVideoEncoder = struct {
                 .view_type = .@"2d",
                 .format = self.chosen_dpb_image_format.?,
                 .subresource_range = .{
-                    .aspect_mask = .{ .color_bit = true },
+                    .aspect_mask = .{ .color = true },
                     .base_mip_level = 0,
                     .level_count = 1,
                     .base_array_layer = 0,
@@ -607,16 +607,16 @@ pub const VulkanVideoEncoder = struct {
             .extent = .{ .height = self.height, .width = self.width, .depth = 1 },
             .mip_levels = 1,
             .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
+            .samples = .{ .@"1" = true },
             .tiling = .optimal,
-            .usage = .{ .video_encode_src_bit_khr = true, .storage_bit = true },
+            .usage = .{ .video_encode_src_khr = true, .storage = true },
             .sharing_mode = .exclusive,
             .queue_family_index_count = 0,
             .p_queue_family_indices = null,
             .initial_layout = .undefined,
             // This is causing a validation error as Nvidia driver is not returning those create flags
             // in getPhysicalDeviceVideoFormatPropertiesKHR
-            .flags = .{ .mutable_format_bit = true, .extended_usage_bit = true },
+            .flags = .{ .mutable_format = true, .extended_usage = true },
         };
 
         const queue_families = [_]u32{ self.vulkan.video_encode_queue.?.family, self.vulkan.graphics_queue.family };
@@ -629,11 +629,11 @@ pub const VulkanVideoEncoder = struct {
 
         self.ycbcr_image = try self.vulkan.device.createImage(&image_create_info, null);
         const memory_reqs = self.vulkan.device.getImageMemoryRequirements(self.ycbcr_image.?);
-        self.ycbcr_image_memory = try self.vulkan.allocate(memory_reqs, .{ .device_local_bit = true }, null);
+        self.ycbcr_image_memory = try self.vulkan.allocate(memory_reqs, .{ .device_local = true }, null);
         try self.vulkan.device.bindImageMemory(self.ycbcr_image.?, self.ycbcr_image_memory.?, 0);
 
         var view_usage_info = vk.ImageViewUsageCreateInfo{
-            .usage = .{ .video_encode_src_bit_khr = true },
+            .usage = .{ .video_encode_src_khr = true },
         };
 
         var view_info = vk.ImageViewCreateInfo{
@@ -642,7 +642,7 @@ pub const VulkanVideoEncoder = struct {
             .view_type = .@"2d",
             .format = self.chosen_src_image_format.?,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -653,13 +653,13 @@ pub const VulkanVideoEncoder = struct {
 
         self.ycbcr_image_view = try self.vulkan.device.createImageView(&view_info, null);
 
-        view_usage_info.usage = .{ .storage_bit = true };
+        view_usage_info.usage = .{ .storage = true };
 
         view_info.format = .r8_unorm;
-        view_info.subresource_range.aspect_mask = .{ .plane_0_bit = true };
+        view_info.subresource_range.aspect_mask = .{ .plane_0 = true };
         try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
 
-        view_info.subresource_range.aspect_mask = .{ .plane_1_bit = true };
+        view_info.subresource_range.aspect_mask = .{ .plane_1 = true };
 
         view_info.format = .r8g8_unorm;
         try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
@@ -669,8 +669,8 @@ pub const VulkanVideoEncoder = struct {
         const query_pool_video_encode_feedback_create_info = vk.QueryPoolVideoEncodeFeedbackCreateInfoKHR{
             .p_next = &self.video_profile.?,
             .encode_feedback_flags = .{
-                .bitstream_buffer_offset_bit_khr = true,
-                .bitstream_bytes_written_bit_khr = true,
+                .bitstream_buffer_offset_khr = true,
+                .bitstream_bytes_written_khr = true,
             },
         };
 
@@ -694,7 +694,7 @@ pub const VulkanVideoEncoder = struct {
         defer self.vulkan.device.destroyShaderModule(compute_shader_module, null);
 
         const compute_shader_stage_info = vk.PipelineShaderStageCreateInfo{
-            .stage = .{ .compute_bit = true },
+            .stage = .{ .compute = true },
             .module = compute_shader_module,
             .p_name = "main",
         };
@@ -705,7 +705,7 @@ pub const VulkanVideoEncoder = struct {
             lb.binding = @intCast(i);
             lb.descriptor_count = 1;
             lb.descriptor_type = .storage_image;
-            lb.stage_flags = .{ .compute_bit = true };
+            lb.stage_flags = .{ .compute = true };
         }
 
         const ycbcr_image_plane_view_size: u32 = @intCast(self.ycbcr_image_plane_views.items.len);
@@ -717,7 +717,7 @@ pub const VulkanVideoEncoder = struct {
         self.compute_descriptor_set_layout = try self.vulkan.device.createDescriptorSetLayout(&layout_info, null);
 
         const push_constant_range = vk.PushConstantRange{
-            .stage_flags = .{ .compute_bit = true },
+            .stage_flags = .{ .compute = true },
             .offset = 0,
             .size = @sizeOf(PushConstants),
         };
@@ -772,7 +772,7 @@ pub const VulkanVideoEncoder = struct {
 
         try self.wait_stage_masks.resize(self.allocator, semaphores.len + 1);
         self.wait_stage_masks.clearRetainingCapacity();
-        try self.wait_stage_masks.appendNTimes(self.allocator, .{ .all_commands_bit = true }, semaphores.len + 1);
+        try self.wait_stage_masks.appendNTimes(self.allocator, .{ .all_commands = true }, semaphores.len + 1);
 
         // Must always be at least length 1 for the encode_semaphore.
         assert(self.wait_semaphores.items.len > 0);
@@ -863,7 +863,7 @@ pub const VulkanVideoEncoder = struct {
         };
 
         self.encode_h264_rate_control_info = vk.VideoEncodeH264RateControlInfoKHR{
-            .flags = .{ .regular_gop_bit_khr = true, .reference_pattern_flat_bit_khr = true },
+            .flags = .{ .regular_gop_khr = true, .reference_pattern_flat_khr = true },
             .gop_frame_count = 16,
             .idr_period = 16,
             .consecutive_b_frame_count = 0,
@@ -879,11 +879,11 @@ pub const VulkanVideoEncoder = struct {
             .virtual_buffer_size_in_ms = 200,
         };
 
-        if (self.encode_rate_control_info.?.rate_control_mode.cbr_bit_khr) {
+        if (self.encode_rate_control_info.?.rate_control_mode.cbr_khr) {
             self.encode_rate_control_layer_info.?.average_bitrate = self.encode_rate_control_layer_info.?.max_bitrate;
         }
 
-        if (self.encode_rate_control_info.?.rate_control_mode.disabled_bit_khr or @as(
+        if (self.encode_rate_control_info.?.rate_control_mode.disabled_khr or @as(
             u32,
             @bitCast(self.encode_rate_control_info.?.rate_control_mode),
         ) == 0) {
@@ -898,7 +898,7 @@ pub const VulkanVideoEncoder = struct {
         self.vulkan.device.cmdBeginVideoCodingKHR(command_buffer, &begin_coding_info);
 
         const coding_control_info = vk.VideoCodingControlInfoKHR{
-            .flags = .{ .reset_bit_khr = true, .encode_rate_control_bit_khr = true },
+            .flags = .{ .reset_khr = true, .encode_rate_control_khr = true },
             .p_next = &self.encode_rate_control_info,
         };
         self.vulkan.device.cmdControlVideoCodingKHR(command_buffer, &coding_control_info);
@@ -911,11 +911,11 @@ pub const VulkanVideoEncoder = struct {
 
         for (self.dpb_images.items) |dpb_image| {
             const image_memory_barrier = vk.ImageMemoryBarrier2{
-                .src_stage_mask = .{ .bottom_of_pipe_bit = true },
-                .dst_stage_mask = .{ .top_of_pipe_bit = true },
+                .src_stage_mask = .{ .bottom_of_pipe = true },
+                .dst_stage_mask = .{ .top_of_pipe = true },
                 .old_layout = .undefined,
                 .subresource_range = .{
-                    .aspect_mask = .{ .color_bit = true },
+                    .aspect_mask = .{ .color = true },
                     .base_mip_level = 0,
                     .level_count = 1,
                     .base_array_layer = 0,
@@ -949,18 +949,18 @@ pub const VulkanVideoEncoder = struct {
         self.compute_command_buffer = command_buffer;
 
         try self.vulkan.device.beginCommandBuffer(self.compute_command_buffer.?, &.{
-            .flags = .{ .one_time_submit_bit = true },
+            .flags = .{ .one_time_submit = true },
         });
 
         var barriers = try std.ArrayList(vk.ImageMemoryBarrier2).initCapacity(self.allocator, 0);
         defer barriers.deinit(self.allocator);
         var image_memory_barrier = vk.ImageMemoryBarrier2{
-            .dst_stage_mask = .{ .compute_shader_bit = true },
+            .dst_stage_mask = .{ .compute_shader = true },
             .new_layout = .general,
             .subresource_range = .{
                 .aspect_mask = .{
-                    .plane_0_bit = true,
-                    .plane_1_bit = true,
+                    .plane_0 = true,
+                    .plane_1 = true,
                 },
                 .base_mip_level = 0,
                 .level_count = 1,
@@ -971,23 +971,23 @@ pub const VulkanVideoEncoder = struct {
             .src_access_mask = .{},
             .old_layout = .undefined,
             .image = self.ycbcr_image.?,
-            .dst_access_mask = .{ .shader_storage_write_bit = true },
+            .dst_access_mask = .{ .shader_storage_write = true },
             .src_queue_family_index = 0,
             .dst_queue_family_index = 0,
         };
 
         if (self.ycbcr_image_plane_views.items.len >= 3) {
-            image_memory_barrier.subresource_range.aspect_mask.plane_2_bit = true;
+            image_memory_barrier.subresource_range.aspect_mask.plane_2 = true;
         }
         try barriers.append(self.allocator, image_memory_barrier);
 
         // transition source image to be shader source
-        image_memory_barrier.src_stage_mask = .{ .color_attachment_output_bit = true };
-        image_memory_barrier.src_access_mask = .{ .color_attachment_write_bit = true };
+        image_memory_barrier.src_stage_mask = .{ .color_attachment_output = true };
+        image_memory_barrier.src_access_mask = .{ .color_attachment_write = true };
         image_memory_barrier.old_layout = .color_attachment_optimal;
         image_memory_barrier.image = self.input_images.?[current_image_ix];
-        image_memory_barrier.dst_access_mask = .{ .shader_storage_read_bit = true };
-        image_memory_barrier.subresource_range.aspect_mask = .{ .color_bit = true };
+        image_memory_barrier.dst_access_mask = .{ .shader_storage_read = true };
+        image_memory_barrier.subresource_range.aspect_mask = .{ .color = true };
         try barriers.append(self.allocator, image_memory_barrier);
 
         const dependency_info = vk.DependencyInfo{
@@ -1016,7 +1016,7 @@ pub const VulkanVideoEncoder = struct {
         self.vulkan.device.cmdPushConstants(
             self.compute_command_buffer.?,
             self.compute_pipeline_layout.?,
-            .{ .compute_bit = true },
+            .{ .compute = true },
             0,
             @sizeOf(PushConstants),
             @ptrCast(&push_constants),
@@ -1089,7 +1089,7 @@ pub const VulkanVideoEncoder = struct {
         self.encode_command_buffer = command_buffer;
 
         const begin_info = vk.CommandBufferBeginInfo{
-            .flags = .{ .one_time_submit_bit = true },
+            .flags = .{ .one_time_submit = true },
         };
 
         try self.vulkan.device.beginCommandBuffer(self.encode_command_buffer.?, &begin_info);
@@ -1158,13 +1158,13 @@ pub const VulkanVideoEncoder = struct {
         const image_memory_barrier = vk.ImageMemoryBarrier2{
             .src_stage_mask = .{},
             .src_access_mask = .{},
-            .dst_stage_mask = .{ .video_encode_bit_khr = true },
-            .dst_access_mask = .{ .video_encode_read_bit_khr = true },
+            .dst_stage_mask = .{ .video_encode_khr = true },
+            .dst_access_mask = .{ .video_encode_read_khr = true },
             .old_layout = .general,
             .new_layout = .video_encode_src_khr,
             .image = self.ycbcr_image.?,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -1194,7 +1194,7 @@ pub const VulkanVideoEncoder = struct {
             gop_frame_count,
             self.sps.?,
             self.pps.?,
-            self.chosen_rate_control_mode.?.disabled_bit_khr,
+            self.chosen_rate_control_mode.?.disabled_khr,
         );
 
         var video_encode_info = vk.VideoEncodeInfoKHR{
@@ -1227,7 +1227,7 @@ pub const VulkanVideoEncoder = struct {
         try self.vulkan.device.endCommandBuffer(self.encode_command_buffer.?);
 
         const dst_stage_mask = vk.PipelineStageFlags{
-            .all_commands_bit = true,
+            .all_commands = true,
         };
         const submit_info = vk.SubmitInfo{
             .wait_semaphore_count = 1,
@@ -1295,7 +1295,7 @@ pub const VulkanVideoEncoder = struct {
             @sizeOf(VideoEncodeStatus),
             @ptrCast(&encode_result),
             @sizeOf(VideoEncodeStatus),
-            .{ .with_status_bit_khr = true, .wait_bit = true },
+            .{ .with_status_khr = true, .wait = true },
         );
 
         if (result != .success) {

@@ -67,11 +67,6 @@ fn add_shared_dependencies(
         .optimize = optimize,
         .freetype = true,
     }).module("imguiz");
-    if (target.result.os.tag == .windows) {
-        // MinGW fortify emits inline wcscat_s/wcscpy_s wrappers that Zig 0.16
-        // currently translates with unused local constants in ReleaseSafe.
-        imguiz.addCMacro("_FORTIFY_SOURCE", "0");
-    }
     exe.root_module.addImport("imguiz", imguiz);
 
     // zig-clap
@@ -105,31 +100,34 @@ fn add_linux_dependencies(
     exe.root_module.addImport("libportal", libportal.module("libportal"));
     exe.root_module.addObjectFile(libportal.namedLazyPath("portal"));
 
-    exe.root_module.linkSystemLibrary("wayland-client", .{});
-
     // Vulkan is linked directly, because it is required that the
     // system has the libs installed.
     exe.root_module.linkSystemLibrary("vulkan", .{});
 
-    ffmpeg_build_util.build_linux(b, exe);
+    ffmpeg_build_util.build_linux(b, exe, target, optimize);
+
+    const linux_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/common/linux/linux_c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    linux_c.linkSystemLibrary("wayland-client", .{});
+    exe.root_module.addImport("linux_c", linux_c.createModule());
 }
 
 fn add_windows_dependencies(
     allocator: std.mem.Allocator,
     b: *std.Build,
     exe: *std.Build.Step.Compile,
-    _: std.Build.ResolvedTarget,
-    _: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
 ) !void {
     _ = allocator;
-    ffmpeg_build_util.build_windows(b, exe);
+    ffmpeg_build_util.build_windows(b, exe, target, optimize);
     const vulkan_sdk_path_windows = b.graph.environ_map.get("VULKAN_SDK_PATH_WINDOWS").?;
     exe.root_module.addLibraryPath(.{ .cwd_relative = vulkan_sdk_path_windows });
 
     exe.root_module.linkSystemLibrary("vulkan-1", .{});
-
-    // All windows machines should be able to link to this by default
-    exe.root_module.linkSystemLibrary("gdi32", .{});
 }
 
 /// NOTE: This is not used anymore. We are statically linking everything we can
@@ -197,8 +195,6 @@ fn build_windows(
         .optimize = optimize,
         .link_libc = true,
     });
-    // See comment above where this macro is added.
-    module.addCMacro("_FORTIFY_SOURCE", "0");
     module.addOptions("build_options", options);
 
     const exe = b.addExecutable(.{
@@ -257,14 +253,10 @@ fn build_linux(
     });
     b.getInstallStep().dependOn(&install_step.step);
 
-    const run_cmd = b.addSystemCommand(&.{
-        b.getInstallPath(.prefix, "linux/" ++ EXE_NAME),
-    });
+    const run_cmd = b.addRunFile(b.graph.path(.install_prefix, "linux/" ++ EXE_NAME));
     run_cmd.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
@@ -345,7 +337,7 @@ pub fn build(b: *std.Build) !void {
     }
 
     const optimize = b.standardOptimizeOption(.{});
-    if (appimage_option and optimize == .Debug) {
+    if (appimage_option and optimize == .debug) {
         std.log.err("AppImage builds require a release optimize mode. Use -Doptimize=ReleaseSafe, -Doptimize=ReleaseFast, or -Doptimize=ReleaseSmall.", .{});
         return error.InvalidBuildConfig;
     }
@@ -358,13 +350,7 @@ pub fn build(b: *std.Build) !void {
         options,
     );
 
-    const linux_target = if (nix_option == true) b.standardTargetOptions(.{
-        // TODO: Remove this when the zig pipewire module is fixed.
-        // https://github.com/allyourcodebase/pipewire/issues/6
-        .default_target = .{
-            .glibc_version = .{ .major = 2, .minor = 42, .patch = 0 },
-        },
-    }) else b.resolveTargetQuery(.{
+    const linux_target = if (nix_option == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
         .os_tag = .linux,
         .abi = .gnu,
         .cpu_arch = .x86_64,
@@ -381,7 +367,7 @@ pub fn build(b: *std.Build) !void {
     );
 
     if (appimage_option) {
-        const appimage_step = build_linux_app_image(b, allocator, linux_install_step);
+        const appimage_step = build_linux_app_image(b, linux_install_step);
         b.getInstallStep().dependOn(appimage_step);
     }
 

@@ -3,62 +3,81 @@ const std = @import("std");
 pub fn build_linux(
     b: *std.Build,
     exe: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
 ) void {
-    const ffmpeg_build = build_for_target(
+    build_for_target(
         b,
         exe,
+        target,
+        optimize,
         "linux",
-        "ffmpeg-build",
-        "ffmpeg-install",
+        "ffmpeg-linux",
     );
-    link_libs(exe, ffmpeg_build.include_dir, ffmpeg_build.lib_dir);
+
+    // Link Linux specific libs here.
     exe.root_module.linkSystemLibrary("zlib", .{});
 }
 
 pub fn build_windows(
     b: *std.Build,
     exe: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
 ) void {
-    const ffmpeg_build = build_for_target(
+    build_for_target(
         b,
         exe,
+        target,
+        optimize,
         "windows",
-        "ffmpeg-build-windows",
-        "ffmpeg-install-windows",
+        "ffmpeg-windows",
     );
-    link_libs(exe, ffmpeg_build.include_dir, ffmpeg_build.lib_dir);
+
+    // Link Windows specific libs here.
     exe.root_module.linkSystemLibrary("bcrypt", .{});
 }
 
 fn build_for_target(
     b: *std.Build,
     exe: *std.Build.Step.Compile,
-    target: []const u8,
-    build_dir_name: []const u8,
-    install_dir_name: []const u8,
-) struct { include_dir: std.Build.LazyPath, lib_dir: std.Build.LazyPath } {
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    name: []const u8,
+    output_dir_name: []const u8,
+) void {
+    // ----------------------------------------------------------------------------
+    // Build FFmpeg.
+    // ----------------------------------------------------------------------------
     const ffmpeg = b.dependency("ffmpeg", .{});
     const build_ffmpeg_step = b.addSystemCommand(&.{"bash"});
     build_ffmpeg_step.addFileArg(b.path("build/ffmpeg_build.sh"));
-    build_ffmpeg_step.addArg(target);
-    _ = build_ffmpeg_step.addOutputDirectoryArg(build_dir_name);
-    const ffmpeg_install_prefix = build_ffmpeg_step.addOutputDirectoryArg(install_dir_name);
-    build_ffmpeg_step.addArg(ffmpeg.path("").getPath(b));
+    build_ffmpeg_step.addArg(name);
+    const ffmpeg_output = build_ffmpeg_step.addOutputDirectoryArg2(output_dir_name, .{
+        .make_absolute = true,
+    });
+    build_ffmpeg_step.addDirectoryArg2(ffmpeg.path(""), .{});
     build_ffmpeg_step.expectExitCode(0);
-    build_ffmpeg_step.setName(build_dir_name);
+    build_ffmpeg_step.setName(output_dir_name);
     exe.step.dependOn(&build_ffmpeg_step.step);
 
-    return .{
-        .include_dir = ffmpeg_install_prefix.path(b, "include"),
-        .lib_dir = ffmpeg_install_prefix.path(b, "lib"),
-    };
-}
+    const include_dir = ffmpeg_output.path(b, "install/include");
+    const lib_dir = ffmpeg_output.path(b, "install/lib");
 
-fn link_libs(
-    exe: *std.Build.Step.Compile,
-    include_dir: std.Build.LazyPath,
-    lib_dir: std.Build.LazyPath,
-) void {
+    // ----------------------------------------------------------------------------
+    // Add bindings.
+    // ----------------------------------------------------------------------------
+    const ffmpeg_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/ffmpeg/ffmpeg_c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    ffmpeg_c.addIncludePath(include_dir);
+    exe.root_module.addImport("ffmpeg_c", ffmpeg_c.createModule());
+
+    // ----------------------------------------------------------------------------
+    // Link libraries.
+    // ----------------------------------------------------------------------------
     exe.root_module.addIncludePath(include_dir);
     exe.root_module.addLibraryPath(lib_dir);
     exe.root_module.linkSystemLibrary("avformat", .{ .preferred_link_mode = .static });

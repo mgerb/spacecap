@@ -1,15 +1,7 @@
 const std = @import("std");
+const c = @import("ffmpeg_c");
 
 const log = std.log.scoped(.ffmpeg);
-
-pub const c = @cImport({
-    @cInclude("errno.h");
-    @cInclude("libavutil/opt.h");
-    @cInclude("libavutil/frame.h");
-    @cInclude("libavutil/pixfmt.h");
-    @cInclude("libavformat/avformat.h");
-    @cInclude("libavcodec/avcodec.h");
-});
 
 pub fn check_err(ret: c_int) !void {
     if (ret < 0) {

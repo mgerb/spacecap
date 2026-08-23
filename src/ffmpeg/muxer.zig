@@ -3,8 +3,8 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Util = @import("../util.zig");
 const LinkedListIterator = Util.LinkedListIterator;
-const c = @import("./c.zig").c;
-const check_err = @import("./c.zig").check_err;
+const c = @import("ffmpeg_c");
+const check_err = @import("./util.zig").check_err;
 const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
 
 pub const Muxer = struct {
@@ -320,7 +320,7 @@ pub const Muxer = struct {
 
         const path = try std.fs.path.join(allocator, &.{ output_directory, base_name });
         defer allocator.free(path);
-        return allocator.dupeZ(u8, path);
+        return allocator.dupeSentinel(u8, path, 0);
     }
 };
 

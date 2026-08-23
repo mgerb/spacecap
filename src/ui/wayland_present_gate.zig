@@ -13,10 +13,7 @@ pub const WaylandPresentGate = if (util.is_linux()) LinuxWaylandPresentGate else
 
 const LinuxWaylandPresentGate = struct {
     const Self = @This();
-    const c = @cImport({
-        @cInclude("wayland-client-core.h");
-        @cInclude("wayland-client-protocol.h");
-    });
+    const c = @import("linux_c");
     const log = std.log.scoped(.wayland_present_gate);
 
     const frame_listener = c.struct_wl_callback_listener{

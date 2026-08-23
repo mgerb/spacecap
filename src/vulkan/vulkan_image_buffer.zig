@@ -50,7 +50,7 @@ pub const VulkanImageBuffer = struct {
         args: InitArgs,
     ) !Arc(Self) {
         const base_image_usage: vk.ImageUsageFlags = .{
-            .transfer_dst_bit = true,
+            .transfer_dst = true,
         };
 
         const image_create_info = vk.ImageCreateInfo{
@@ -59,7 +59,7 @@ pub const VulkanImageBuffer = struct {
             .extent = .{ .width = args.width, .height = args.height, .depth = 1 },
             .mip_levels = 1,
             .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
+            .samples = .{ .@"1" = true },
             .tiling = .optimal,
             .usage = @bitCast(@as(vk.Flags, @bitCast(base_image_usage)) | @as(vk.Flags, @bitCast(args.usage))),
             .sharing_mode = .exclusive,
@@ -69,7 +69,7 @@ pub const VulkanImageBuffer = struct {
         const image = try args.vulkan.device.createImage(&image_create_info, null);
         errdefer args.vulkan.device.destroyImage(image, null);
         const mem_req = args.vulkan.device.getImageMemoryRequirements(image);
-        const image_memory = try args.vulkan.allocate(mem_req, .{ .device_local_bit = true }, null);
+        const image_memory = try args.vulkan.allocate(mem_req, .{ .device_local = true }, null);
         errdefer args.vulkan.device.freeMemory(image_memory, null);
         try args.vulkan.device.bindImageMemory(image, image_memory, 0);
 
@@ -79,7 +79,7 @@ pub const VulkanImageBuffer = struct {
             .format = .r8g8b8a8_unorm,
             .components = args.image_component_mapping,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -91,7 +91,7 @@ pub const VulkanImageBuffer = struct {
 
         const command_pool = try args.vulkan.device.createCommandPool(&.{
             .queue_family_index = args.vulkan.graphics_queue.family,
-            .flags = .{ .reset_command_buffer_bit = true },
+            .flags = .{ .reset_command_buffer = true },
         }, null);
         errdefer args.vulkan.device.destroyCommandPool(command_pool, null);
 
@@ -107,7 +107,7 @@ pub const VulkanImageBuffer = struct {
         errdefer args.vulkan.device.freeCommandBuffers(command_pool, &.{command_buffer});
         const signal_semaphore = try args.vulkan.device.createSemaphore(&.{}, null);
         errdefer args.vulkan.device.destroySemaphore(signal_semaphore, null);
-        const fence = try args.vulkan.device.createFence(&.{ .flags = .{ .signaled_bit = true } }, null);
+        const fence = try args.vulkan.device.createFence(&.{ .flags = .{ .signaled = true } }, null);
         errdefer args.vulkan.device.destroyFence(fence, null);
 
         return try .init(args.allocator, .{

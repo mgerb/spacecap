@@ -350,7 +350,7 @@ pub const XdgDesktopPortalGlobalShortcuts = struct {
                         return;
                     }
 
-                    shortcuts.handle = shortcuts.allocator.dupeZ(u8, std.mem.span(handle.?)) catch {
+                    shortcuts.handle = shortcuts.allocator.dupeSentinel(u8, std.mem.span(handle.?), 0) catch {
                         log.err("out of memory: failed to clone session handle", .{});
                         return;
                     };

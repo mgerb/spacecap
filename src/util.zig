@@ -4,7 +4,7 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.util);
 const Env = @import("./env.zig");
 
-pub const DEBUG = @import("builtin").mode == .Debug;
+pub const DEBUG = @import("builtin").mode == .debug;
 pub var test_app_data_dir: ?[]const u8 = null;
 
 pub fn is_windows() bool {

@@ -36,7 +36,7 @@ pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensi
         extensions.deinit(allocator);
     }
     for (0..extensions_count) |i| {
-        const copied = try allocator.dupeZ(u8, std.mem.span(sdl_extensions[i]));
+        const copied = try allocator.dupeSentinel(u8, std.mem.span(sdl_extensions[i]), 0);
         try extensions.append(allocator, copied);
     }
 

@@ -46,7 +46,7 @@ pub fn load_token_z(
 ) !?[:0]u8 {
     if (try load_token(allocator, io, token_file_name)) |token| {
         defer allocator.free(token);
-        const token_z = try allocator.dupeZ(u8, token);
+        const token_z = try allocator.dupeSentinel(u8, token, 0);
         return token_z;
     }
     return null;

@@ -135,7 +135,7 @@ pub const PipewireAudio = struct {
         if (selected_device.device_type == .sink) {
             _ = pw.pw_properties_set(props, pw.PW_KEY_STREAM_CAPTURE_SINK, "true");
         }
-        const target_object = try self.allocator.dupeZ(u8, selected_device.id);
+        const target_object = try self.allocator.dupeSentinel(u8, selected_device.id, 0);
         defer self.allocator.free(target_object);
         _ = pw.pw_properties_set(props, pw.PW_KEY_TARGET_OBJECT, target_object);
 
@@ -308,7 +308,7 @@ pub const PipewireAudio = struct {
         var media_type: u32 = 0;
         var media_subtype: u32 = 0;
 
-        if (c_def.spa_format_parse(param, @ptrCast(&media_type), @ptrCast(&media_subtype)) < 0) {
+        if (pw.spa_format_parse(param, @ptrCast(&media_type), @ptrCast(&media_subtype)) < 0) {
             return;
         }
 

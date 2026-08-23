@@ -180,14 +180,14 @@ pub const Vulkan = struct {
         if (util.DEBUG) {
             debug_messenger = try instance.createDebugUtilsMessengerEXT(&.{
                 .message_severity = .{
-                    .error_bit_ext = true,
-                    .warning_bit_ext = true,
+                    .error_ext = true,
+                    .warning_ext = true,
                 },
                 .message_type = .{
-                    .general_bit_ext = true,
-                    .validation_bit_ext = true,
-                    .performance_bit_ext = true,
-                    .device_address_binding_bit_ext = false,
+                    .general_ext = true,
+                    .validation_ext = true,
+                    .performance_ext = true,
+                    .device_address_binding_ext = false,
                 },
                 .pfn_user_callback = debug_callback,
             }, null);
@@ -316,8 +316,8 @@ pub const Vulkan = struct {
                 .allocator = self.allocator,
                 .io = self.io,
                 .vulkan = self,
-                .dst_access_mask = .{ .shader_read_bit = true },
-                .dst_stage_mask = .{ .fragment_shader_bit = true },
+                .dst_access_mask = .{ .shader_read = true },
+                .dst_stage_mask = .{ .fragment_shader = true },
                 .image_component_mapping = .{
                     .r = .b,
                     .g = .identity,
@@ -327,7 +327,7 @@ pub const Vulkan = struct {
                 .image_layout = .shader_read_only_optimal,
                 .width = width,
                 .height = height,
-                .usage = .{ .sampled_bit = true },
+                .usage = .{ .sampled = true },
                 .src_queue_family_index = self.graphics_queue.family,
             },
         ));
@@ -352,8 +352,8 @@ pub const Vulkan = struct {
                 .allocator = self.allocator,
                 .io = self.io,
                 .vulkan = self,
-                .dst_access_mask = .{ .transfer_write_bit = true },
-                .dst_stage_mask = .{ .all_transfer_bit = true },
+                .dst_access_mask = .{ .transfer_write = true },
+                .dst_stage_mask = .{ .all_transfer = true },
                 .image_layout = .color_attachment_optimal,
                 .image_component_mapping = .{
                     .r = .identity,
@@ -363,7 +363,7 @@ pub const Vulkan = struct {
                 },
                 .width = width,
                 .height = height,
-                .usage = .{ .storage_bit = true, .transfer_src_bit = true, .color_attachment_bit = true },
+                .usage = .{ .storage = true, .transfer_src = true, .color_attachment = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_EXTERNAL,
             },
         ));
@@ -552,11 +552,11 @@ pub const Vulkan = struct {
         for (families, 0..) |properties, i| {
             const family: u32 = @intCast(i);
 
-            if (graphics_family == null and properties.queue_flags.graphics_bit) {
+            if (graphics_family == null and properties.queue_flags.graphics) {
                 graphics_family = family;
             }
 
-            if (video_encode_family == null and properties.queue_flags.video_encode_bit_khr) {
+            if (video_encode_family == null and properties.queue_flags.video_encode_khr) {
                 video_encode_family = family;
             }
         }
@@ -806,7 +806,7 @@ pub const Vulkan = struct {
 
         const buffer_create_info = vk.BufferCreateInfo{
             .size = size,
-            .usage = .{ .transfer_dst_bit = true },
+            .usage = .{ .transfer_dst = true },
             .sharing_mode = .exclusive,
         };
 
@@ -816,7 +816,7 @@ pub const Vulkan = struct {
         const mem_reqs = self.device.getBufferMemoryRequirements(buffer);
         const memory = try self.allocate(
             mem_reqs,
-            .{ .host_visible_bit = true, .host_coherent_bit = true },
+            .{ .host_visible = true, .host_coherent = true },
             null,
         );
         defer self.device.freeMemory(memory, null);
@@ -825,7 +825,7 @@ pub const Vulkan = struct {
 
         const command_pool = try self.device.createCommandPool(&.{
             .queue_family_index = self.graphics_queue.family,
-            .flags = .{ .reset_command_buffer_bit = true },
+            .flags = .{ .reset_command_buffer = true },
         }, null);
         defer self.device.destroyCommandPool(command_pool, null);
 
@@ -842,7 +842,7 @@ pub const Vulkan = struct {
         try self.device.beginCommandBuffer(command_buffer, &.{});
 
         const color_subresource_range = vk.ImageSubresourceRange{
-            .aspect_mask = .{ .color_bit = true },
+            .aspect_mask = .{ .color = true },
             .base_mip_level = 0,
             .level_count = 1,
             .base_array_layer = 0,
@@ -852,8 +852,8 @@ pub const Vulkan = struct {
         const image_to_transfer_barrier = vk.ImageMemoryBarrier2{
             .src_stage_mask = args.src_stage_mask,
             .src_access_mask = args.src_access_mask,
-            .dst_stage_mask = .{ .all_transfer_bit = true },
-            .dst_access_mask = .{ .transfer_read_bit = true },
+            .dst_stage_mask = .{ .all_transfer = true },
+            .dst_access_mask = .{ .transfer_read = true },
             .old_layout = image_layout,
             .new_layout = .transfer_src_optimal,
             .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
@@ -872,7 +872,7 @@ pub const Vulkan = struct {
             .buffer_row_length = 0,
             .buffer_image_height = 0,
             .image_subresource = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .mip_level = 0,
                 .base_array_layer = 0,
                 .layer_count = 1,
@@ -890,10 +890,10 @@ pub const Vulkan = struct {
         );
 
         const buffer_read_barrier = vk.BufferMemoryBarrier2{
-            .src_stage_mask = .{ .all_transfer_bit = true },
-            .src_access_mask = .{ .transfer_write_bit = true },
-            .dst_stage_mask = .{ .host_bit = true },
-            .dst_access_mask = .{ .host_read_bit = true },
+            .src_stage_mask = .{ .all_transfer = true },
+            .src_access_mask = .{ .transfer_write = true },
+            .dst_stage_mask = .{ .host = true },
+            .dst_access_mask = .{ .host_read = true },
             .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .buffer = buffer,
@@ -957,15 +957,15 @@ pub const Vulkan = struct {
         try self.device.beginCommandBuffer(command_buffer, &.{});
 
         const src_barrier = vk.ImageMemoryBarrier2{
-            .dst_stage_mask = .{ .all_transfer_bit = true },
-            .dst_access_mask = .{ .transfer_read_bit = true },
+            .dst_stage_mask = .{ .all_transfer = true },
+            .dst_access_mask = .{ .transfer_read = true },
             .old_layout = .color_attachment_optimal,
             .new_layout = .transfer_src_optimal,
             .src_queue_family_index = args.src_queue_family_index,
             .dst_queue_family_index = self.graphics_queue.family,
             .image = src_image,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -981,15 +981,15 @@ pub const Vulkan = struct {
         const dst_barrier = vk.ImageMemoryBarrier2{
             .src_stage_mask = .{},
             .src_access_mask = .{},
-            .dst_stage_mask = .{ .all_transfer_bit = true },
-            .dst_access_mask = .{ .transfer_write_bit = true },
+            .dst_stage_mask = .{ .all_transfer = true },
+            .dst_access_mask = .{ .transfer_write = true },
             .old_layout = .undefined,
             .new_layout = .transfer_dst_optimal,
             .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .image = dst_image,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -1008,7 +1008,7 @@ pub const Vulkan = struct {
         // background will have the previous frames.
         const clear_value = vk.ClearColorValue{ .float_32 = .{ 0, 0, 0, 1 } };
         const clear_range = vk.ImageSubresourceRange{
-            .aspect_mask = .{ .color_bit = true },
+            .aspect_mask = .{ .color = true },
             .base_mip_level = 0,
             .level_count = 1,
             .base_array_layer = 0,
@@ -1026,9 +1026,9 @@ pub const Vulkan = struct {
         const copy_height = @min(dst_height, src_height);
 
         const copy_region = vk.ImageCopy{
-            .src_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
+            .src_subresource = .{ .aspect_mask = .{ .color = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
             .src_offset = .{ .x = 0, .y = 0, .z = 0 },
-            .dst_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
+            .dst_subresource = .{ .aspect_mask = .{ .color = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = 1 },
             .dst_offset = .{ .x = 0, .y = 0, .z = 0 },
             .extent = .{ .width = copy_width, .height = copy_height, .depth = 1 },
         };
@@ -1044,17 +1044,17 @@ pub const Vulkan = struct {
 
         // Transfer the source image back to its original layout.
         const src_restore_barrier = vk.ImageMemoryBarrier2{
-            .src_stage_mask = .{ .all_transfer_bit = true },
-            .src_access_mask = .{ .transfer_read_bit = true },
-            .dst_stage_mask = .{ .color_attachment_output_bit = true },
-            .dst_access_mask = .{ .color_attachment_write_bit = true },
+            .src_stage_mask = .{ .all_transfer = true },
+            .src_access_mask = .{ .transfer_read = true },
+            .dst_stage_mask = .{ .color_attachment_output = true },
+            .dst_access_mask = .{ .color_attachment_write = true },
             .old_layout = .transfer_src_optimal,
             .new_layout = .color_attachment_optimal,
             .src_queue_family_index = args.src_queue_family_index,
             .dst_queue_family_index = self.graphics_queue.family,
             .image = src_image,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -1070,8 +1070,8 @@ pub const Vulkan = struct {
         self.device.cmdPipelineBarrier2(command_buffer, &src_restore_dep_info);
 
         const post_copy_barrier = vk.ImageMemoryBarrier2{
-            .src_stage_mask = .{ .all_transfer_bit = true },
-            .src_access_mask = .{ .transfer_write_bit = true },
+            .src_stage_mask = .{ .all_transfer = true },
+            .src_access_mask = .{ .transfer_write = true },
             .dst_stage_mask = args.dst_stage_mask,
             .dst_access_mask = args.dst_access_mask,
             .old_layout = .transfer_dst_optimal,
@@ -1080,7 +1080,7 @@ pub const Vulkan = struct {
             .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .image = dst_image,
             .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
+                .aspect_mask = .{ .color = true },
                 .base_mip_level = 0,
                 .level_count = 1,
                 .base_array_layer = 0,
@@ -1098,7 +1098,7 @@ pub const Vulkan = struct {
         try self.device.endCommandBuffer(command_buffer);
 
         const dst_stage_mask = vk.PipelineStageFlags{
-            .transfer_bit = true,
+            .transfer = true,
         };
         const submit_info = vk.SubmitInfo{
             .command_buffer_count = 1,
