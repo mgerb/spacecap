@@ -1,4 +1,4 @@
-const args = @import("../args.zig");
+const argparse = @import("../argparse.zig");
 
 pub const IpcCommand = enum {
     save_replay,
@@ -10,7 +10,7 @@ pub const IpcCommand = enum {
     stop_recording,
     toggle_recording,
 
-    pub fn from_send_command(send_cmd: args.SendCommand) @This() {
+    pub fn from_send_command(send_cmd: argparse.SendCommand) @This() {
         return switch (send_cmd) {
             .@"save-replay" => .save_replay,
             .screenshot => .screenshot,

@@ -68,13 +68,6 @@ fn add_shared_dependencies(
         .freetype = true,
     }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
-
-    // zig-clap
-    const clap = b.dependency("clap", .{
-        .target = target,
-        .optimize = optimize,
-    }).module("clap");
-    exe.root_module.addImport("clap", clap);
 }
 
 fn add_linux_dependencies(
