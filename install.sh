@@ -10,7 +10,7 @@ RELEASES_URL="https://github.com/mgerb/spacecap/releases"
 RAW_URL="https://raw.githubusercontent.com/mgerb/spacecap/main"
 DESKTOP_URL="$RAW_URL/packaging/linux/$APP_ID.desktop"
 ICON_URL="$RAW_URL/packaging/spacecap.svg"
-CHANNEL="nightly"
+CHANNEL="stable"
 MODE="install"
 
 err() {
