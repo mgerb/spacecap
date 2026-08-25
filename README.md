@@ -17,8 +17,11 @@ High performance screen recording software for Linux. _Still pre-alpha (see feat
 ```sh
 # Spacecap will be installed to ~/.local/bin/spacecap
 
-# Install
+# Install the latest stable release
 curl -LsSf https://spacecap.org/install | sh
+
+# Install the latest nightly build, which is in sync with main
+curl -LsSf https://spacecap.org/install | sh -s -- --nightly
 
 # Uninstall
 curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
