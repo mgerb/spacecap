@@ -4,7 +4,7 @@ const Vulkan = @import("./vulkan/vulkan.zig").Vulkan;
 const Util = @import("./util.zig");
 const sdl = @import("./ui/sdl.zig");
 const PlatformCaptureSetup = @import("./capture/platform_capture_setup.zig").PlatformCaptureSetup;
-const args = @import("./args.zig");
+const argparse = @import("./argparse.zig");
 const PlatformIpc = @import("./ipc/platform_ipc.zig").PlatformIpc;
 const PlatformAudioCapture = @import("./capture/audio/platform_audio_capture.zig").PlatformAudioCapture;
 const PlatformVideoCapture = @import("./capture/video/platform_video_capture.zig").PlatformVideoCapture;
@@ -16,6 +16,7 @@ const IpcCommand = ipc_module.IpcCommand;
 const Env = @import("./env.zig");
 const Logger = @import("./logger.zig");
 const PlatformAppRegistration = @import("./app_registration/platform_app_registration.zig").PlatformAppRegistration;
+const build_options = @import("build_options");
 
 const log = std.log.scoped(.main);
 
@@ -42,7 +43,10 @@ pub fn main(init: std.process.Init) !void {
     // default logger. This includes logger invocations within Logger.init.
     defer Logger.deinit();
 
-    const parsed_args: ?args.Args = args.parse(init);
+    const parsed_args = argparse.parse_args(init) catch |err| switch (err) {
+        error.InvalidArguments => std.process.exit(1),
+        else => return err,
+    };
 
     if (try cli_app(allocator, init.io, parsed_args)) {
         return;
@@ -52,11 +56,20 @@ pub fn main(init: std.process.Init) !void {
 
 /// Handle command-line-only modes and return whether execution
 /// should stop before launching the full app.
-fn cli_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !bool {
+fn cli_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?argparse.Arg) !bool {
     if (!comptime Util.is_linux()) return false;
     const linux_args = parsed_args orelse return false;
 
     switch (linux_args) {
+        .help => {
+            try argparse.print_help_menu(io, null);
+            return true;
+        },
+        .version => {
+            var stdout = std.Io.File.stdout().writer(io, &.{});
+            stdout.interface.print("{s}\n", .{build_options.version}) catch @panic("[cli_app] print_version error");
+            return true;
+        },
         .send => |send_cmd| {
             const ipc_command = IpcCommand.from_send_command(send_cmd);
             const _ipc = try PlatformIpc.init(allocator, io, null);
@@ -87,7 +100,7 @@ fn cli_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !b
 
 /// Run the full Spacecap application, start global shortcuts + IPC server,
 /// and launch the UI/event loop.
-fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?args.Args) !void {
+fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?argparse.Arg) !void {
     _ = parsed_args;
     var app_registration = try PlatformAppRegistration.init();
     defer app_registration.deinit();

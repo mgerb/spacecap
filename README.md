@@ -3,9 +3,9 @@
 </p>
 <h1 align="center">Spacecap</h1>
 
-Hardware accelerated screen recording software for Linux. _Still pre-alpha (see features/roadmap below)_.
+High performance screen recording software for Linux. _Still pre-alpha (see features/roadmap below)_.
 
-- Written in [Zig (0.16.0)](https://ziglang.org/)
+- Written in [Zig (0.17.0)](https://ziglang.org/)
 - Video encoding with Vulkan Video ([vulkan-zig](https://github.com/Snektron/vulkan-zig))
 - UI built with [imgui](https://github.com/ocornut/imgui) and [SDL3](https://github.com/allyourcodebase/SDL3)
 - Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/)
