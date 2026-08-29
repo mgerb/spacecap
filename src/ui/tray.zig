@@ -15,6 +15,7 @@ pub const Tray = struct {
         recording_to_disk: bool = false,
         replay_buffer_active: bool = false,
         video_capture_active: bool = false,
+        video_encoding_supported: bool = false,
     };
 
     store: *Store,
@@ -27,6 +28,7 @@ pub const Tray = struct {
         .recording_to_disk = false,
         .replay_buffer_active = false,
         .video_capture_active = false,
+        .video_encoding_supported = false,
     },
 
     pub fn init(store: *Store, app_icon: *AppIcon) !Self {
@@ -107,10 +109,16 @@ pub const Tray = struct {
         imguiz.SDL_SetTrayEntryEnabled(self.screenshot_entry, state.video_capture_active);
 
         imguiz.SDL_SetTrayEntryChecked(self.replay_buffer_entry, state.replay_buffer_active);
-        imguiz.SDL_SetTrayEntryEnabled(self.replay_buffer_entry, state.video_capture_active or state.replay_buffer_active);
+        imguiz.SDL_SetTrayEntryEnabled(
+            self.replay_buffer_entry,
+            (state.video_capture_active and state.video_encoding_supported) or state.replay_buffer_active,
+        );
 
         imguiz.SDL_SetTrayEntryChecked(self.recording_entry, state.recording_to_disk);
-        imguiz.SDL_SetTrayEntryEnabled(self.recording_entry, state.video_capture_active or state.recording_to_disk);
+        imguiz.SDL_SetTrayEntryEnabled(
+            self.recording_entry,
+            (state.video_capture_active and state.video_encoding_supported) or state.recording_to_disk,
+        );
 
         self.state = state;
     }

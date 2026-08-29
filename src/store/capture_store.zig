@@ -118,6 +118,7 @@ pub const CaptureStore = struct {
         select_video_source_prepared_fail: VideoCaptureSelection,
 
         is_video_capture_supported: bool,
+        is_video_encoding_supported: bool,
 
         start_video_capture,
         start_video_capture_success,
@@ -174,7 +175,8 @@ pub const CaptureStore = struct {
         allocator: Allocator,
         audio_devices: AudioDevices,
 
-        is_video_capture_supprted: bool = false,
+        is_video_capture_supported: bool = false,
+        is_video_encoding_supported: bool = false,
         replay_buffer_active: bool = false,
         recording_to_disk: bool = false,
         video_capture_active: bool = false,
@@ -293,8 +295,11 @@ pub const CaptureStore = struct {
         switch (msg) {
             .capture => |capture_msg| {
                 switch (capture_msg) {
-                    .is_video_capture_supported => |is_video_capture_supprted| {
-                        state.capture.is_video_capture_supprted = is_video_capture_supprted;
+                    .is_video_capture_supported => |is_video_capture_supported| {
+                        state.capture.is_video_capture_supported = is_video_capture_supported;
+                    },
+                    .is_video_encoding_supported => |is_video_encoding_supported| {
+                        state.capture.is_video_encoding_supported = is_video_encoding_supported;
                     },
                     .start_replay_buffer_success => {
                         state.capture.replay_buffer_active = true;
@@ -555,6 +560,7 @@ pub const CaptureStore = struct {
             const state = state_locked.unwrap_ptr();
 
             break :blk state.user_settings.user_settings.start_replay_buffer_on_startup and
+                state.capture.is_video_encoding_supported and
                 state.capture.startup.can_start_replay_buffer();
         };
 
@@ -571,6 +577,9 @@ pub const CaptureStore = struct {
             const state_locked = store.state.lock();
             defer state_locked.unlock();
             const state = state_locked.unwrap_ptr();
+
+            // This effect should never be dispatched if video encoding is not supported.
+            assert(state.capture.is_video_encoding_supported);
 
             if (!state.capture.video_capture_active or state.capture.replay_buffer_active) {
                 log.warn("[effect_start_replay_buffer] replay buffer already active", .{});
@@ -614,6 +623,10 @@ pub const CaptureStore = struct {
             const state_locked = store.state.lock();
             defer state_locked.unlock();
             const state = state_locked.unwrap_ptr();
+
+            // This effect should never be dispatched if video encoding is not supported.
+            assert(state.capture.is_video_encoding_supported);
+
             break :blk .{
                 .fps = state.user_settings.user_settings.capture_fps,
                 .video_output_directory = try state.user_settings.user_settings.video_output_directory.?.clone(store.allocator),
