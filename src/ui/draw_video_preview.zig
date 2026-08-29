@@ -9,7 +9,7 @@ pub fn draw_video_preview(
         // The empty state is for rendering a balck background even when
         // a capture source isn't available.
         empty,
-        vulkan_video_not_supported,
+        capture_not_supported,
         capture_preview: struct {
             capture_preview_buffer: *VulkanCapturePreviewTexture,
             width: u32,
@@ -66,8 +66,8 @@ pub fn draw_video_preview(
             c.ImGui_SetCursorPos(.{ .x = cursor_x, .y = cursor_y });
             c.ImGui_Image(capture_preview.capture_preview_buffer.im_texture_ref, .{ .x = render_width, .y = render_height });
         },
-        .vulkan_video_not_supported => {
-            const message = "Video capture is disabled. Vulkan video is not supported on your current hardware, or your video drivers may be out of date.";
+        .capture_not_supported => {
+            const message = "Video capture is unavailable on your current hardware, or your video drivers may be out of date.";
             const wrap_width = container_width * 0.8;
             const text_size = c.ImGui_CalcTextSizeEx(message, null, false, wrap_width);
             const cursor_x = (container_width - text_size.x) / 2;

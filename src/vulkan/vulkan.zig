@@ -30,12 +30,8 @@ const DEVICE_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_swapchain.name,
 };
 
-const DEVICE_VIDEO_EXTENSIONS = blk: {
-    const base_device_extensions = [_][*:0]const u8{
-        vk.extensions.khr_video_queue.name,
-        vk.extensions.khr_video_encode_queue.name,
-        vk.extensions.khr_video_encode_h_264.name,
-    };
+const DEVICE_CAPTURE_EXTENSIONS = blk: {
+    const base_device_extensions = [_][*:0]const u8{};
 
     // linux specific device extensions
     if (util.is_linux()) {
@@ -49,12 +45,13 @@ const DEVICE_VIDEO_EXTENSIONS = blk: {
         };
     }
 
-    // windows specific device extensions
-    if (util.is_windows()) {
-        break :blk base_device_extensions ++ .{};
-    }
-
     break :blk base_device_extensions;
+};
+
+const DEVICE_VIDEO_EXTENSIONS = [_][*:0]const u8{
+    vk.extensions.khr_video_queue.name,
+    vk.extensions.khr_video_encode_queue.name,
+    vk.extensions.khr_video_encode_h_264.name,
 };
 
 // C vulkan libs
@@ -70,6 +67,7 @@ pub const DeviceCandidate = struct {
     pdev: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
     queues: QueueAllocation,
+    capture_extensions_supported: bool,
     video_extensions_supported: bool,
 };
 
@@ -97,6 +95,7 @@ pub const Vulkan = struct {
     debug_messenger: ?vk.DebugUtilsMessengerEXT,
     graphics_queue: Queue,
     video_encode_queue: ?Queue,
+    capture_extensions_supported: bool = false,
     physical_device: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
     mem_props: vk.PhysicalDeviceMemoryProperties,
@@ -230,6 +229,7 @@ pub const Vulkan = struct {
             .device = device,
             .graphics_queue = graphics_queue,
             .video_encode_queue = video_encode_queue,
+            .capture_extensions_supported = candidate.capture_extensions_supported,
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
@@ -385,7 +385,8 @@ pub const Vulkan = struct {
         }
     }
 
-    /// Caller owns the memory - must free
+    /// Caller owns the memory - must free.
+    /// Query format modifiers on the device that support importing the buffer with Vulkan.
     pub fn query_format_modifiers(self: *const Self, allocator: Allocator, format: vk.Format) !std.ArrayList(u64) {
         var modifiers_list = vk.DrmFormatModifierPropertiesListEXT{};
         var props = vk.FormatProperties2{
@@ -405,10 +406,49 @@ pub const Vulkan = struct {
         var modifiers = try std.ArrayList(u64).initCapacity(allocator, 0);
 
         for (format_mod_props) |modifier| {
-            try modifiers.append(allocator, modifier.drm_format_modifier);
+            if (self.supports_importable_modifier(format, modifier.drm_format_modifier)) {
+                try modifiers.append(allocator, modifier.drm_format_modifier);
+            }
         }
 
         return modifiers;
+    }
+
+    /// Check for the importable modifier. This is required for direct memory
+    /// access to the buffer.
+    fn supports_importable_modifier(self: *const Self, format: vk.Format, modifier: u64) bool {
+        var modifier_info = vk.PhysicalDeviceImageDrmFormatModifierInfoEXT{
+            .drm_format_modifier = modifier,
+            .sharing_mode = .exclusive,
+        };
+        var external_image_info = vk.PhysicalDeviceExternalImageFormatInfo{
+            .p_next = &modifier_info,
+            .handle_type = .{ .dma_buf_ext = true },
+        };
+        const format_info = vk.PhysicalDeviceImageFormatInfo2{
+            .p_next = &external_image_info,
+            .format = format,
+            .type = .@"2d",
+            .tiling = .drm_format_modifier_ext,
+            .usage = .{ .transfer_src = true, .color_attachment = true },
+        };
+
+        var external_properties = std.mem.zeroes(vk.ExternalImageFormatProperties);
+        external_properties.s_type = .external_image_format_properties;
+        var properties = std.mem.zeroes(vk.ImageFormatProperties2);
+        properties.s_type = .image_format_properties_2;
+        properties.p_next = &external_properties;
+
+        self.instance.getPhysicalDeviceImageFormatProperties2(
+            self.physical_device,
+            &format_info,
+            &properties,
+        ) catch |err| {
+            log.debug("[supports_capture_modifier] modifier {x} is unsupported for capture: {}", .{ modifier, err });
+            return false;
+        };
+
+        return external_properties.external_memory_properties.external_memory_features.importable;
     }
 
     fn pick_physical_device(
@@ -479,6 +519,7 @@ pub const Vulkan = struct {
                 .pdev = pdev,
                 .props = props,
                 .queues = allocation,
+                .capture_extensions_supported = try check_device_extension_support(.capture, instance, pdev, allocator),
                 .video_extensions_supported = try check_device_extension_support(.video, instance, pdev, allocator),
             };
         }
@@ -487,7 +528,7 @@ pub const Vulkan = struct {
     }
 
     fn check_device_extension_support(
-        extension_type: enum { device, video },
+        extension_type: enum { device, capture, video },
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -498,6 +539,15 @@ pub const Vulkan = struct {
             .device => {
                 // Loop through all extensions so that we can log all the unsupported ones.
                 for (DEVICE_EXTENSIONS) |extension| {
+                    if (!try extension_supported(instance, pdev, allocator, extension)) {
+                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
+                        supported = false;
+                    }
+                }
+            },
+            .capture => {
+                // Loop through all extensions so that we can log all the unsupported ones.
+                for (DEVICE_CAPTURE_EXTENSIONS) |extension| {
                     if (!try extension_supported(instance, pdev, allocator, extension)) {
                         log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
                         supported = false;
@@ -608,6 +658,10 @@ pub const Vulkan = struct {
         defer enabled_extensions.deinit(allocator);
 
         try enabled_extensions.appendSlice(allocator, DEVICE_EXTENSIONS[0..]);
+
+        if (candidate.capture_extensions_supported) {
+            try enabled_extensions.appendSlice(allocator, DEVICE_CAPTURE_EXTENSIONS[0..]);
+        }
 
         if (candidate.video_extensions_supported) {
             try enabled_extensions.appendSlice(allocator, DEVICE_VIDEO_EXTENSIONS[0..]);

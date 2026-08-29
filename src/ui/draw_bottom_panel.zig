@@ -11,6 +11,8 @@ const Colors = @import("./theme.zig").Colors;
 
 const AUDIO_GAIN_DB_MIN: f32 = -60.0;
 const AUDIO_GAIN_DB_MAX: f32 = 12.0;
+const VIDEO_CAPTURE_NOT_SUPPORTED_MESSAGE = "Video capture is unavailable on your current hardware, or your video drivers may be out of date.";
+const VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE = "Video encoding is not supported on your current hardware, or your video drivers may be out of date.";
 
 pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
     _ = c.ImGui_Begin(dockspace.BOTTOM_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
@@ -68,7 +70,7 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
             c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, video_cell_padding);
             defer c.ImGui_PopStyleVar();
 
-            const video_capture_ready = state.capture.is_video_capture_supprted and state.capture.video_capture_active;
+            const video_capture_ready = state.capture.is_video_capture_supported and state.capture.video_capture_active;
 
             // ----------------------------------------------------------------------------
             // Video primary.
@@ -83,16 +85,20 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 const video_source_button_label = if (state.capture.video_capture_active) "󰦳 New Source" else "󰦳 Select Source";
-                c.ImGui_BeginDisabled(!state.capture.is_video_capture_supprted);
+                c.ImGui_BeginDisabled(!state.capture.is_video_capture_supported);
                 if (c.ImGui_ButtonEx(video_source_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
                     store.dispatch(.{ .capture = .{ .select_video_source = .{ .source_type = .all } } });
                 }
                 c.ImGui_EndDisabled();
+                if (!state.capture.is_video_capture_supported) {
+                    imgui_util.item_tooltip(VIDEO_CAPTURE_NOT_SUPPORTED_MESSAGE);
+                }
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
                 const replay_buffer_button_label = if (state.capture.replay_buffer_active) " Replay Buffer" else " Replay Buffer";
-                const replay_buffer_button_disabled = !state.capture.replay_buffer_active and !video_capture_ready;
+                const replay_buffer_button_disabled = !state.capture.replay_buffer_active and
+                    (!state.capture.is_video_encoding_supported or !video_capture_ready);
 
                 {
                     imgui_util.push_button_color(if (state.capture.replay_buffer_active) .red else .green);
@@ -102,6 +108,9 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
                         store.dispatch(.{ .capture = if (state.capture.replay_buffer_active) .stop_replay_buffer else .start_replay_buffer });
                     }
                     c.ImGui_EndDisabled();
+                    if (!state.capture.is_video_encoding_supported) {
+                        imgui_util.item_tooltip(VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE);
+                    }
                 }
 
                 _ = c.ImGui_TableNextColumn();
@@ -126,12 +135,16 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
                 {
                     imgui_util.push_button_color(if (state.capture.recording_to_disk) .red else .green);
                     defer imgui_util.pop_button_color();
-                    const recording_button_disabled = !state.capture.recording_to_disk and !video_capture_ready;
+                    const recording_button_disabled = !state.capture.recording_to_disk and
+                        (!state.capture.is_video_encoding_supported or !video_capture_ready);
                     c.ImGui_BeginDisabled(recording_button_disabled);
                     if (c.ImGui_ButtonEx(recording_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
                         store.dispatch(.{ .capture = if (state.capture.recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
                     }
                     c.ImGui_EndDisabled();
+                    if (!state.capture.is_video_encoding_supported) {
+                        imgui_util.item_tooltip(VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE);
+                    }
                 }
                 _ = c.ImGui_TableNextColumn();
                 c.ImGui_Text("%.2fMB", state.capture.recording_metrics.size_in_mb(.total));
@@ -165,7 +178,7 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
-                const save_replay_enabled = state.capture.is_video_capture_supprted and state.capture.replay_buffer_active;
+                const save_replay_enabled = state.capture.is_video_encoding_supported and state.capture.replay_buffer_active;
                 c.ImGui_BeginDisabled(!save_replay_enabled);
                 if (c.ImGui_ButtonEx("󰆓 Save Replay", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = button_height })) {
                     store.dispatch(.{ .capture = .save_replay });

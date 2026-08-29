@@ -172,7 +172,6 @@ pub const PipewireFrameBufferManager = struct {
             .samples = .{ .@"1" = true },
             .tiling = .drm_format_modifier_ext,
             .usage = .{
-                .storage = true,
                 .color_attachment = true,
                 .transfer_src = true,
             },

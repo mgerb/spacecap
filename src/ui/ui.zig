@@ -521,8 +521,8 @@ pub const UI = struct {
 
                     try draw_left_column(self.allocator, self.store, state);
 
-                    if (!state.capture.is_video_capture_supprted) {
-                        try draw_video_preview(self.store, .vulkan_video_not_supported);
+                    if (!state.capture.is_video_capture_supported) {
+                        try draw_video_preview(self.store, .capture_not_supported);
                     } else if (state.capture.video_capture_active) {
                         const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
                         defer capture_preview_ring_buffer_locked.unlock();
@@ -724,6 +724,7 @@ pub const UI = struct {
                 .recording_to_disk = capture.recording_to_disk,
                 .replay_buffer_active = capture.replay_buffer_active,
                 .video_capture_active = capture.video_capture_active,
+                .video_encoding_supported = capture.is_video_encoding_supported,
             };
         };
 

@@ -4,12 +4,17 @@ const Colors = @import("./theme.zig").Colors;
 
 pub const WIDTH_FILL = -std.math.floatMin(f32);
 
+/// Must be called while an ImGui tooltip is active.
+pub fn wrapped_tooltip(text: [*]const u8) void {
+    imguiz.ImGui_PushTextWrapPos(imguiz.ImGui_GetFontSize() * 25);
+    imguiz.ImGui_TextUnformatted(text);
+    imguiz.ImGui_PopTextWrapPos();
+}
+
 pub fn help_marker(text: [*]const u8) void {
     imguiz.ImGui_TextDisabled("(?)");
     if (imguiz.ImGui_BeginItemTooltip()) {
-        imguiz.ImGui_PushTextWrapPos(imguiz.ImGui_GetFontSize() * 35.0);
-        imguiz.ImGui_TextUnformatted(text);
-        imguiz.ImGui_PopTextWrapPos();
+        wrapped_tooltip(text);
         imguiz.ImGui_EndTooltip();
     }
 }
@@ -24,7 +29,10 @@ pub fn help_marker(text: [*]const u8) void {
 /// ```
 pub fn item_tooltip(text: [*:0]const u8) void {
     if (imguiz.ImGui_IsItemHovered(imguiz.ImGuiHoveredFlags_DelayNormal | imguiz.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        imguiz.ImGui_SetTooltip(text);
+        if (imguiz.ImGui_BeginTooltip()) {
+            wrapped_tooltip(text);
+            imguiz.ImGui_EndTooltip();
+        }
     }
 }
 
