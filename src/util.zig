@@ -323,9 +323,10 @@ pub const OutputDirectoryType = enum {
     videos,
 };
 
-// Falls back to the current working directory when
-// the home-based output directory cannot be resolved or created.
-// Caller owns the memory.
+/// Caller owns memory and must free.
+/// Falls back to the current working directory when the home output directory
+/// cannot be resolved.
+/// NOTE: this does not create the directory or ensure it exists.
 pub fn get_default_output_dir(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -356,15 +357,7 @@ pub fn get_default_output_dir(
             .pictures => "Pictures",
             .videos => "Videos",
         };
-        const output_dir = try std.fs.path.join(allocator, &.{ _home_dir, home_subdirectory, "spacecap" });
-        errdefer allocator.free(output_dir);
-
-        if (std.Io.Dir.cwd().createDirPath(io, output_dir)) {
-            return output_dir;
-        } else |err| {
-            log.err("[get_default_output_dir] failed to create output directory {s}: {}", .{ output_dir, err });
-            allocator.free(output_dir);
-        }
+        return std.fs.path.join(allocator, &.{ _home_dir, home_subdirectory, "spacecap" });
     }
 
     log.warn("[get_default_output_dir] falling back to current working directory", .{});
