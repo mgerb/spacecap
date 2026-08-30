@@ -139,4 +139,41 @@ pub const VulkanImageRingBuffer = struct {
 
         return null;
     }
+
+    /// Used in conjunction with get_most_recent_buffer.
+    ///
+    /// e.g.
+    /// - Get an available buffer
+    /// - Do some processing work
+    /// - Give it back to the ring buffer with set_most_recent_buffer
+    pub fn get_available_buffer(self: *Self) ?Arc(VulkanImageBuffer) {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        for (self.buffers, 0..) |buffer, index| {
+            if (self.most_recent_index != null and index == @as(usize, @intCast(self.most_recent_index.?))) continue;
+            if (buffer.as_ptr().in_use.load(.acquire)) continue;
+
+            buffer.as_ptr().in_use.store(true, .release);
+            return buffer.clone();
+        }
+
+        return null;
+    }
+
+    pub fn set_most_recent_buffer(self: *Self, image_buffer: *VulkanImageBuffer, timestamp_ns: i128) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        for (self.buffers, 0..) |buffer, index| {
+            if (buffer.as_ptr() == image_buffer) {
+                image_buffer.timestamp_ns = timestamp_ns;
+                self.most_recent_index = @intCast(index);
+                image_buffer.in_use.store(false, .release);
+                return;
+            }
+        }
+
+        @panic("[set_most_recent_buffer] buffer does not belong to this ring");
+    }
 };

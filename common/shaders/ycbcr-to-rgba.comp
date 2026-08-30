@@ -1,0 +1,24 @@
+#version 450
+
+layout(binding = 0, r8) uniform readonly image2D yImage;
+layout(binding = 1, rg8) uniform readonly image2D uvImage;
+layout(binding = 2, rgba8) uniform writeonly image2D outputImage;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+void main() {
+    ivec2 position = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(position, imageSize(outputImage)))) {
+        return;
+    }
+
+    float y = (imageLoad(yImage, position).r - 16.0 / 255.0) * 255.0 / 219.0;
+    vec2 uv = imageLoad(uvImage, position / 2).rg - vec2(0.5);
+    vec3 rgb = vec3(
+        y + 1.5748 * uv.y,
+        y - 0.1873 * uv.x - 0.4681 * uv.y,
+        y + 1.8556 * uv.x
+    );
+
+    imageStore(outputImage, position, vec4(rgb, 1.0));
+}

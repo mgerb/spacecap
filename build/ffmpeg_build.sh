@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-  echo "usage: $0 <linux|windows> <output_dir> <ffmpeg_src_dir>" >&2
+if [ "$#" -ne 4 ]; then
+  echo "usage: $0 <linux|windows> <output_dir> <ffmpeg_src_dir> <vulkan_headers_dir>" >&2
   exit 2
 fi
 
 target="$1"
 output_dir="$2"
 ffmpeg_src_dir="$3"
+vulkan_headers_dir="$4"
 build_dir="$output_dir/build"
 install_prefix="$output_dir/install"
 
@@ -47,25 +48,28 @@ common_configure_flags=(
   --enable-swresample
   --enable-swscale
   --enable-small
+  --enable-vulkan
+  --enable-hwaccel=h264_vulkan,hevc_vulkan
   --disable-runtime-cpudetect
   --enable-protocol=file
+  --enable-demuxer=avi,matroska,mov
+  --enable-parser=av1,h264,hevc,opus,vorbis,vp8,vp9
+  --enable-decoder=av1,h264,hevc,opus,vorbis,vp8,vp9,aac,mp3,msmpeg4v2
   --enable-muxer=mov,mp4,wav
-  --enable-encoder=aac,pcm_f32le
+  --enable-encoder=aac,pcm_f32le,png
+  --enable-zlib
 )
 
 target_configure_flags=()
 case "$target" in
   linux)
-    target_configure_flags=(
-      --enable-encoder=png
-      --enable-zlib
-    )
+    target_configure_flags=()
     ;;
   windows)
     target_configure_flags=(
       --disable-x86asm
       --disable-pthreads
-      --disable-w32threads
+      --enable-w32threads
       --disable-os2threads
       --enable-cross-compile
       --target-os=mingw32
@@ -76,10 +80,11 @@ case "$target" in
     ;;
 esac
 
-CFLAGS="-Wno-unused-function" ./configure \
+# The extra flags are just to ignore compilation warnings.
+CFLAGS="-I$vulkan_headers_dir/include -Wno-unused-function -Wno-unused-label" ./configure \
   --prefix="$install_prefix" \
   "${common_configure_flags[@]}" \
   "${target_configure_flags[@]}"
 
-make -j
-make install
+make -j ECFLAGS="-Wno-stack-usage"
+make install ECFLAGS="-Wno-stack-usage"

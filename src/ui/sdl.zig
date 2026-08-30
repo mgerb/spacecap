@@ -60,24 +60,34 @@ pub fn init() !void {
     if (util.is_linux()) {
         if (try try_sdl_init_with_hint("wayland")) {
             log.info("[sdl_init] using wayland", .{});
-            return;
-        }
-        if (try try_sdl_init_with_hint("x11")) {
+        } else if (try try_sdl_init_with_hint("x11")) {
             const message = "[sdl_init] using x11, which is not supported.";
             log.err(message, .{});
             @panic(message);
+        } else {
+            return error.SDLInitFailure;
         }
+    } else if (!imguiz.SDL_Init(SDL_INIT_FLAGS)) {
+        log.err("[init] SDL initialization failed: {s}", .{imguiz.SDL_GetError()});
         return error.SDLInitFailure;
     }
 
-    if (!imguiz.SDL_Init(SDL_INIT_FLAGS)) {
-        return error.SDLInitFailure;
+    if (!imguiz.SDL_InitSubSystem(imguiz.SDL_INIT_AUDIO)) {
+        log.err("[init] audio initialization failed: {s}", .{imguiz.SDL_GetError()});
+        return;
     }
+
+    const driver = imguiz.SDL_GetCurrentAudioDriver();
+    log.info("[init] using audio driver: {s}", .{driver});
 }
 
 fn try_sdl_init_with_hint(driver_name: [*:0]const u8) !bool {
     _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_VIDEO_DRIVER, driver_name);
     if (!imguiz.SDL_Init(SDL_INIT_FLAGS)) {
+        log.err("[try_sdl_init_with_hint] {s} initialization failed: {s}", .{
+            driver_name,
+            imguiz.SDL_GetError(),
+        });
         return false;
     }
 

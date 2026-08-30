@@ -20,7 +20,7 @@ const RequestPayload = enum(u8) {
     screenshot = 8,
 
     pub fn value(self: @This()) u8 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 };
 
@@ -30,7 +30,7 @@ const ResponsePayload = enum(u8) {
     request_failed = 2,
 
     pub fn value(self: @This()) u8 {
-        return @intFromEnum(self);
+        return @backingInt(self);
     }
 };
 

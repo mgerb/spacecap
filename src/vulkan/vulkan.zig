@@ -7,10 +7,7 @@ const vk = @import("vulkan");
 const util = @import("../util.zig");
 const VulkanVideoEncoder = @import("../video/vulkan_video_encoder.zig").VulkanVideoEncoder;
 const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
-const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
-const VulkanCapturePreviewTexture = @import("./vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const Mutex = @import("../mutex.zig").Mutex;
-const Arc = @import("../arc.zig").Arc;
 
 const BaseDispatch = vk.BaseWrapper;
 const InstanceDispatch = vk.InstanceWrapper;
@@ -20,6 +17,9 @@ pub const Device = vk.DeviceProxy;
 pub const CommandBuffer = vk.CommandBufferProxy;
 pub const API_VERSION = vk.API_VERSION_1_4;
 
+// ----------------------------------------------------------------------------
+// Vulkan extensions.
+// ----------------------------------------------------------------------------
 const INSTANCE_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_get_physical_device_properties_2.name,
 };
@@ -41,26 +41,66 @@ const DEVICE_CAPTURE_EXTENSIONS = blk: {
             vk.extensions.khr_external_memory_fd.name,
             vk.extensions.ext_external_memory_dma_buf.name,
             vk.extensions.khr_external_semaphore_fd.name,
-            vk.extensions.khr_sampler_ycbcr_conversion.name,
         };
     }
 
     break :blk base_device_extensions;
 };
 
-const DEVICE_VIDEO_EXTENSIONS = [_][*:0]const u8{
+const DEVICE_VIDEO_COMMON_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_video_queue.name,
+};
+
+const DEVICE_VIDEO_ENCODE_EXTENSIONS = DEVICE_VIDEO_COMMON_EXTENSIONS ++ .{
     vk.extensions.khr_video_encode_queue.name,
     vk.extensions.khr_video_encode_h_264.name,
 };
 
-// C vulkan libs
-pub extern fn vkGetInstanceProcAddr(instance: vk.Instance, procname: [*:0]const u8) vk.PfnVoidFunction;
+const DEVICE_VIDEO_DECODE_EXTENSIONS = DEVICE_VIDEO_COMMON_EXTENSIONS ++ .{
+    vk.extensions.khr_video_decode_queue.name,
+};
+
+pub const DEVICE_VIDEO_DECODE_H264_EXTENSIONS = blk: {
+    const extensions = DEVICE_VIDEO_DECODE_EXTENSIONS ++ .{
+        vk.extensions.khr_video_decode_h_264.name,
+    };
+
+    if (util.is_linux()) {
+        break :blk extensions ++ .{
+            vk.extensions.ext_image_drm_format_modifier.name,
+            vk.extensions.khr_external_memory_fd.name,
+            vk.extensions.ext_external_memory_dma_buf.name,
+            vk.extensions.khr_external_semaphore_fd.name,
+        };
+    }
+
+    break :blk extensions;
+};
+
+pub const DEVICE_VIDEO_DECODE_H265_EXTENSIONS = blk: {
+    const extensions = DEVICE_VIDEO_DECODE_EXTENSIONS ++ .{
+        vk.extensions.khr_video_decode_h_265.name,
+    };
+
+    if (util.is_linux()) {
+        break :blk extensions ++ .{
+            vk.extensions.ext_image_drm_format_modifier.name,
+            vk.extensions.khr_external_memory_fd.name,
+            vk.extensions.ext_external_memory_dma_buf.name,
+            vk.extensions.khr_external_semaphore_fd.name,
+        };
+    }
+
+    break :blk extensions;
+};
+// ----------------------------------------------------------------------------
 
 const QueueAllocation = struct {
     graphics_family: u32,
     /// Could be null on machines that don't support Vulkan video.
     video_encode_family: ?u32,
+    /// Could be null on machines that don't support Vulkan video decode.
+    video_decode_family: ?u32,
 };
 
 pub const DeviceCandidate = struct {
@@ -68,7 +108,10 @@ pub const DeviceCandidate = struct {
     props: vk.PhysicalDeviceProperties,
     queues: QueueAllocation,
     capture_extensions_supported: bool,
-    video_extensions_supported: bool,
+    video_encode_extensions_supported: bool,
+    video_decode_extensions_supported: bool,
+    video_decode_h264_extension_supported: bool,
+    video_decode_h265_extension_supported: bool,
 };
 
 pub const Queue = struct {
@@ -87,6 +130,10 @@ pub const Queue = struct {
 pub const Vulkan = struct {
     const log = std.log.scoped(.Vulkan);
     const Self = @This();
+
+    // C vulkan libs
+    pub extern fn vkGetInstanceProcAddr(instance: vk.Instance, procname: [*:0]const u8) vk.PfnVoidFunction;
+
     allocator: std.mem.Allocator,
     io: std.Io,
     vkb: BaseDispatch,
@@ -95,7 +142,10 @@ pub const Vulkan = struct {
     debug_messenger: ?vk.DebugUtilsMessengerEXT,
     graphics_queue: Queue,
     video_encode_queue: ?Queue,
-    capture_extensions_supported: bool = false,
+    video_decode_queue: ?Queue,
+    video_decode_h264_supported: bool,
+    video_decode_h265_supported: bool,
+    capture_extensions_supported: bool,
     physical_device: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
     mem_props: vk.PhysicalDeviceMemoryProperties,
@@ -103,10 +153,6 @@ pub const Vulkan = struct {
     video_encoder: ?*VulkanVideoEncoder = null,
     /// Ring buffer that holds the preview images that are rendered on the UI.
     capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer),
-    /// We need to create textures to render the capture preview.
-    /// They will be stored here so that we don't couple the UI
-    /// to the vulkan image ring buffer.
-    capture_preview_textures: std.AutoHashMap(*VulkanImageBuffer, Arc(VulkanCapturePreviewTexture)),
     /// Ring buffer that can be used in the capture method to hold frames
     /// in which the encoder can grab from.
     capture_ring_buffer: Mutex(?*VulkanImageRingBuffer),
@@ -211,8 +257,12 @@ pub const Vulkan = struct {
         errdefer device.destroyDevice(null);
 
         const graphics_queue = Queue.init(device, candidate.queues.graphics_family);
-        const video_encode_queue = if (candidate.queues.video_encode_family != null)
+        const video_encode_queue = if (candidate.video_encode_extensions_supported and candidate.queues.video_encode_family != null)
             Queue.init(device, candidate.queues.video_encode_family.?)
+        else
+            null;
+        const video_decode_queue = if (candidate.video_decode_extensions_supported and candidate.queues.video_decode_family != null)
+            Queue.init(device, candidate.queues.video_decode_family.?)
         else
             null;
 
@@ -229,12 +279,14 @@ pub const Vulkan = struct {
             .device = device,
             .graphics_queue = graphics_queue,
             .video_encode_queue = video_encode_queue,
+            .video_decode_queue = video_decode_queue,
+            .video_decode_h264_supported = candidate.video_decode_h264_extension_supported,
+            .video_decode_h265_supported = candidate.video_decode_h265_extension_supported,
             .capture_extensions_supported = candidate.capture_extensions_supported,
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
             .capture_preview_ring_buffer = .init(io, null),
-            .capture_preview_textures = .init(allocator),
             .capture_ring_buffer = .init(io, null),
         };
 
@@ -246,7 +298,6 @@ pub const Vulkan = struct {
         self.deinit_video_encoder();
         self.destroy_capture_preview_ring_buffer();
         self.destroy_capture_ring_buffer();
-        self.capture_preview_textures.deinit();
 
         if (self.debug_messenger) |debug_messenger| {
             self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);
@@ -287,29 +338,6 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn get_capture_preview_texture(self: *Self, vulkan_image_buffer: *VulkanImageBuffer) !Arc(VulkanCapturePreviewTexture) {
-        if (self.capture_preview_textures.get(vulkan_image_buffer)) |capture_preview_texture| {
-            return capture_preview_texture.clone();
-        } else {
-            const capture_preview_texture = try Arc(VulkanCapturePreviewTexture).init(
-                self.allocator,
-                try VulkanCapturePreviewTexture.init(self, vulkan_image_buffer.image_view),
-            );
-            errdefer capture_preview_texture.deinit();
-
-            try self.capture_preview_textures.put(vulkan_image_buffer, capture_preview_texture);
-            return self.capture_preview_textures.get(vulkan_image_buffer).?.clone();
-        }
-    }
-
-    fn clear_capture_preview_textures(self: *Self) void {
-        var iter = self.capture_preview_textures.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
-        }
-        self.capture_preview_textures.clearRetainingCapacity();
-    }
-
     pub fn init_capture_preview_ring_buffer(self: *Self, width: u32, height: u32) !void {
         self.capture_preview_ring_buffer.set(try VulkanImageRingBuffer.init(
             .{
@@ -333,7 +361,6 @@ pub const Vulkan = struct {
         ));
     }
 
-    /// Destroy the ring buffer, but also clear the capture preview textures.
     pub fn destroy_capture_preview_ring_buffer(self: *Self) void {
         self.wait_for_ui_fences();
         var capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
@@ -343,7 +370,6 @@ pub const Vulkan = struct {
             capture_preview_ring_buffer.deinit();
             capture_preview_ring_buffer_locked.set(null);
         }
-        self.clear_capture_preview_textures();
     }
 
     pub fn init_capture_ring_buffer(self: *Self, width: u32, height: u32) !void {
@@ -515,12 +541,21 @@ pub const Vulkan = struct {
         }
 
         if (try init_queues(instance, pdev, allocator)) |allocation| {
+            const video_decode_common_extensions_supported = try check_device_extension_support(.video_decode, instance, pdev, allocator);
+            const video_decode_h264_extension_supported = video_decode_common_extensions_supported and
+                try extension_supported(instance, pdev, allocator, vk.extensions.khr_video_decode_h_264.name);
+            const video_decode_h265_extension_supported = video_decode_common_extensions_supported and
+                try extension_supported(instance, pdev, allocator, vk.extensions.khr_video_decode_h_265.name);
+
             return DeviceCandidate{
                 .pdev = pdev,
                 .props = props,
                 .queues = allocation,
                 .capture_extensions_supported = try check_device_extension_support(.capture, instance, pdev, allocator),
-                .video_extensions_supported = try check_device_extension_support(.video, instance, pdev, allocator),
+                .video_encode_extensions_supported = try check_device_extension_support(.video_encode, instance, pdev, allocator),
+                .video_decode_extensions_supported = video_decode_h264_extension_supported or video_decode_h265_extension_supported,
+                .video_decode_h264_extension_supported = video_decode_h264_extension_supported,
+                .video_decode_h265_extension_supported = video_decode_h265_extension_supported,
             };
         }
 
@@ -528,7 +563,7 @@ pub const Vulkan = struct {
     }
 
     fn check_device_extension_support(
-        extension_type: enum { device, capture, video },
+        extension_type: enum { device, capture, video_encode, video_decode },
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
@@ -554,9 +589,18 @@ pub const Vulkan = struct {
                     }
                 }
             },
-            .video => {
+            .video_encode => {
                 // Loop through all extensions so that we can log all the unsupported ones.
-                for (DEVICE_VIDEO_EXTENSIONS) |extension| {
+                for (DEVICE_VIDEO_ENCODE_EXTENSIONS) |extension| {
+                    if (!try extension_supported(instance, pdev, allocator, extension)) {
+                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
+                        supported = false;
+                    }
+                }
+            },
+            .video_decode => {
+                // Loop through all extensions so that we can log all the unsupported ones.
+                for (DEVICE_VIDEO_DECODE_EXTENSIONS) |extension| {
                     if (!try extension_supported(instance, pdev, allocator, extension)) {
                         log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
                         supported = false;
@@ -598,6 +642,7 @@ pub const Vulkan = struct {
 
         var graphics_family: ?u32 = null;
         var video_encode_family: ?u32 = null;
+        var video_decode_family: ?u32 = null;
 
         for (families, 0..) |properties, i| {
             const family: u32 = @intCast(i);
@@ -609,12 +654,17 @@ pub const Vulkan = struct {
             if (video_encode_family == null and properties.queue_flags.video_encode_khr) {
                 video_encode_family = family;
             }
+
+            if (video_decode_family == null and properties.queue_flags.video_decode_khr) {
+                video_decode_family = family;
+            }
         }
 
         if (graphics_family != null) {
             return QueueAllocation{
                 .graphics_family = graphics_family.?,
                 .video_encode_family = video_encode_family,
+                .video_decode_family = video_decode_family,
             };
         }
 
@@ -635,22 +685,48 @@ pub const Vulkan = struct {
             .p_queue_priorities = &priority,
         });
 
-        if (candidate.queues.video_encode_family) |video_encode_family| {
-            if (video_encode_family != candidate.queues.graphics_family) {
-                try qci.append(allocator, .{
-                    .queue_family_index = video_encode_family,
-                    .queue_count = 1,
-                    .p_queue_priorities = &priority,
-                });
+        if (candidate.video_encode_extensions_supported) {
+            if (candidate.queues.video_encode_family) |video_encode_family| {
+                if (video_encode_family != candidate.queues.graphics_family) {
+                    try qci.append(allocator, .{
+                        .queue_family_index = video_encode_family,
+                        .queue_count = 1,
+                        .p_queue_priorities = &priority,
+                    });
+                }
             }
         }
 
-        const synchronization2_features = vk.PhysicalDeviceSynchronization2Features{
+        if (candidate.video_decode_extensions_supported) {
+            if (candidate.queues.video_decode_family) |video_decode_family| {
+                const shares_encode_family = candidate.video_encode_extensions_supported and
+                    candidate.queues.video_encode_family != null and
+                    video_decode_family == candidate.queues.video_encode_family.?;
+                if (video_decode_family != candidate.queues.graphics_family and !shares_encode_family) {
+                    try qci.append(allocator, .{
+                        .queue_family_index = video_decode_family,
+                        .queue_count = 1,
+                        .p_queue_priorities = &priority,
+                    });
+                }
+            }
+        }
+
+        var vulkan_12_features = vk.PhysicalDeviceVulkan12Features{
+            .timeline_semaphore = .true,
+        };
+
+        var vulkan_11_features = vk.PhysicalDeviceVulkan11Features{
+            .p_next = @ptrCast(&vulkan_12_features),
+        };
+
+        var synchronization2_features = vk.PhysicalDeviceSynchronization2Features{
+            .p_next = @ptrCast(&vulkan_11_features),
             .synchronization_2 = .true,
         };
 
         const dynamic_rendering_features = vk.PhysicalDeviceDynamicRenderingFeaturesKHR{
-            .p_next = @ptrCast(@constCast(&synchronization2_features)),
+            .p_next = @ptrCast(&synchronization2_features),
             .dynamic_rendering = .true,
         };
 
@@ -663,8 +739,27 @@ pub const Vulkan = struct {
             try enabled_extensions.appendSlice(allocator, DEVICE_CAPTURE_EXTENSIONS[0..]);
         }
 
-        if (candidate.video_extensions_supported) {
-            try enabled_extensions.appendSlice(allocator, DEVICE_VIDEO_EXTENSIONS[0..]);
+        if (candidate.video_encode_extensions_supported) {
+            try enabled_extensions.appendSlice(allocator, DEVICE_VIDEO_ENCODE_EXTENSIONS[0..]);
+        }
+
+        if (candidate.video_decode_extensions_supported) {
+            for (DEVICE_VIDEO_DECODE_EXTENSIONS) |extension| {
+                for (enabled_extensions.items) |enabled_extension| {
+                    if (std.mem.eql(u8, std.mem.span(extension), std.mem.span(enabled_extension))) {
+                        break;
+                    }
+                } else {
+                    try enabled_extensions.append(allocator, extension);
+                }
+            }
+
+            if (candidate.video_decode_h264_extension_supported) {
+                try enabled_extensions.append(allocator, vk.extensions.khr_video_decode_h_264.name);
+            }
+            if (candidate.video_decode_h265_extension_supported) {
+                try enabled_extensions.append(allocator, vk.extensions.khr_video_decode_h_265.name);
+            }
         }
 
         return try instance.createDevice(candidate.pdev, &.{
@@ -739,12 +834,33 @@ pub const Vulkan = struct {
         // It should never get to this point. The caller of this function should always have valid queues.
         assert(_queue != null);
 
-        _queue.?.mutex.lockUncancelable(self.io);
-        defer _queue.?.mutex.unlock(self.io);
+        self.lock_queue_family(_queue.?.family);
+        defer self.unlock_queue_family(_queue.?.family);
         if (args.fence != .null_handle) {
             try self.device.resetFences(&.{args.fence});
         }
         try self.device.queueSubmit(_queue.?.handle, submit_info, args.fence);
+    }
+
+    pub fn lock_queue_family(self: *Self, family: u32) void {
+        self.get_queue_mutex_by_family(family).lockUncancelable(self.io);
+    }
+
+    pub fn unlock_queue_family(self: *Self, family: u32) void {
+        self.get_queue_mutex_by_family(family).unlock(self.io);
+    }
+
+    fn get_queue_mutex_by_family(self: *Self, family: u32) *std.Io.Mutex {
+        if (self.graphics_queue.family == family) {
+            return &self.graphics_queue.mutex;
+        }
+        if (self.video_encode_queue) |*queue| {
+            if (queue.family == family) return &queue.mutex;
+        }
+        if (self.video_decode_queue) |*queue| {
+            if (queue.family == family) return &queue.mutex;
+        }
+        @panic("[queue_mutex] unknown queue family");
     }
 
     /// Lock graphics mutex and present.
@@ -759,7 +875,7 @@ pub const Vulkan = struct {
         if (self.window) |window| {
             for (0..@intCast(window.Frames.Size)) |i| {
                 const fd = window.Frames.Data[i];
-                const fence: vk.Fence = @enumFromInt(@intFromPtr(fd.Fence.?));
+                const fence: vk.Fence = @fromBackingInt(@intCast(@intFromPtr(fd.Fence.?)));
                 _ = self.device.waitForFences(
                     &.{fence},
                     .true,
@@ -815,7 +931,7 @@ pub const Vulkan = struct {
             if (window.Frames.Size > 0 and window.Frames.Data != null and window.FrameIndex < window.Frames.Size) {
                 const fd = &window.Frames.Data[window.FrameIndex];
                 if (fd.Fence != null) {
-                    try wait_fences.append(self.allocator, @enumFromInt(@intFromPtr(fd.Fence)));
+                    try wait_fences.append(self.allocator, @fromBackingInt(@intCast(@intFromPtr(fd.Fence))));
                 }
             }
         }

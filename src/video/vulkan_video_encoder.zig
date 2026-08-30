@@ -3,6 +3,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
+const VulkanRgbYuvConversionPipeline = @import("../vulkan/vulkan_rgb_yuv_conversion_pipeline.zig").VulkanRgbYuvConversionPipeline;
 const VideoReplayBuffer = @import("./video_replay_buffer.zig").VideoReplayBuffer;
 const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
 const types = @import("../types.zig");
@@ -11,11 +12,6 @@ const REFERENCE_IMAGE_COUNT = 2;
 
 pub const EncodeResult = struct {
     idr: bool,
-};
-
-const PushConstants = extern struct {
-    input_width: u32,
-    input_height: u32,
 };
 
 pub const VulkanVideoEncoder = struct {
@@ -64,11 +60,7 @@ pub const VulkanVideoEncoder = struct {
 
     query_pool: ?vk.QueryPool = null,
 
-    compute_descriptor_set_layout: ?vk.DescriptorSetLayout = null,
-    compute_pipeline_layout: ?vk.PipelineLayout = null,
-    compute_pipeline: ?vk.Pipeline = null,
-    compute_descriptor_sets: std.ArrayList(vk.DescriptorSet),
-    descriptor_pool: ?vk.DescriptorPool = null,
+    rgb_yuv_pipeline: ?VulkanRgbYuvConversionPipeline = null,
 
     /// Signaled when the rgb to ycb_cr pipeline is done.
     compute_semaphore: vk.Semaphore,
@@ -121,8 +113,6 @@ pub const VulkanVideoEncoder = struct {
             .dpb_image_memory = try std.ArrayList(vk.DeviceMemory).initCapacity(allocator, 0),
             .dpb_image_views = try std.ArrayList(vk.ImageView).initCapacity(allocator, 0),
             .ycbcr_image_plane_views = try std.ArrayList(vk.ImageView).initCapacity(allocator, 0),
-            .compute_descriptor_sets = try std.ArrayList(vk.DescriptorSet).initCapacity(allocator, 0),
-
             .compute_semaphore = try vulkan.device.createSemaphore(&.{}, null),
             .encode_semaphore = try vulkan.device.createSemaphore(&.{}, null),
             .wait_semaphores = try .initCapacity(allocator, 0),
@@ -184,8 +174,8 @@ pub const VulkanVideoEncoder = struct {
         try self.create_output_query_pool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);
 
-        try self.create_ycb_cr_conversion_pipeline();
-        errdefer self.destroy_ycb_cr_conversion_pipeline();
+        self.rgb_yuv_pipeline = try VulkanRgbYuvConversionPipeline.init(vulkan, .rgb_to_yuv);
+        errdefer self.rgb_yuv_pipeline.?.deinit();
 
         var command_buffer = std.mem.zeroes(vk.CommandBuffer);
         const alloc_info = vk.CommandBufferAllocateInfo{
@@ -653,16 +643,8 @@ pub const VulkanVideoEncoder = struct {
 
         self.ycbcr_image_view = try self.vulkan.device.createImageView(&view_info, null);
 
-        view_usage_info.usage = .{ .storage = true };
-
-        view_info.format = .r8_unorm;
-        view_info.subresource_range.aspect_mask = .{ .plane_0 = true };
-        try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
-
-        view_info.subresource_range.aspect_mask = .{ .plane_1 = true };
-
-        view_info.format = .r8g8_unorm;
-        try self.ycbcr_image_plane_views.append(self.allocator, try self.vulkan.device.createImageView(&view_info, null));
+        const plane_views = try VulkanRgbYuvConversionPipeline.create_yuv_plane_views(self.vulkan, self.ycbcr_image.?);
+        try self.ycbcr_image_plane_views.appendSlice(self.allocator, &plane_views);
     }
 
     fn create_output_query_pool(self: *Self) !void {
@@ -683,80 +665,9 @@ pub const VulkanVideoEncoder = struct {
         self.query_pool = try self.vulkan.device.createQueryPool(&query_pool_create_info, null);
     }
 
-    fn create_ycb_cr_conversion_pipeline(self: *Self) !void {
-        const bgr_ycbcr_shader_2plane = @embedFile("bgr-ycbcr-shader-2plane");
-        const compute_shader = bgr_ycbcr_shader_2plane;
-        const shader_module_create_info = vk.ShaderModuleCreateInfo{
-            .code_size = compute_shader.len,
-            .p_code = @ptrCast(@alignCast(compute_shader)),
-        };
-        const compute_shader_module = try self.vulkan.device.createShaderModule(&shader_module_create_info, null);
-        defer self.vulkan.device.destroyShaderModule(compute_shader_module, null);
-
-        const compute_shader_stage_info = vk.PipelineShaderStageCreateInfo{
-            .stage = .{ .compute = true },
-            .module = compute_shader_module,
-            .p_name = "main",
-        };
-
-        var layout_bindings = std.mem.zeroes([4]vk.DescriptorSetLayoutBinding);
-
-        for (&layout_bindings, 0..) |*lb, i| {
-            lb.binding = @intCast(i);
-            lb.descriptor_count = 1;
-            lb.descriptor_type = .storage_image;
-            lb.stage_flags = .{ .compute = true };
-        }
-
-        const ycbcr_image_plane_view_size: u32 = @intCast(self.ycbcr_image_plane_views.items.len);
-        const layout_info = vk.DescriptorSetLayoutCreateInfo{
-            .binding_count = 1 + ycbcr_image_plane_view_size,
-            .p_bindings = &layout_bindings,
-        };
-
-        self.compute_descriptor_set_layout = try self.vulkan.device.createDescriptorSetLayout(&layout_info, null);
-
-        const push_constant_range = vk.PushConstantRange{
-            .stage_flags = .{ .compute = true },
-            .offset = 0,
-            .size = @sizeOf(PushConstants),
-        };
-
-        const pipeline_layout_create_info = vk.PipelineLayoutCreateInfo{
-            .set_layout_count = 1,
-            .p_set_layouts = @ptrCast(&self.compute_descriptor_set_layout.?),
-            .push_constant_range_count = 1,
-            .p_push_constant_ranges = @ptrCast(&push_constant_range),
-        };
-
-        self.compute_pipeline_layout = try self.vulkan.device.createPipelineLayout(&pipeline_layout_create_info, null);
-
-        const compute_pipeline_info = vk.ComputePipelineCreateInfo{
-            .layout = self.compute_pipeline_layout.?,
-            .stage = compute_shader_stage_info,
-            .base_pipeline_index = 0,
-        };
-
-        var compute_pipeline: [1]vk.Pipeline = [_]vk.Pipeline{std.mem.zeroes(vk.Pipeline)};
-        const result = try self.vulkan.device.createComputePipelines(
-            .null_handle,
-            &.{compute_pipeline_info},
-            null,
-            &compute_pipeline,
-        );
-
-        if (result != .success) {
-            return error.CreateComputePipelinesError;
-        }
-
-        self.compute_pipeline = compute_pipeline[0];
-    }
-
     pub fn update_images(self: *Self, images: []vk.Image, image_views: []vk.ImageView) !void {
         self.input_images = images;
         self.input_image_views = image_views;
-
-        try self.update_descriptor_sets(image_views);
     }
 
     pub fn update_external_wait_semaphores(self: *Self, semaphores: []const vk.Semaphore) Allocator.Error!void {
@@ -777,77 +688,6 @@ pub const VulkanVideoEncoder = struct {
         // Must always be at least length 1 for the encode_semaphore.
         assert(self.wait_semaphores.items.len > 0);
         assert(self.wait_stage_masks.items.len > 0);
-    }
-
-    fn update_descriptor_sets(self: *Self, image_views: []vk.ImageView) !void {
-        if (self.descriptor_pool) |descriptor_pool| {
-            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
-        }
-
-        const max_frames_count: u32 = @intCast(image_views.len);
-        var pool_sizes: [1]vk.DescriptorPoolSize = std.mem.zeroes([1]vk.DescriptorPoolSize);
-        pool_sizes[0].descriptor_count = 4 * max_frames_count;
-        pool_sizes[0].type = .storage_image;
-
-        const pool_info = vk.DescriptorPoolCreateInfo{
-            .pool_size_count = pool_sizes.len,
-            .p_pool_sizes = pool_sizes[0..].ptr,
-            .max_sets = max_frames_count,
-        };
-
-        self.descriptor_pool = try self.vulkan.device.createDescriptorPool(&pool_info, null);
-
-        var layouts = try std.ArrayList(vk.DescriptorSetLayout).initCapacity(self.allocator, 0);
-        defer layouts.deinit(self.allocator);
-        try layouts.resize(self.allocator, max_frames_count);
-
-        for (layouts.items) |*dsl| {
-            dsl.* = self.compute_descriptor_set_layout.?;
-        }
-
-        const descriptor_set_alloc_info = vk.DescriptorSetAllocateInfo{
-            .descriptor_pool = self.descriptor_pool.?,
-            .descriptor_set_count = max_frames_count,
-            .p_set_layouts = layouts.items.ptr,
-        };
-
-        try self.compute_descriptor_sets.resize(self.allocator, max_frames_count);
-        try self.vulkan.device.allocateDescriptorSets(&descriptor_set_alloc_info, self.compute_descriptor_sets.items.ptr);
-
-        for (0..max_frames_count) |i| {
-            var descriptor_writes = std.mem.zeroes([4]vk.WriteDescriptorSet);
-            var image_infos: [4]vk.DescriptorImageInfo = undefined;
-
-            image_infos[0].image_view = image_views[i];
-            image_infos[0].image_layout = .general;
-            image_infos[0].sampler = .null_handle;
-            descriptor_writes[0].s_type = .write_descriptor_set;
-            descriptor_writes[0].dst_set = self.compute_descriptor_sets.items[i];
-            descriptor_writes[0].dst_binding = 0;
-            descriptor_writes[0].dst_array_element = 0;
-            descriptor_writes[0].descriptor_type = .storage_image;
-            descriptor_writes[0].descriptor_count = 1;
-            descriptor_writes[0].p_image_info = @ptrCast(&image_infos[0]);
-
-            for (0..self.ycbcr_image_plane_views.items.len) |p| {
-                image_infos[p + 1].image_view = self.ycbcr_image_plane_views.items[p];
-                image_infos[p + 1].image_layout = .general;
-                image_infos[p + 1].sampler = .null_handle;
-                descriptor_writes[p + 1].s_type = .write_descriptor_set;
-                descriptor_writes[p + 1].dst_set = self.compute_descriptor_sets.items[i];
-                descriptor_writes[p + 1].dst_binding = @as(u32, @intCast(p)) + 1;
-                descriptor_writes[p + 1].dst_array_element = 0;
-                descriptor_writes[p + 1].descriptor_type = .storage_image;
-                descriptor_writes[p + 1].descriptor_count = 1;
-                descriptor_writes[p + 1].p_image_info = @ptrCast(&image_infos[p + 1]);
-            }
-
-            const descriptor_write_count = 1 + self.ycbcr_image_plane_views.items.len;
-            self.vulkan.device.updateDescriptorSets(
-                descriptor_writes[0..descriptor_write_count],
-                &.{},
-            );
-        }
     }
 
     fn init_rate_control(self: *Self, command_buffer: vk.CommandBuffer, fps: u32) void {
@@ -997,36 +837,13 @@ pub const VulkanVideoEncoder = struct {
 
         self.vulkan.device.cmdPipelineBarrier2(self.compute_command_buffer.?, &dependency_info);
 
-        // run the RGB->YCbCr conversion shader
-        self.vulkan.device.cmdBindPipeline(self.compute_command_buffer.?, .compute, self.compute_pipeline.?);
-        self.vulkan.device.cmdBindDescriptorSets(
+        self.rgb_yuv_pipeline.?.record_commands(
             self.compute_command_buffer.?,
-            .compute,
-            self.compute_pipeline_layout.?,
-            0,
-            &.{self.compute_descriptor_sets.items[current_image_ix]},
-            &.{},
-        );
-
-        const push_constants = PushConstants{
-            .input_width = @min(self.current_input_size.width, self.width),
-            .input_height = @min(self.current_input_size.height, self.height),
-        };
-
-        self.vulkan.device.cmdPushConstants(
-            self.compute_command_buffer.?,
-            self.compute_pipeline_layout.?,
-            .{ .compute = true },
-            0,
-            @sizeOf(PushConstants),
-            @ptrCast(&push_constants),
-        );
-
-        self.vulkan.device.cmdDispatch(
-            self.compute_command_buffer.?,
-            (self.width + 15) / 16,
-            (self.height + 15) / 16,
-            1,
+            self.input_image_views.?[current_image_ix],
+            self.ycbcr_image_plane_views.items[0],
+            self.ycbcr_image_plane_views.items[1],
+            @min(self.current_input_size.width, self.width),
+            @min(self.current_input_size.height, self.height),
         );
 
         try self.vulkan.device.endCommandBuffer(self.compute_command_buffer.?);
@@ -1329,21 +1146,6 @@ pub const VulkanVideoEncoder = struct {
         self.vulkan.device.destroySemaphore(self.encode_semaphore, null);
     }
 
-    fn destroy_ycb_cr_conversion_pipeline(self: *Self) void {
-        if (self.compute_pipeline) |compute_pipeline| {
-            self.vulkan.device.destroyPipeline(compute_pipeline, null);
-        }
-        if (self.compute_pipeline_layout) |compute_pipeline_layout| {
-            self.vulkan.device.destroyPipelineLayout(compute_pipeline_layout, null);
-        }
-        if (self.descriptor_pool) |descriptor_pool| {
-            self.vulkan.device.destroyDescriptorPool(descriptor_pool, null);
-        }
-        if (self.compute_descriptor_set_layout) |compute_descriptor_set_layout| {
-            self.vulkan.device.destroyDescriptorSetLayout(compute_descriptor_set_layout, null);
-        }
-    }
-
     fn destroy_images(self: *Self) void {
         for (self.dpb_images.items) |dpb_image| {
             self.vulkan.device.destroyImage(dpb_image, null);
@@ -1377,7 +1179,7 @@ pub const VulkanVideoEncoder = struct {
     pub fn deinit(self: *Self) void {
         defer self.allocator.destroy(self);
         self.destroy_encode_finished_fence();
-        self.destroy_ycb_cr_conversion_pipeline();
+        if (self.rgb_yuv_pipeline) |*pipeline| pipeline.deinit();
         if (self.video_session_parameters) |video_session_parameters| {
             self.vulkan.device.destroyVideoSessionParametersKHR(video_session_parameters, null);
         }
@@ -1421,6 +1223,5 @@ pub const VulkanVideoEncoder = struct {
         self.dpb_image_memory.deinit(self.allocator);
         self.dpb_image_views.deinit(self.allocator);
         self.ycbcr_image_plane_views.deinit(self.allocator);
-        self.compute_descriptor_sets.deinit(self.allocator);
     }
 };
