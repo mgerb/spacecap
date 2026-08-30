@@ -39,7 +39,7 @@ pub const Message = union(enum) {
     },
 
     pub const effects = .{
-        .set_output_directory = .{effect_sync_settings_to_file},
+        .set_output_directory = .{ effect_sync_settings_to_file, effect_reload_file_browser },
         .set_audio_device_settings = .{effect_sync_settings_to_file},
         .set_capture_fps = .{ effect_sync_settings_to_file, CaptureStore.effect_update_video_capture_fps },
         .set_capture_bit_rate = .{effect_sync_settings_to_file},
@@ -137,6 +137,12 @@ fn effect_sync_settings_to_file(store: *Store, _: anytype) !void {
     try user_settings_snapshot.save(store.allocator, store.io);
 }
 
+fn effect_reload_file_browser(store: *Store, payload: Message.SetOutputDirectoryPayload) void {
+    if (payload.output_directory == .file_browser) {
+        store.dispatch(.{ .file_browser = .load_files });
+    }
+}
+
 fn effect_select_output_directory(store: *Store, output_directory: UserSettings.OutputDirectory) !void {
     var initial_directory = blk: {
         const state_locked = store.state.lock();
@@ -145,6 +151,7 @@ fn effect_select_output_directory(store: *Store, output_directory: UserSettings.
         const directory = switch (output_directory) {
             .videos => state.user_settings.user_settings.video_output_directory,
             .screenshots => state.user_settings.user_settings.screenshot_output_directory,
+            .file_browser => state.user_settings.user_settings.file_browser_directory,
         };
         if (directory) |value| {
             break :blk try value.clone(store.allocator);

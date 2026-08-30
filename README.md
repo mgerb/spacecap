@@ -10,7 +10,7 @@ High performance screen recording software for Linux. _Still pre-alpha (see feat
 - UI built with [imgui](https://github.com/ocornut/imgui) and [SDL3](https://github.com/allyourcodebase/SDL3)
 - Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/)
 
-![screenshot5](./docs/screenshot_5.png)
+![screenshot5](./docs/screenshot_6.png)
 
 ## Installation
 
@@ -35,12 +35,13 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 - Global keybinds
 - Desktop/window capture
 - Capture preview
+- File browser
+- Video editor (trim and export clips)
 
 ## Roadmap
 
-- File browser
-- Video editor
-  - Trim clips
+- ~~Video editor~~
+  - ~~Trim clips~~
   - Export in a variety of formats
   - Adjust audio levels
 - Windows support
@@ -131,25 +132,3 @@ Crash logs are written to `crash.log`, which happens when a panic occurs.
 
 - **Linux**: `$XDG_CONFIG_HOME/spacecap`, or `$HOME/.config/spacecap`
 - **Windows**: `%APPDATA%\spacecap`.
-
-## Troubleshooting
-
-### Linux restore capture source stops working
-
-Spacecap uses the XDG desktop portal screencast permission store to restore the
-previous capture source. If the portal permission database gets corrupted,
-restore may stop working even after selecting a source again. This has happened
-to me after my main disk filled up unexpectedly.
-
-To reset only the screencast portal permissions, delete the database and then
-reboot.
-
-```sh
-# Delete
-rm ~/.local/share/flatpak/db/screencast
-
-# OR move it to a backup
-mv ~/.local/share/flatpak/db/screencast ~/.local/share/flatpak/db/screencast.bak
-
-reboot
-```

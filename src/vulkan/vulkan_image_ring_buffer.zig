@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const vk = @import("vulkan");
+const imguiz = @import("imguiz").imguiz;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VulkanImageBuffer = @import("./vulkan_image_buffer.zig").VulkanImageBuffer;
 const Arc = @import("../arc.zig").Arc;
@@ -22,6 +23,14 @@ const BUFFER_SIZE = 3;
 pub const VulkanImageRingBuffer = struct {
     const Self = @This();
     const log = std.log.scoped(.vulkan_image_ring_buffer);
+
+    /// A decoded video frame prepared for display by the UI.
+    pub const DisplayFrame = struct {
+        buffer: Arc(VulkanImageBuffer),
+        texture: imguiz.ImTextureRef,
+        width: u32,
+        height: u32,
+    };
 
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -138,5 +147,58 @@ pub const VulkanImageRingBuffer = struct {
         }
 
         return null;
+    }
+
+    pub fn get_latest_display_frame(self: *Self) !?DisplayFrame {
+        const buffer = self.get_most_recent_buffer() orelse return null;
+        errdefer {
+            buffer.as_ptr().in_use.store(false, .release);
+            buffer.deinit();
+        }
+
+        const texture = try buffer.as_ptr().get_imgui_texture();
+        return .{
+            .buffer = buffer,
+            .texture = texture.im_texture_ref,
+            .width = buffer.as_ptr().width,
+            .height = buffer.as_ptr().height,
+        };
+    }
+
+    /// Used in conjunction with get_most_recent_buffer.
+    ///
+    /// e.g.
+    /// - Get an available buffer
+    /// - Do some processing work
+    /// - Give it back to the ring buffer with set_most_recent_buffer
+    pub fn get_available_buffer(self: *Self) ?Arc(VulkanImageBuffer) {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        for (self.buffers, 0..) |buffer, index| {
+            if (self.most_recent_index != null and index == @as(usize, @intCast(self.most_recent_index.?))) continue;
+            if (buffer.as_ptr().in_use.load(.acquire)) continue;
+
+            buffer.as_ptr().in_use.store(true, .release);
+            return buffer.clone();
+        }
+
+        return null;
+    }
+
+    pub fn set_most_recent_buffer(self: *Self, image_buffer: *VulkanImageBuffer, timestamp_ns: i128) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+
+        for (self.buffers, 0..) |buffer, index| {
+            if (buffer.as_ptr() == image_buffer) {
+                image_buffer.timestamp_ns = timestamp_ns;
+                self.most_recent_index = @intCast(index);
+                image_buffer.in_use.store(false, .release);
+                return;
+            }
+        }
+
+        @panic("[set_most_recent_buffer] buffer does not belong to this ring");
     }
 };

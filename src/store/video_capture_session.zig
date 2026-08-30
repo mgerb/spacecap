@@ -45,11 +45,11 @@ const VideoRecordQueuePayload = union(enum) {
     data: VideoRecordData,
 };
 
-/// VideoSession owns the main audio capture loop. All video captured by the
-/// system goes through the VideoSession.
-pub const VideoSession = struct {
+/// VideoCaptureSession owns the main audio capture loop. All video captured by the
+/// system goes through the VideoCaptureSession.
+pub const VideoCaptureSession = struct {
     const Self = @This();
-    const log = std.log.scoped(.video_session);
+    const log = std.log.scoped(.video_capture_session);
 
     allocator: Allocator,
     io: std.Io,
@@ -409,11 +409,15 @@ pub const VideoSession = struct {
             defer video_locked.unlock();
             const video_replay_buffer = video_locked.unwrap();
 
-            const encoded_packet = try video_encoder.finish_encode(
-                encode_result,
-                video_replay_buffer,
-                vulkan_image_buffer.as_ptr().timestamp_ns,
-            );
+            const encoded_packet = try video_encoder.get_output_video_packet();
+
+            if (video_replay_buffer) |vrb| {
+                try vrb.add_frame(
+                    encoded_packet,
+                    vulkan_image_buffer.as_ptr().timestamp_ns,
+                    encode_result.idr,
+                );
+            }
 
             if (self.record_data_queue) |*record_data_queue| {
                 var video_record_data = try VideoRecordData.init(

@@ -108,6 +108,10 @@ fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?argparse.Arg)
     PlatformCaptureSetup.init();
     defer PlatformCaptureSetup.deinit();
 
+    // Init SDL before Vulkan, because we need it to check surface support.
+    try sdl.init();
+    defer sdl.deinit();
+
     var sdl_vulkan_extensions = try sdl.get_sdl_vulkan_extensions(allocator);
     defer sdl_vulkan_extensions.deinit();
 

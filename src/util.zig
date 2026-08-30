@@ -21,10 +21,11 @@ pub fn print_elapsed(io: std.Io, start_time: i128, prefix: []const u8) void {
     log.debug("[{s}] time elapsed {}ms\n", .{ prefix, total_time });
 }
 
-pub fn format_duration_label(allocator: std.mem.Allocator, args: struct {
+pub fn format_duration_label(args: struct {
     seconds: f64,
     max: ?u32 = null,
-}) Allocator.Error![:0]u8 {
+}) [32:0]u8 {
+    var buffer: [32:0]u8 = @splat(0);
     const input_seconds = @max(args.seconds, 0.0);
     // If max is provided, round seconds up and then take
     // the min of the two. This prevents any flicker on the UI
@@ -41,25 +42,52 @@ pub fn format_duration_label(allocator: std.mem.Allocator, args: struct {
     const minutes = (total_seconds % 3600) / 60;
     const seconds = total_seconds % 60;
 
-    if (hours > 0 and minutes > 0 and seconds > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}m {d}s", .{ hours, minutes, seconds }, 0);
+    _ = (if (hours > 0 and minutes > 0 and seconds > 0)
+        std.fmt.bufPrint(&buffer, "{d}h {d}m {d}s", .{ hours, minutes, seconds })
+    else if (hours > 0 and minutes > 0)
+        std.fmt.bufPrint(&buffer, "{d}h {d}m", .{ hours, minutes })
+    else if (hours > 0 and seconds > 0)
+        std.fmt.bufPrint(&buffer, "{d}h {d}s", .{ hours, seconds })
+    else if (hours > 0)
+        std.fmt.bufPrint(&buffer, "{d}h", .{hours})
+    else if (minutes > 0 and seconds > 0)
+        std.fmt.bufPrint(&buffer, "{d}m {d}s", .{ minutes, seconds })
+    else if (minutes > 0)
+        std.fmt.bufPrint(&buffer, "{d}m", .{minutes})
+    else
+        std.fmt.bufPrint(&buffer, "{d}s", .{seconds})) catch @panic("Duration label exceeds its fixed buffer");
+    return buffer;
+}
+
+pub fn format_file_size_label(size_bytes: u64) [32:0]u8 {
+    var buffer: [32:0]u8 = @splat(0);
+    const units = [_][]const u8{ "KB", "MB", "GB" };
+    var unit_index: usize = 0;
+    var divisor: u128 = 1000;
+
+    while (unit_index + 1 < units.len and size_bytes >= divisor * 1000) {
+        unit_index += 1;
+        divisor *= 1000;
     }
-    if (hours > 0 and minutes > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}m", .{ hours, minutes }, 0);
+
+    var rounded_tenths = (@as(u128, size_bytes) * 10 + divisor / 2) / divisor;
+    if (rounded_tenths == 10_000 and unit_index + 1 < units.len) {
+        unit_index += 1;
+        rounded_tenths = 10;
     }
-    if (hours > 0 and seconds > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}h {d}s", .{ hours, seconds }, 0);
-    }
-    if (hours > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}h", .{hours}, 0);
-    }
-    if (minutes > 0 and seconds > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}m {d}s", .{ minutes, seconds }, 0);
-    }
-    if (minutes > 0) {
-        return std.fmt.allocPrintSentinel(allocator, "{d}m", .{minutes}, 0);
-    }
-    return std.fmt.allocPrintSentinel(allocator, "{d}s", .{seconds}, 0);
+
+    const whole = rounded_tenths / 10;
+    const fraction = rounded_tenths % 10;
+    _ = if (fraction == 0)
+        std.fmt.bufPrint(&buffer, "{d} {s}", .{ whole, units[unit_index] }) catch {
+            @panic("File size label exceeds its fixed buffer");
+        }
+    else
+        std.fmt.bufPrint(&buffer, "{d}.{d} {s}", .{ whole, fraction, units[unit_index] }) catch
+            {
+                @panic("File size label exceeds its fixed buffer");
+            };
+    return buffer;
 }
 
 const TimestampString = [27]u8;
@@ -118,6 +146,45 @@ pub fn format_file_name(
             args.extension,
         },
     );
+}
+
+/// Read files in a directory and return an available file name.
+///
+/// e.g.
+///
+/// If some_video.mp4 already exists, then return some_video_1.mp4.
+/// If some_video_1.mp4 exists, then return some_video_2.mp4.
+/// etc.
+pub fn get_unique_file_name(
+    allocator: Allocator,
+    io: std.Io,
+    output_directory: []const u8,
+    preferred_name: []const u8,
+) ![]u8 {
+    const extension = std.fs.path.extension(preferred_name);
+    const stem = preferred_name[0 .. preferred_name.len - extension.len];
+
+    var suffix: u64 = 0;
+    while (true) : (suffix += 1) {
+        const candidate_name = if (suffix == 0)
+            try allocator.dupe(u8, preferred_name)
+        else
+            try std.fmt.allocPrint(allocator, "{s}_{d}{s}", .{ stem, suffix, extension });
+        errdefer allocator.free(candidate_name);
+
+        const candidate_path = try std.fs.path.join(allocator, &.{ output_directory, candidate_name });
+        defer allocator.free(candidate_path);
+
+        const file = std.Io.Dir.cwd().createFile(io, candidate_path, .{ .exclusive = true }) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                allocator.free(candidate_name);
+                continue;
+            },
+            else => return err,
+        };
+        file.close(io);
+        return candidate_name;
+    }
 }
 
 const UtcTimestampParts = struct {
@@ -426,8 +493,31 @@ test "Util - audio db and linear conversions round trip within range" {
     }
 }
 
+test "Util - format_file_size_label formats readable decimal sizes" {
+    const cases = [_]struct {
+        size_bytes: u64,
+        expected: []const u8,
+    }{
+        .{ .size_bytes = 0, .expected = "0 KB" },
+        .{ .size_bytes = 500, .expected = "0.5 KB" },
+        .{ .size_bytes = 999, .expected = "1 KB" },
+        .{ .size_bytes = 1000, .expected = "1 KB" },
+        .{ .size_bytes = 1500, .expected = "1.5 KB" },
+        .{ .size_bytes = 842_000, .expected = "842 KB" },
+        .{ .size_bytes = 999_950, .expected = "1 MB" },
+        .{ .size_bytes = 1_450_000, .expected = "1.5 MB" },
+        .{ .size_bytes = 1_000_000_000, .expected = "1 GB" },
+        .{ .size_bytes = 1_000_000_000_000, .expected = "1000 GB" },
+        .{ .size_bytes = std.math.maxInt(u64), .expected = "18446744073.7 GB" },
+    };
+
+    for (cases) |case| {
+        const label = format_file_size_label(case.size_bytes);
+        try std.testing.expectEqualStrings(case.expected, std.mem.sliceTo(&label, 0));
+    }
+}
+
 test "Util - format_duration_label formats compact duration strings" {
-    const allocator = std.testing.allocator;
     const cases = [_]struct {
         seconds: u32,
         expected: []const u8,
@@ -443,10 +533,9 @@ test "Util - format_duration_label formats compact duration strings" {
     };
 
     for (cases) |case| {
-        const label = try format_duration_label(allocator, .{ .seconds = @floatFromInt(case.seconds) });
-        defer allocator.free(label);
+        const label = format_duration_label(.{ .seconds = @floatFromInt(case.seconds) });
 
-        try std.testing.expectEqualStrings(case.expected, label);
+        try std.testing.expectEqualStrings(case.expected, std.mem.sliceTo(&label, 0));
     }
 
     const replay_cases = [_]struct {
@@ -460,13 +549,12 @@ test "Util - format_duration_label formats compact duration strings" {
     };
 
     for (replay_cases) |case| {
-        const label = try format_duration_label(allocator, .{
+        const label = format_duration_label(.{
             .seconds = case.seconds,
             .max = case.max,
         });
-        defer allocator.free(label);
 
-        try std.testing.expectEqualStrings(case.expected, label);
+        try std.testing.expectEqualStrings(case.expected, std.mem.sliceTo(&label, 0));
     }
 }
 

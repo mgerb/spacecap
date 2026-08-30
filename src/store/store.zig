@@ -11,6 +11,8 @@ const FilePicker = @import("../file_picker/file_picker.zig").FilePicker;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const GlobalShortcuts = @import("../global_shortcuts/global_shortcuts.zig").GlobalShortcuts;
 const GlobalShortcutsStore = @import("./global_shortcuts_store.zig").GlobalShortcutsStore;
+const VideoEditorStore = @import("./video_editor_store.zig").VideoEditorStore;
+const FileBrowserStore = @import("./file_browser_store.zig").FileBrowserStore;
 
 pub const Store = struct {
     const Self = @This();
@@ -24,6 +26,7 @@ pub const Store = struct {
     file_picker: FilePicker,
     capture_store: CaptureStore,
     global_shortcuts_store: *GlobalShortcutsStore,
+    video_editor_store: VideoEditorStore,
 
     // ----- Adding a new store -----
     //
@@ -36,6 +39,8 @@ pub const Store = struct {
         CaptureStore,
         UserSettingStore,
         GlobalShortcutsStore,
+        VideoEditorStore,
+        FileBrowserStore,
     };
 
     pub const Message = union(enum) {
@@ -44,6 +49,8 @@ pub const Store = struct {
         capture: CaptureStore.Message,
         user_settings: UserSettingStore.Message,
         global_shortcuts: GlobalShortcutsStore.Message,
+        video_editor: VideoEditorStore.Message,
+        file_browser: FileBrowserStore.Message,
 
         pub const effects = .{};
 
@@ -54,6 +61,8 @@ pub const Store = struct {
             switch (self.*) {
                 .capture => |*capture_msg| capture_msg.deinit(),
                 .user_settings => |*user_settings_msg| user_settings_msg.deinit(),
+                .video_editor => |*video_editor_msg| video_editor_msg.deinit(),
+                .file_browser => |*file_browser_msg| file_browser_msg.deinit(),
                 inline else => |payload| {
                     if (@typeInfo(@TypeOf(payload)) == .@"struct" and
                         @hasDecl(@TypeOf(payload), "deinit"))
@@ -71,6 +80,8 @@ pub const Store = struct {
         capture: CaptureStore.State,
         user_settings: UserSettingStore.State,
         global_shortcuts: GlobalShortcutsStore.State = .{},
+        video_editor: VideoEditorStore.State,
+        file_browser: FileBrowserStore.State,
 
         pub fn init(allocator: Allocator, io: std.Io) !@This() {
             return .{
@@ -78,10 +89,14 @@ pub const Store = struct {
                 // standard message/effect procedure for startup.
                 .user_settings = try .init(allocator, io),
                 .capture = try .init(allocator),
+                .video_editor = try .init(allocator),
+                .file_browser = .init(allocator),
             };
         }
 
         pub fn deinit(self: *State) void {
+            self.video_editor.deinit();
+            self.file_browser.deinit();
             self.user_settings.deinit();
             self.capture.deinit();
         }
@@ -117,6 +132,7 @@ pub const Store = struct {
                 self,
                 global_shortcuts,
             ),
+            .video_editor_store = .init(allocator, vulkan),
         };
 
         return self;
@@ -129,6 +145,7 @@ pub const Store = struct {
         };
 
         // Deinit stores here before the state deinit.
+        self.video_editor_store.deinit();
         self.capture_store.deinit();
         self.global_shortcuts_store.deinit();
 
@@ -151,10 +168,11 @@ pub const Store = struct {
             .is_video_capture_supported = self.capture_store.vulkan.capture_extensions_supported,
         } });
         self.dispatch(.{ .capture = .{
-            .is_video_encoding_supported = self.capture_store.vulkan.video_encode_queue != null,
+            .is_video_encoding_supported = self.capture_store.vulkan.video_encode_h264_queue != null,
         } });
         self.dispatch(.{ .capture = .load_system_audio_devices });
         self.dispatch(.{ .capture = .start_audio_capture_thread });
+        self.dispatch(.{ .file_browser = .load_files });
 
         {
             const state_locked = self.state.lock();
@@ -210,6 +228,7 @@ pub const Store = struct {
             // NOTE: Any child store cleanup logic must go here.
             if (msg == .exit) {
                 log.info("[run] exiting", .{});
+                self.video_editor_store.exit();
                 self.capture_store.exit();
                 return;
             }
@@ -533,7 +552,7 @@ pub const TestStore = struct {
     // ----------------------------------------------------------------------------
     allocator: Allocator,
     store: *Store,
-    vulkan: Vulkan,
+    vulkan: *Vulkan,
 
     test_file_picker: TestFilePicker,
     file_picker_interface: FilePicker,
@@ -571,17 +590,12 @@ pub const TestStore = struct {
         self.global_shortcuts = self.test_global_shortcuts.global_shortcuts();
         self.file_picker_interface = self.test_file_picker.file_picker();
 
-        self.vulkan.video_encoder = null;
-        self.vulkan.video_encode_queue = null;
-        self.vulkan.window = null;
-        self.vulkan.capture_preview_ring_buffer = .init(std.testing.io, null);
-        self.vulkan.capture_ring_buffer = .init(std.testing.io, null);
-        self.vulkan.capture_preview_textures = .init(allocator);
+        self.vulkan = try Vulkan.init(allocator, std.testing.io, null);
 
         self.store = try .init(
             allocator,
             std.testing.io,
-            &self.vulkan,
+            self.vulkan,
             self.file_picker_interface,
             self.audio_capture,
             self.video_capture,
@@ -595,6 +609,7 @@ pub const TestStore = struct {
         defer self.allocator.destroy(self);
         self.test_audio_capture.deinit();
         self.store.deinit();
+        self.vulkan.deinit();
         Test.destroy_temp_app_data_dir();
     }
 };
