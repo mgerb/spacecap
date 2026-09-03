@@ -104,6 +104,12 @@ pub const FileBrowserStore = struct {
             }
         }
 
+        std.mem.sort(String, files.paths.items, {}, less_than_file_name);
+
         store.dispatch(.{ .file_browser = .{ .load_files_success = files } });
+    }
+
+    fn less_than_file_name(_: void, lhs: String, rhs: String) bool {
+        return std.mem.lessThan(u8, std.fs.path.basename(lhs.bytes), std.fs.path.basename(rhs.bytes));
     }
 };
