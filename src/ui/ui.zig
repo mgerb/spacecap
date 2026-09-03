@@ -2,7 +2,6 @@ const std = @import("std");
 
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
-const sdl = @import("./sdl.zig");
 const Tray = @import("./tray.zig").Tray;
 const Arc = @import("../arc.zig").Arc;
 
@@ -163,8 +162,6 @@ pub const UI = struct {
             .ui_storage = .init(allocator),
         };
 
-        try sdl.init();
-
         const version = c.SDL_GetVersion();
         std.log.info("SDL version: {}\n", .{version});
 
@@ -229,7 +226,6 @@ pub const UI = struct {
         if (self.window_icon_surface) |icon_surface| {
             c.SDL_DestroySurface(icon_surface);
         }
-        c.SDL_Quit();
     }
 
     // TODO: Split off the main loop into its own method.
@@ -792,11 +788,15 @@ pub const UI = struct {
         };
 
         // Check for WSI support
-        _ = self.vulkan.instance.getPhysicalDeviceSurfaceSupportKHR(
+        const surface_support = self.vulkan.instance.getPhysicalDeviceSurfaceSupportKHR(
             self.vulkan.physical_device,
             self.vulkan.graphics_queue.family,
             @fromBackingInt(@intCast(@intFromPtr(self.vulkan.window.?.Surface))),
         ) catch return error.NoWSISupport;
+
+        if (surface_support != .true) {
+            return error.NoWSISupport;
+        }
 
         // Select Surface Format
         const requestSurfaceImageFormat = [_]c.VkFormat{ c.VK_FORMAT_B8G8R8A8_UNORM, c.VK_FORMAT_R8G8B8A8_UNORM, c.VK_FORMAT_B8G8R8_UNORM, c.VK_FORMAT_R8G8B8_UNORM };

@@ -5,18 +5,17 @@ const c = @import("ffmpeg_c");
 const check_err = @import("./util.zig").check_err;
 const vulkan_module = @import("../vulkan/vulkan.zig");
 const Vulkan = vulkan_module.Vulkan;
-const DEVICE_VIDEO_DECODE_H264_EXTENSIONS = vulkan_module.DEVICE_VIDEO_DECODE_H264_EXTENSIONS;
-const DEVICE_VIDEO_DECODE_H265_EXTENSIONS = vulkan_module.DEVICE_VIDEO_DECODE_H265_EXTENSIONS;
+const VIDEO_DECODE_H264_EXTENSIONS = vulkan_module.VIDEO_DECODE_H264_EXTENSIONS;
+const VIDEO_DECODE_H265_EXTENSIONS = vulkan_module.VIDEO_DECODE_H265_EXTENSIONS;
 
-// Keep decoded frame contents deterministic for snapshot tests. Production
-// builds still prefer Vulkan decoding whenever it is available.
+// Force the software decoder for unit tests.
 const USE_SOFTWARE = builtin.is_test;
 
 pub const VideoDecoder = struct {
     const Self = @This();
     const log = std.log.scoped(.video_decoder);
 
-    const DecodeMode = enum { vulkan, software };
+    const Mode = enum { vulkan, software };
 
     codec_context: [*c]c.AVCodecContext,
     hw_device_ctx: [*c]c.AVBufferRef,
@@ -27,7 +26,7 @@ pub const VideoDecoder = struct {
         vulkan: *Vulkan,
         codec_parameters: *const c.AVCodecParameters,
     ) !Self {
-        const mode: DecodeMode = if (can_use_vulkan_decode(vulkan, codec_parameters)) .vulkan else .software;
+        const mode: Mode = if (can_use_vulkan_decode(vulkan, codec_parameters)) .vulkan else .software;
         if (mode == .software) {
             log.info("[init] Vulkan decoding is unavailable - using software decoding", .{});
         }
@@ -89,6 +88,8 @@ pub const VideoDecoder = struct {
         @panic("[decode_frame] unexpected FFmpeg success result");
     }
 
+    /// Sending a null packet puts the decoder in a `flushing` state, which means
+    /// it will not accept any more packets until flushed.
     pub fn send_packet(self: *Self, packet: [*c]const c.AVPacket) !void {
         try check_err(c.avcodec_send_packet(self.codec_context, packet));
         if (packet == null) {
@@ -103,31 +104,29 @@ pub const VideoDecoder = struct {
     }
 
     fn can_use_vulkan_decode(vulkan: *const Vulkan, codec_parameters: *const c.AVCodecParameters) bool {
-        if (USE_SOFTWARE or vulkan.video_decode_queue == null) {
+        if (USE_SOFTWARE or vulkan_decode_queue_family(vulkan, codec_parameters.*.codec_id) == null) {
             return false;
         }
 
-        const codec_extension_supported = switch (codec_parameters.*.codec_id) {
-            c.AV_CODEC_ID_H264 => vulkan.video_decode_h264_supported,
-            c.AV_CODEC_ID_HEVC => vulkan.video_decode_h265_supported,
-            else => false,
-        };
-        if (!codec_extension_supported) {
+        const decoder = c.avcodec_find_decoder(codec_parameters.*.codec_id);
+
+        if (decoder == null) {
             return false;
         }
 
-        const codec = c.avcodec_find_decoder(codec_parameters.*.codec_id);
-        if (codec == null) return false;
+        var i: i32 = 0;
+        while (true) : (i += 1) {
+            const hw_config = c.avcodec_get_hw_config(decoder, i);
 
-        var index: c_int = 0;
-        while (true) : (index += 1) {
-            const config = c.avcodec_get_hw_config(codec, index);
-            if (config == null) return false;
+            if (hw_config == null) {
+                return false;
+            }
 
-            const supports_device_context = config.*.methods & c.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX != 0;
+            const supports_device_context = (hw_config.*.methods & c.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0;
+
             if (supports_device_context and
-                config.*.device_type == c.AV_HWDEVICE_TYPE_VULKAN and
-                config.*.pix_fmt == c.AV_PIX_FMT_VULKAN)
+                hw_config.*.device_type == c.AV_HWDEVICE_TYPE_VULKAN and
+                hw_config.*.pix_fmt == c.AV_PIX_FMT_VULKAN)
             {
                 return true;
             }
@@ -135,11 +134,11 @@ pub const VideoDecoder = struct {
     }
 
     fn create_vulkan_hw_device(vulkan: *Vulkan, codec_id: c.AVCodecID) ![*c]c.AVBufferRef {
-        const video_decode_queue = vulkan.video_decode_queue orelse return error.VideoNotSupported;
+        const video_decode_queue_family = vulkan_decode_queue_family(vulkan, codec_id) orelse return error.VideoNotSupported;
 
         const enabled_device_extensions = switch (codec_id) {
-            c.AV_CODEC_ID_H264 => &DEVICE_VIDEO_DECODE_H264_EXTENSIONS,
-            c.AV_CODEC_ID_HEVC => &DEVICE_VIDEO_DECODE_H265_EXTENSIONS,
+            c.AV_CODEC_ID_H264 => &VIDEO_DECODE_H264_EXTENSIONS,
+            c.AV_CODEC_ID_HEVC => &VIDEO_DECODE_H265_EXTENSIONS,
             else => return error.VideoNotSupported,
         };
         const video_caps: c_uint = switch (codec_id) {
@@ -174,7 +173,7 @@ pub const VideoDecoder = struct {
 
         try add_ffmpeg_queue_family(
             vulkan_device_context,
-            video_decode_queue.family,
+            video_decode_queue_family,
             c.VK_QUEUE_VIDEO_DECODE_BIT_KHR,
             video_caps,
         );
@@ -182,6 +181,14 @@ pub const VideoDecoder = struct {
         try check_err(c.av_hwdevice_ctx_init(hw_device_ctx));
 
         return hw_device_ctx;
+    }
+
+    fn vulkan_decode_queue_family(vulkan: *const Vulkan, codec_id: c.AVCodecID) ?u32 {
+        return switch (codec_id) {
+            c.AV_CODEC_ID_H264 => if (vulkan.video_decode_h264_queue) |*queue| queue.family else null,
+            c.AV_CODEC_ID_HEVC => if (vulkan.video_decode_h265_queue) |*queue| queue.family else null,
+            else => null,
+        };
     }
 
     fn lock_vulkan_queue(
@@ -235,7 +242,10 @@ pub const VideoDecoder = struct {
         while (formats[index] != c.AV_PIX_FMT_NONE) : (index += 1) {
             if (formats[index] == c.AV_PIX_FMT_VULKAN) break;
         }
-        if (formats[index] == c.AV_PIX_FMT_NONE) return c.AV_PIX_FMT_NONE;
+
+        if (formats[index] == c.AV_PIX_FMT_NONE) {
+            return c.AV_PIX_FMT_NONE;
+        }
 
         var frames_ref: [*c]c.AVBufferRef = null;
         const params_result = c.avcodec_get_hw_frames_parameters(
@@ -244,7 +254,9 @@ pub const VideoDecoder = struct {
             c.AV_PIX_FMT_VULKAN,
             &frames_ref,
         );
-        if (params_result < 0) return codec_context.*.sw_pix_fmt;
+        if (params_result < 0) {
+            return codec_context.*.sw_pix_fmt;
+        }
 
         const frames_context: *c.AVHWFramesContext = @ptrCast(@alignCast(frames_ref.*.data));
         const vulkan_frames: *c.AVVulkanFramesContext = @ptrCast(@alignCast(frames_context.hwctx));

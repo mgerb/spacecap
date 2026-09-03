@@ -68,6 +68,7 @@ fn build_for_target(
     // Build FFmpeg.
     // ----------------------------------------------------------------------------
     const ffmpeg = b.dependency("ffmpeg", .{});
+    // Include Vulkan headers for hardware decoding/encoding.
     const vulkan_headers = b.dependency("vulkan_headers", .{});
     const build_ffmpeg_step = b.addSystemCommand(&.{"bash"});
     build_ffmpeg_step.addFileArg(b.path("build/ffmpeg_build.sh"));

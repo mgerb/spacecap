@@ -1,7 +1,6 @@
 #ifdef __MINGW32__
-// Zig 0.17 Translate-C emits unused local declarations for MinGW's fortified
-// wcscat/wcscpy wrappers and does not support some builtins in x86intrin.h,
-// which makes the generated bindings fail to compile.
+// Zig's translate-c has trouble on some things. We may find out that
+// we need these when this is actually implemented for Windows.
 #undef _FORTIFY_SOURCE
 #define _FORTIFY_SOURCE 0
 #define __X86INTRIN_H 1

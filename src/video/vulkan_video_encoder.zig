@@ -202,7 +202,7 @@ pub const VulkanVideoEncoder = struct {
             .p_command_buffers = @ptrCast(&command_buffer),
         };
 
-        try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
+        try self.vulkan.queue_submit(.encode_h264, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         const result = try self.vulkan.device.waitForFences(
             &.{self.encode_finished_fence},
@@ -219,7 +219,7 @@ pub const VulkanVideoEncoder = struct {
     fn create_command_pools(self: *Self) !void {
         const create_info = vk.CommandPoolCreateInfo{
             .flags = .{ .reset_command_buffer = true },
-            .queue_family_index = self.vulkan.video_encode_queue.?.family,
+            .queue_family_index = self.vulkan.video_encode_h264_queue.?.family,
         };
         self.encode_command_pool = try self.vulkan.device.createCommandPool(&create_info, null);
         self.graphics_command_pool = try self.vulkan.device.createCommandPool(&.{
@@ -383,7 +383,7 @@ pub const VulkanVideoEncoder = struct {
 
         var create_info = std.mem.zeroes(vk.VideoSessionCreateInfoKHR);
         create_info.s_type = .video_session_create_info_khr;
-        create_info.queue_family_index = self.vulkan.video_encode_queue.?.family;
+        create_info.queue_family_index = self.vulkan.video_encode_h264_queue.?.family;
         create_info.picture_format = self.chosen_src_image_format.?;
         create_info.max_coded_extent = .{ .width = self.width, .height = self.height };
         create_info.max_dpb_slots = 16;
@@ -559,7 +559,7 @@ pub const VulkanVideoEncoder = struct {
                 .usage = .{ .video_encode_dpb_khr = true },
                 .sharing_mode = .exclusive,
                 .queue_family_index_count = 1,
-                .p_queue_family_indices = @ptrCast(&self.vulkan.video_encode_queue.?.family),
+                .p_queue_family_indices = @ptrCast(&self.vulkan.video_encode_h264_queue.?.family),
                 .initial_layout = .undefined,
                 .flags = .{},
             };
@@ -609,9 +609,9 @@ pub const VulkanVideoEncoder = struct {
             .flags = .{ .mutable_format = true, .extended_usage = true },
         };
 
-        const queue_families = [_]u32{ self.vulkan.video_encode_queue.?.family, self.vulkan.graphics_queue.family };
+        const queue_families = [_]u32{ self.vulkan.video_encode_h264_queue.?.family, self.vulkan.graphics_queue.family };
 
-        if (self.vulkan.video_encode_queue.?.family != self.vulkan.graphics_queue.family) {
+        if (self.vulkan.video_encode_h264_queue.?.family != self.vulkan.graphics_queue.family) {
             image_create_info.sharing_mode = .concurrent;
             image_create_info.queue_family_index_count = 2;
             image_create_info.p_queue_family_indices = &queue_families;
@@ -1055,7 +1055,7 @@ pub const VulkanVideoEncoder = struct {
             .signal_semaphore_count = 1,
             .p_signal_semaphores = @ptrCast(&self.encode_semaphore),
         };
-        try self.vulkan.queue_submit(.encode, &.{submit_info}, .{ .fence = self.encode_finished_fence });
+        try self.vulkan.queue_submit(.encode_h264, &.{submit_info}, .{ .fence = self.encode_finished_fence });
 
         return .{ .idr = gop_frame_count == 0 };
     }

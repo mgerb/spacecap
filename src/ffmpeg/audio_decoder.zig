@@ -7,6 +7,7 @@ pub const AudioDecoder = struct {
     const log = std.log.scoped(.audio_decoder);
 
     codec_context: [*c]c.AVCodecContext,
+    /// We reuse the same frame for each decode - decoding a frame invalidates the last.
     frame: [*c]c.AVFrame,
     flushing: bool = false,
 
@@ -60,6 +61,8 @@ pub const AudioDecoder = struct {
         @panic("[decode_frame] unexpected FFmpeg success result");
     }
 
+    /// Sending a null packet puts the decoder in a `flushing` state, which means
+    /// it will not accept any more packets until flushed.
     pub fn send_packet(self: *Self, packet: [*c]const c.AVPacket) !void {
         try check_err(c.avcodec_send_packet(self.codec_context, packet));
         if (packet == null) {

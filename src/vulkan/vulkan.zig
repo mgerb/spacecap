@@ -17,25 +17,25 @@ pub const Device = vk.DeviceProxy;
 pub const CommandBuffer = vk.CommandBufferProxy;
 pub const API_VERSION = vk.API_VERSION_1_4;
 
+const IGNORED_DEBUG_MESSAGE_IDS = [_][]const u8{
+    // FFmpeg related issues - check these after updating FFmpeg
+    "VUID-VkImageCreateInfo-pNext-06811",
+    "VUID-VkVideoBeginCodingInfoKHR-flags-07244",
+};
+
 // ----------------------------------------------------------------------------
 // Vulkan extensions.
 // ----------------------------------------------------------------------------
-const INSTANCE_EXTENSIONS = [_][*:0]const u8{
-    vk.extensions.khr_get_physical_device_properties_2.name,
-};
-
-const DEVICE_EXTENSIONS = [_][*:0]const u8{
+const RENDER_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_dynamic_rendering.name,
     vk.extensions.khr_synchronization_2.name,
     vk.extensions.khr_swapchain.name,
 };
 
 const DEVICE_CAPTURE_EXTENSIONS = blk: {
-    const base_device_extensions = [_][*:0]const u8{};
-
     // linux specific device extensions
     if (util.is_linux()) {
-        break :blk base_device_extensions ++ .{
+        break :blk [_][*:0]const u8{
             vk.extensions.ext_image_drm_format_modifier.name,
             vk.extensions.khr_external_memory.name,
             vk.extensions.khr_external_memory_fd.name,
@@ -44,24 +44,19 @@ const DEVICE_CAPTURE_EXTENSIONS = blk: {
         };
     }
 
-    break :blk base_device_extensions;
+    break :blk [_][*:0]const u8{};
 };
 
-const DEVICE_VIDEO_COMMON_EXTENSIONS = [_][*:0]const u8{
+const VIDEO_ENCODE_H264_EXTENSIONS = [_][*:0]const u8{
     vk.extensions.khr_video_queue.name,
-};
-
-const DEVICE_VIDEO_ENCODE_EXTENSIONS = DEVICE_VIDEO_COMMON_EXTENSIONS ++ .{
     vk.extensions.khr_video_encode_queue.name,
     vk.extensions.khr_video_encode_h_264.name,
 };
 
-const DEVICE_VIDEO_DECODE_EXTENSIONS = DEVICE_VIDEO_COMMON_EXTENSIONS ++ .{
-    vk.extensions.khr_video_decode_queue.name,
-};
-
-pub const DEVICE_VIDEO_DECODE_H264_EXTENSIONS = blk: {
-    const extensions = DEVICE_VIDEO_DECODE_EXTENSIONS ++ .{
+pub const VIDEO_DECODE_H264_EXTENSIONS = blk: {
+    const extensions = [_][*:0]const u8{
+        vk.extensions.khr_video_queue.name,
+        vk.extensions.khr_video_decode_queue.name,
         vk.extensions.khr_video_decode_h_264.name,
     };
 
@@ -77,8 +72,10 @@ pub const DEVICE_VIDEO_DECODE_H264_EXTENSIONS = blk: {
     break :blk extensions;
 };
 
-pub const DEVICE_VIDEO_DECODE_H265_EXTENSIONS = blk: {
-    const extensions = DEVICE_VIDEO_DECODE_EXTENSIONS ++ .{
+pub const VIDEO_DECODE_H265_EXTENSIONS = blk: {
+    const extensions = [_][*:0]const u8{
+        vk.extensions.khr_video_queue.name,
+        vk.extensions.khr_video_decode_queue.name,
         vk.extensions.khr_video_decode_h_265.name,
     };
 
@@ -95,23 +92,22 @@ pub const DEVICE_VIDEO_DECODE_H265_EXTENSIONS = blk: {
 };
 // ----------------------------------------------------------------------------
 
-const QueueAllocation = struct {
+const Queues = struct {
     graphics_family: u32,
     /// Could be null on machines that don't support Vulkan video.
-    video_encode_family: ?u32,
-    /// Could be null on machines that don't support Vulkan video decode.
-    video_decode_family: ?u32,
+    video_encode_h264_family: ?u32,
+    video_decode_h264_family: ?u32,
+    video_decode_h265_family: ?u32,
 };
 
 pub const DeviceCandidate = struct {
     pdev: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
-    queues: QueueAllocation,
+    queues: Queues,
     capture_extensions_supported: bool,
-    video_encode_extensions_supported: bool,
-    video_decode_extensions_supported: bool,
-    video_decode_h264_extension_supported: bool,
-    video_decode_h265_extension_supported: bool,
+    video_encode_h264_supported: bool,
+    video_decode_h264_supported: bool,
+    video_decode_h265_supported: bool,
 };
 
 pub const Queue = struct {
@@ -141,10 +137,9 @@ pub const Vulkan = struct {
     device: Device,
     debug_messenger: ?vk.DebugUtilsMessengerEXT,
     graphics_queue: Queue,
-    video_encode_queue: ?Queue,
-    video_decode_queue: ?Queue,
-    video_decode_h264_supported: bool,
-    video_decode_h265_supported: bool,
+    video_encode_h264_queue: ?Queue,
+    video_decode_h264_queue: ?Queue,
+    video_decode_h265_queue: ?Queue,
     capture_extensions_supported: bool,
     physical_device: vk.PhysicalDevice,
     props: vk.PhysicalDeviceProperties,
@@ -179,10 +174,10 @@ pub const Vulkan = struct {
             .api_version = @bitCast(API_VERSION),
         };
 
-        var extension_names = try std.ArrayList([*:0]const u8).initCapacity(allocator, 0);
+        var extension_names: std.ArrayList([*:0]const u8) = .empty;
         defer extension_names.deinit(allocator);
 
-        try extension_names.appendSlice(allocator, &INSTANCE_EXTENSIONS);
+        try extension_names.append(allocator, vk.extensions.khr_get_physical_device_properties_2.name);
 
         if (extra_instance_extensions) |extensions| {
             for (extensions) |extension| {
@@ -257,12 +252,16 @@ pub const Vulkan = struct {
         errdefer device.destroyDevice(null);
 
         const graphics_queue = Queue.init(device, candidate.queues.graphics_family);
-        const video_encode_queue = if (candidate.video_encode_extensions_supported and candidate.queues.video_encode_family != null)
-            Queue.init(device, candidate.queues.video_encode_family.?)
+        const video_encode_h264_queue = if (candidate.video_encode_h264_supported)
+            Queue.init(device, candidate.queues.video_encode_h264_family.?)
         else
             null;
-        const video_decode_queue = if (candidate.video_decode_extensions_supported and candidate.queues.video_decode_family != null)
-            Queue.init(device, candidate.queues.video_decode_family.?)
+        const video_decode_h264_queue = if (candidate.video_decode_h264_supported)
+            Queue.init(device, candidate.queues.video_decode_h264_family.?)
+        else
+            null;
+        const video_decode_h265_queue = if (candidate.video_decode_h265_supported)
+            Queue.init(device, candidate.queues.video_decode_h265_family.?)
         else
             null;
 
@@ -278,10 +277,9 @@ pub const Vulkan = struct {
             .debug_messenger = debug_messenger,
             .device = device,
             .graphics_queue = graphics_queue,
-            .video_encode_queue = video_encode_queue,
-            .video_decode_queue = video_decode_queue,
-            .video_decode_h264_supported = candidate.video_decode_h264_extension_supported,
-            .video_decode_h265_supported = candidate.video_decode_h265_extension_supported,
+            .video_encode_h264_queue = video_encode_h264_queue,
+            .video_decode_h264_queue = video_decode_h264_queue,
+            .video_decode_h265_queue = video_decode_h265_queue,
             .capture_extensions_supported = candidate.capture_extensions_supported,
             .physical_device = pdev,
             .props = props,
@@ -317,7 +315,7 @@ pub const Vulkan = struct {
         fps: u32,
         bit_rate: u64,
     ) !void {
-        if (self.video_encode_queue == null) {
+        if (self.video_encode_h264_queue == null) {
             return error.VideoNotSupported;
         }
 
@@ -511,10 +509,13 @@ pub const Vulkan = struct {
     /// Simple score function to determine what GPU to auto select based on its capabilties.
     /// Prefer devices that support Vulkan video encoding above all, because the app doesn't
     /// work otherwise.
-    fn device_score(props: vk.PhysicalDeviceProperties, queues: QueueAllocation) u32 {
+    fn device_score(props: vk.PhysicalDeviceProperties, queues: Queues) u32 {
         var score: u32 = 0;
 
-        if (queues.video_encode_family != null) {
+        if (queues.video_encode_h264_family != null or
+            queues.video_decode_h264_family != null or
+            queues.video_decode_h265_family != null)
+        {
             score += 10;
         }
 
@@ -531,31 +532,37 @@ pub const Vulkan = struct {
     fn check_suitable(
         instance: Instance,
         pdev: vk.PhysicalDevice,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
     ) !?DeviceCandidate {
         const props = instance.getPhysicalDeviceProperties(pdev);
         log.debug("[check_suitable] checking potential device: {s}, device type: {}", .{ props.device_name, props.device_type });
 
-        if (!try check_device_extension_support(.device, instance, pdev, allocator)) {
+        // The render extensions are required. Bail if not supported.
+        if (!try check_device_extension_support(allocator, &RENDER_EXTENSIONS, instance, pdev)) {
             return null;
         }
 
-        if (try init_queues(instance, pdev, allocator)) |allocation| {
-            const video_decode_common_extensions_supported = try check_device_extension_support(.video_decode, instance, pdev, allocator);
-            const video_decode_h264_extension_supported = video_decode_common_extensions_supported and
-                try extension_supported(instance, pdev, allocator, vk.extensions.khr_video_decode_h_264.name);
-            const video_decode_h265_extension_supported = video_decode_common_extensions_supported and
-                try extension_supported(instance, pdev, allocator, vk.extensions.khr_video_decode_h_265.name);
+        if (try get_available_queues(instance, pdev, allocator)) |available_queues| {
+            const video_encode_h264_supported = available_queues.video_encode_h264_family != null and
+                try check_device_extension_support(allocator, &VIDEO_ENCODE_H264_EXTENSIONS, instance, pdev);
+            const video_decode_h264_supported = available_queues.video_decode_h264_family != null and
+                try check_device_extension_support(allocator, &VIDEO_DECODE_H264_EXTENSIONS, instance, pdev);
+            const video_decode_h265_supported = available_queues.video_decode_h265_family != null and
+                try check_device_extension_support(allocator, &VIDEO_DECODE_H265_EXTENSIONS, instance, pdev);
 
             return DeviceCandidate{
                 .pdev = pdev,
                 .props = props,
-                .queues = allocation,
-                .capture_extensions_supported = try check_device_extension_support(.capture, instance, pdev, allocator),
-                .video_encode_extensions_supported = try check_device_extension_support(.video_encode, instance, pdev, allocator),
-                .video_decode_extensions_supported = video_decode_h264_extension_supported or video_decode_h265_extension_supported,
-                .video_decode_h264_extension_supported = video_decode_h264_extension_supported,
-                .video_decode_h265_extension_supported = video_decode_h265_extension_supported,
+                .queues = available_queues,
+                .capture_extensions_supported = try check_device_extension_support(
+                    allocator,
+                    &DEVICE_CAPTURE_EXTENSIONS,
+                    instance,
+                    pdev,
+                ),
+                .video_encode_h264_supported = video_encode_h264_supported,
+                .video_decode_h264_supported = video_decode_h264_supported,
+                .video_decode_h265_supported = video_decode_h265_supported,
             };
         }
 
@@ -563,52 +570,18 @@ pub const Vulkan = struct {
     }
 
     fn check_device_extension_support(
-        extension_type: enum { device, capture, video_encode, video_decode },
+        allocator: Allocator,
+        extensions: []const [*:0]const u8,
         instance: Instance,
         pdev: vk.PhysicalDevice,
-        allocator: std.mem.Allocator,
     ) !bool {
         var supported = true;
-        // TODO: Combine these branches.
-        switch (extension_type) {
-            .device => {
-                // Loop through all extensions so that we can log all the unsupported ones.
-                for (DEVICE_EXTENSIONS) |extension| {
-                    if (!try extension_supported(instance, pdev, allocator, extension)) {
-                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
-                        supported = false;
-                    }
-                }
-            },
-            .capture => {
-                // Loop through all extensions so that we can log all the unsupported ones.
-                for (DEVICE_CAPTURE_EXTENSIONS) |extension| {
-                    if (!try extension_supported(instance, pdev, allocator, extension)) {
-                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
-                        supported = false;
-                    }
-                }
-            },
-            .video_encode => {
-                // Loop through all extensions so that we can log all the unsupported ones.
-                for (DEVICE_VIDEO_ENCODE_EXTENSIONS) |extension| {
-                    if (!try extension_supported(instance, pdev, allocator, extension)) {
-                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
-                        supported = false;
-                    }
-                }
-            },
-            .video_decode => {
-                // Loop through all extensions so that we can log all the unsupported ones.
-                for (DEVICE_VIDEO_DECODE_EXTENSIONS) |extension| {
-                    if (!try extension_supported(instance, pdev, allocator, extension)) {
-                        log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
-                        supported = false;
-                    }
-                }
-            },
+        for (extensions) |extension| {
+            if (!try extension_supported(instance, pdev, allocator, extension)) {
+                log.info("[check_device_extension_support] extension is not supported on device: {s}", .{extension});
+                supported = false;
+            }
         }
-
         return supported;
     }
 
@@ -632,39 +605,77 @@ pub const Vulkan = struct {
     }
 
     /// Does not actually allocate anything in Vulkan. It just gets the queue family indexes.
-    fn init_queues(
+    fn get_available_queues(
         instance: Instance,
         pdev: vk.PhysicalDevice,
         allocator: std.mem.Allocator,
-    ) !?QueueAllocation {
-        const families = try instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(pdev, allocator);
+    ) !?Queues {
+        var family_count: u32 = 0;
+        instance.getPhysicalDeviceQueueFamilyProperties2(pdev, &family_count, null);
+
+        const families = try allocator.alloc(vk.QueueFamilyProperties2, @intCast(family_count));
         defer allocator.free(families);
 
-        var graphics_family: ?u32 = null;
-        var video_encode_family: ?u32 = null;
-        var video_decode_family: ?u32 = null;
+        const video_properties = try allocator.alloc(vk.QueueFamilyVideoPropertiesKHR, @intCast(family_count));
+        defer allocator.free(video_properties);
 
-        for (families, 0..) |properties, i| {
+        for (families, video_properties) |*family, *video| {
+            video.* = .{ .video_codec_operations = .{} };
+            family.* = .{
+                .p_next = @ptrCast(video),
+                .queue_family_properties = undefined,
+            };
+        }
+
+        instance.getPhysicalDeviceQueueFamilyProperties2(pdev, &family_count, families.ptr);
+
+        var graphics_family: ?u32 = null;
+        var video_encode_h264_family: ?u32 = null;
+        var video_decode_h264_family: ?u32 = null;
+        var video_decode_h265_family: ?u32 = null;
+
+        for (families[0..@intCast(family_count)], 0..) |family_properties, i| {
             const family: u32 = @intCast(i);
+            const properties = family_properties.queue_family_properties;
 
             if (graphics_family == null and properties.queue_flags.graphics) {
-                graphics_family = family;
+                // Unit tests will not have a surface, so just grab the first
+                // graphics queue.
+                const presentation_supported = @import("builtin").is_test or
+                    imguiz.SDL_Vulkan_GetPresentationSupport(
+                        @ptrFromInt(@backingInt(instance.handle)),
+                        @ptrFromInt(@backingInt(pdev)),
+                        family,
+                    );
+                if (presentation_supported) {
+                    graphics_family = family;
+                }
             }
 
-            if (video_encode_family == null and properties.queue_flags.video_encode_khr) {
-                video_encode_family = family;
+            if (video_encode_h264_family == null and
+                properties.queue_flags.video_encode_khr and
+                video_properties[i].video_codec_operations.encode_h264_khr)
+            {
+                video_encode_h264_family = family;
             }
 
-            if (video_decode_family == null and properties.queue_flags.video_decode_khr) {
-                video_decode_family = family;
+            if (properties.queue_flags.video_decode_khr) {
+                const operations = video_properties[i].video_codec_operations;
+                if (video_decode_h264_family == null and operations.decode_h264_khr) {
+                    video_decode_h264_family = family;
+                }
+                if (video_decode_h265_family == null and operations.decode_h265_khr) {
+                    video_decode_h265_family = family;
+                }
             }
         }
 
         if (graphics_family != null) {
-            return QueueAllocation{
+            return Queues{
                 .graphics_family = graphics_family.?,
-                .video_encode_family = video_encode_family,
-                .video_decode_family = video_decode_family,
+                .video_encode_h264_family = video_encode_h264_family,
+                .video_decode_h264_family = video_decode_h264_family,
+                .video_decode_h265_family = video_decode_h265_family,
             };
         }
 
@@ -676,20 +687,20 @@ pub const Vulkan = struct {
     /// - add device queues
     fn initialize_candidate(allocator: std.mem.Allocator, instance: Instance, candidate: DeviceCandidate) !vk.Device {
         const priority = [_]f32{1};
-        var qci = try std.ArrayList(vk.DeviceQueueCreateInfo).initCapacity(allocator, 1);
-        defer qci.deinit(allocator);
+        var queue_create_info = try std.ArrayList(vk.DeviceQueueCreateInfo).initCapacity(allocator, 1);
+        defer queue_create_info.deinit(allocator);
 
-        try qci.append(allocator, .{
+        try queue_create_info.append(allocator, .{
             .queue_family_index = candidate.queues.graphics_family,
             .queue_count = 1,
             .p_queue_priorities = &priority,
         });
 
-        if (candidate.video_encode_extensions_supported) {
-            if (candidate.queues.video_encode_family) |video_encode_family| {
-                if (video_encode_family != candidate.queues.graphics_family) {
-                    try qci.append(allocator, .{
-                        .queue_family_index = video_encode_family,
+        if (candidate.video_encode_h264_supported) {
+            if (candidate.queues.video_encode_h264_family) |video_encode_h264_family| {
+                if (video_encode_h264_family != candidate.queues.graphics_family) {
+                    try queue_create_info.append(allocator, .{
+                        .queue_family_index = video_encode_h264_family,
                         .queue_count = 1,
                         .p_queue_priorities = &priority,
                     });
@@ -697,18 +708,22 @@ pub const Vulkan = struct {
             }
         }
 
-        if (candidate.video_decode_extensions_supported) {
-            if (candidate.queues.video_decode_family) |video_decode_family| {
-                const shares_encode_family = candidate.video_encode_extensions_supported and
-                    candidate.queues.video_encode_family != null and
-                    video_decode_family == candidate.queues.video_encode_family.?;
-                if (video_decode_family != candidate.queues.graphics_family and !shares_encode_family) {
-                    try qci.append(allocator, .{
-                        .queue_family_index = video_decode_family,
-                        .queue_count = 1,
-                        .p_queue_priorities = &priority,
-                    });
+        const video_decode_families = [_]?u32{
+            if (candidate.video_decode_h264_supported) candidate.queues.video_decode_h264_family else null,
+            if (candidate.video_decode_h265_supported) candidate.queues.video_decode_h265_family else null,
+        };
+        for (video_decode_families) |maybe_family| {
+            const family = maybe_family orelse continue;
+            for (queue_create_info.items) |qci| {
+                if (qci.queue_family_index == family) {
+                    break;
                 }
+            } else {
+                try queue_create_info.append(allocator, .{
+                    .queue_family_index = family,
+                    .queue_count = 1,
+                    .p_queue_priorities = &priority,
+                });
             }
         }
 
@@ -733,39 +748,27 @@ pub const Vulkan = struct {
         var enabled_extensions = try std.ArrayList([*:0]const u8).initCapacity(allocator, 2);
         defer enabled_extensions.deinit(allocator);
 
-        try enabled_extensions.appendSlice(allocator, DEVICE_EXTENSIONS[0..]);
+        try enabled_extensions.appendSlice(allocator, RENDER_EXTENSIONS[0..]);
 
         if (candidate.capture_extensions_supported) {
             try enabled_extensions.appendSlice(allocator, DEVICE_CAPTURE_EXTENSIONS[0..]);
         }
 
-        if (candidate.video_encode_extensions_supported) {
-            try enabled_extensions.appendSlice(allocator, DEVICE_VIDEO_ENCODE_EXTENSIONS[0..]);
+        if (candidate.video_encode_h264_supported) {
+            try enabled_extensions.appendSlice(allocator, VIDEO_ENCODE_H264_EXTENSIONS[0..]);
         }
 
-        if (candidate.video_decode_extensions_supported) {
-            for (DEVICE_VIDEO_DECODE_EXTENSIONS) |extension| {
-                for (enabled_extensions.items) |enabled_extension| {
-                    if (std.mem.eql(u8, std.mem.span(extension), std.mem.span(enabled_extension))) {
-                        break;
-                    }
-                } else {
-                    try enabled_extensions.append(allocator, extension);
-                }
-            }
-
-            if (candidate.video_decode_h264_extension_supported) {
-                try enabled_extensions.append(allocator, vk.extensions.khr_video_decode_h_264.name);
-            }
-            if (candidate.video_decode_h265_extension_supported) {
-                try enabled_extensions.append(allocator, vk.extensions.khr_video_decode_h_265.name);
-            }
+        if (candidate.video_decode_h264_supported) {
+            try enabled_extensions.appendSlice(allocator, VIDEO_DECODE_H264_EXTENSIONS[0..]);
+        }
+        if (candidate.video_decode_h265_supported) {
+            try enabled_extensions.appendSlice(allocator, VIDEO_DECODE_H265_EXTENSIONS[0..]);
         }
 
         return try instance.createDevice(candidate.pdev, &.{
             .p_next = &dynamic_rendering_features,
-            .queue_create_info_count = @intCast(qci.items.len),
-            .p_queue_create_infos = qci.items.ptr,
+            .queue_create_info_count = @intCast(queue_create_info.items.len),
+            .p_queue_create_infos = queue_create_info.items.ptr,
             .enabled_extension_count = @intCast(enabled_extensions.items.len),
             .pp_enabled_extension_names = enabled_extensions.items.ptr,
         }, null);
@@ -780,14 +783,26 @@ pub const Vulkan = struct {
         _ = message_severity;
         _ = message_types;
         _ = p_user_data;
-        b: {
-            const msg = (p_callback_data orelse break :b).p_message orelse break :b;
-            log.warn("[debug_callback] {s}", .{msg});
+        const callback_data = p_callback_data orelse {
+            log.warn("[debug_callback] unrecognized validation layer debug message", .{});
+            return .true;
+        };
 
-            return .false;
+        if (callback_data.p_message_id_name) |p_message_id_name| {
+            const message_id = std.mem.span(p_message_id_name);
+            inline for (IGNORED_DEBUG_MESSAGE_IDS) |ignored_message_id| {
+                if (std.mem.eql(u8, message_id, ignored_message_id)) {
+                    return .false;
+                }
+            }
         }
-        log.warn("[debug_callback] unrecognized validation layer debug message", .{});
-        return .true;
+
+        const msg = callback_data.p_message orelse {
+            log.warn("[debug_callback] unrecognized validation layer debug message", .{});
+            return .true;
+        };
+        log.warn("[debug_callback] {s}", .{msg});
+        return .false;
     }
 
     pub fn allocate(
@@ -819,7 +834,7 @@ pub const Vulkan = struct {
     /// - submits queue
     pub fn queue_submit(
         self: *Self,
-        queue: enum { graphics, encode },
+        queue: enum { graphics, encode_h264 },
         submit_info: []const vk.SubmitInfo,
         args: struct {
             fence: vk.Fence = .null_handle,
@@ -828,7 +843,7 @@ pub const Vulkan = struct {
         const _queue: ?*Queue = switch (queue) {
             // NOTE: Queues must be referenced. Mutexes cannot be copied.
             .graphics => &self.graphics_queue,
-            .encode => if (self.video_encode_queue != null) &self.video_encode_queue.? else null,
+            .encode_h264 => if (self.video_encode_h264_queue != null) &self.video_encode_h264_queue.? else null,
         };
 
         // It should never get to this point. The caller of this function should always have valid queues.
@@ -854,11 +869,20 @@ pub const Vulkan = struct {
         if (self.graphics_queue.family == family) {
             return &self.graphics_queue.mutex;
         }
-        if (self.video_encode_queue) |*queue| {
-            if (queue.family == family) return &queue.mutex;
+        if (self.video_encode_h264_queue) |*queue| {
+            if (queue.family == family) {
+                return &queue.mutex;
+            }
         }
-        if (self.video_decode_queue) |*queue| {
-            if (queue.family == family) return &queue.mutex;
+        if (self.video_decode_h264_queue) |*queue| {
+            if (queue.family == family) {
+                return &queue.mutex;
+            }
+        }
+        if (self.video_decode_h265_queue) |*queue| {
+            if (queue.family == family) {
+                return &queue.mutex;
+            }
         }
         @panic("[queue_mutex] unknown queue family");
     }

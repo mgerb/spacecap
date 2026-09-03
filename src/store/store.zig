@@ -168,7 +168,7 @@ pub const Store = struct {
             .is_video_capture_supported = self.capture_store.vulkan.capture_extensions_supported,
         } });
         self.dispatch(.{ .capture = .{
-            .is_video_encoding_supported = self.capture_store.vulkan.video_encode_queue != null,
+            .is_video_encoding_supported = self.capture_store.vulkan.video_encode_h264_queue != null,
         } });
         self.dispatch(.{ .capture = .load_system_audio_devices });
         self.dispatch(.{ .capture = .start_audio_capture_thread });

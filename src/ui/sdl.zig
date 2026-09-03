@@ -22,10 +22,7 @@ pub const SDLVulkanExtensions = struct {
 
 /// Caller owns memory
 pub fn get_sdl_vulkan_extensions(allocator: std.mem.Allocator) !SDLVulkanExtensions {
-    try init();
-    defer imguiz.SDL_Quit();
-
-    var extensions = try std.ArrayList([*:0]const u8).initCapacity(allocator, 0);
+    var extensions: std.ArrayList([*:0]const u8) = .empty;
     var extensions_count: u32 = 0;
     const sdl_extensions = imguiz.SDL_Vulkan_GetInstanceExtensions(&extensions_count);
     if (sdl_extensions == null) {
@@ -72,6 +69,12 @@ pub fn init() !void {
         return error.SDLInitFailure;
     }
 
+    // Vulkan may not be initialized yet, so we need to make sure the lib is loaded.
+    if (!imguiz.SDL_Vulkan_LoadLibrary(null)) {
+        log.err("[init] failed to load Vulkan: {s}", .{imguiz.SDL_GetError()});
+        return error.SDLVulkanLoadLibraryFailure;
+    }
+
     if (!imguiz.SDL_InitSubSystem(imguiz.SDL_INIT_AUDIO)) {
         log.err("[init] audio initialization failed: {s}", .{imguiz.SDL_GetError()});
         return;
@@ -79,6 +82,11 @@ pub fn init() !void {
 
     const driver = imguiz.SDL_GetCurrentAudioDriver();
     log.info("[init] using audio driver: {s}", .{driver});
+}
+
+pub fn deinit() void {
+    imguiz.SDL_Vulkan_UnloadLibrary();
+    imguiz.SDL_Quit();
 }
 
 fn try_sdl_init_with_hint(driver_name: [*:0]const u8) !bool {

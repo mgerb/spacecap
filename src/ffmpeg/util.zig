@@ -14,7 +14,7 @@ pub fn check_err(ret: c_int) !void {
     }
 }
 
-/// Get the presentation timestamp of a frame based on a stream's time base.
+/// Get the presentation timestamp (nanoseconds) of a frame based on a stream's time base.
 pub fn frame_pts_ns(frame: *const c.AVFrame, time_base: c.AVRational) !i64 {
     if (frame.*.best_effort_timestamp == c.AV_NOPTS_VALUE) {
         return error.MissingFrameTimestamp;
