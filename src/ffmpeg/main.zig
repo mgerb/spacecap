@@ -4,6 +4,7 @@ const std = @import("std");
 
 pub const Png = @import("./png.zig").Png;
 pub const Muxer = @import("./muxer.zig").Muxer;
+pub const FileRemuxer = @import("./file_remuxer.zig").FileRemuxer;
 pub const Demuxer = @import("./demuxer.zig").Demuxer;
 pub const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
 pub const AudioDecoder = @import("./audio_decoder.zig").AudioDecoder;

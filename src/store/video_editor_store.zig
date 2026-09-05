@@ -6,10 +6,17 @@ const String = @import("../string.zig").String;
 const VideoEditorSession = @import("../video/video_editor_session.zig").VideoEditorSession;
 const SessionId = VideoEditorSession.SessionId;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
+const exporter = @import("../exporter.zig");
 
 pub const VideoEditorStore = struct {
     const Self = @This();
     const log = std.log.scoped(.video_editor_store);
+
+    pub const ExportTrimPayload = struct {
+        session_id: SessionId,
+        trim_start_ns: i64,
+        trim_end_ns: i64,
+    };
 
     allocator: Allocator,
     vulkan: *Vulkan,
@@ -42,6 +49,7 @@ pub const VideoEditorStore = struct {
         },
         step_previous_frame: struct { session_id: SessionId },
         step_next_frame: struct { session_id: SessionId },
+        export_trim: ExportTrimPayload,
 
         pub const effects = .{
             .scrub = .{effect_wake_worker},
@@ -51,6 +59,7 @@ pub const VideoEditorStore = struct {
             .set_trim_end = .{effect_wake_worker},
             .step_previous_frame = .{effect_wake_worker},
             .step_next_frame = .{effect_wake_worker},
+            .export_trim = .{effect_export_trim},
         };
 
         pub fn deinit(self: *@This()) void {
@@ -220,6 +229,7 @@ pub const VideoEditorStore = struct {
                             session.as_ptr().step_next_frame();
                         }
                     },
+                    .export_trim => {},
                 }
             },
             else => {},
@@ -267,6 +277,43 @@ pub const VideoEditorStore = struct {
         defer session.deinit();
 
         session.as_ptr().wake_worker();
+    }
+
+    fn effect_export_trim(store: *Store, payload: ExportTrimPayload) !void {
+        var input_path: String = undefined;
+        var output_directory: String = undefined;
+        {
+            const state_locked = store.state.lock();
+            defer state_locked.unlock();
+            const state = state_locked.unwrap_ptr();
+            const session = state.video_editor.sessions.get(payload.session_id) orelse {
+                return error.VideoEditorSessionNotFound;
+            };
+            input_path = try session.as_ptr().file_path.clone(store.allocator);
+            errdefer input_path.deinit();
+            const configured_output_directory =
+                state.user_settings.user_settings.video_output_directory orelse
+                return error.MissingVideoOutputDirectory;
+            output_directory = try configured_output_directory.clone(store.allocator);
+        }
+        defer input_path.deinit();
+        defer output_directory.deinit();
+
+        const output_path = exporter.export_trimmed_video(
+            store.allocator,
+            store.io,
+            input_path.bytes,
+            payload.trim_start_ns,
+            payload.trim_end_ns,
+            output_directory.bytes,
+        ) catch |err| {
+            log.err("[effect_export_trim] failed to export {s}: {}", .{ input_path.bytes, err });
+            return err;
+        };
+        defer store.allocator.free(output_path);
+
+        log.info("[effect_export_trim] exported {s}", .{output_path});
+        store.dispatch(.{ .file_browser = .load_files });
     }
 };
 

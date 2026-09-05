@@ -48,6 +48,15 @@ pub fn draw_editor_controls(
             .video_editor = .{ .step_next_frame = .{ .session_id = session_id } },
         });
     }
+
+    c.ImGui_SameLine();
+    if (c.ImGui_Button("Export")) {
+        store.dispatch(.{ .video_editor = .{ .export_trim = .{
+            .session_id = session_id,
+            .trim_start_ns = session.trim_start_ns(),
+            .trim_end_ns = session.trim_end_ns(),
+        } } });
+    }
 }
 
 fn draw_timeline(

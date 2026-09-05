@@ -55,7 +55,7 @@ common_configure_flags=(
   --enable-demuxer=avi,matroska,mov
   --enable-parser=av1,h264,hevc,opus,vorbis,vp8,vp9
   --enable-decoder=av1,h264,hevc,opus,vorbis,vp8,vp9,aac,mp3,msmpeg4v2
-  --enable-muxer=mov,mp4,wav
+  --enable-muxer=3g2,3gp,avi,f4v,ipod,ismv,matroska,mov,mp4,psp,wav,webm
   --enable-encoder=aac,pcm_f32le,png
   --enable-zlib
 )

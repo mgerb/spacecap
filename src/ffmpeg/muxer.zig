@@ -5,6 +5,7 @@ const Util = @import("../util.zig");
 const LinkedListIterator = Util.LinkedListIterator;
 const c = @import("ffmpeg_c");
 const check_err = @import("./util.zig").check_err;
+const ns_time_base = @import("./util.zig").ns_time_base;
 const AudioEncoder = @import("./audio_encoder.zig").AudioEncoder;
 
 pub const Muxer = struct {
@@ -204,7 +205,6 @@ pub const Muxer = struct {
             self.first_video_time_ns = frame_time_ns;
         }
 
-        const ns_time_base = c.AVRational{ .num = 1, .den = 1_000_000_000 };
         const frame_duration_pts = if (self.fps > 0)
             @max(c.av_rescale_q(1, .{ .num = 1, .den = @intCast(self.fps) }, self.video_stream.time_base), 1)
         else

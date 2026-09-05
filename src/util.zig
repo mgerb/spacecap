@@ -120,6 +120,41 @@ pub fn format_file_name(
     );
 }
 
+/// Reserve and return an unused filename in the output directory. The
+/// preferred name is used first, followed by `_1`, `_2`, etc. Caller owns the
+/// returned filename.
+pub fn get_unique_file_name(
+    allocator: Allocator,
+    io: std.Io,
+    output_directory: []const u8,
+    preferred_name: []const u8,
+) ![]u8 {
+    const extension = std.fs.path.extension(preferred_name);
+    const stem = preferred_name[0 .. preferred_name.len - extension.len];
+
+    var suffix: u64 = 0;
+    while (true) : (suffix += 1) {
+        const candidate_name = if (suffix == 0)
+            try allocator.dupe(u8, preferred_name)
+        else
+            try std.fmt.allocPrint(allocator, "{s}_{d}{s}", .{ stem, suffix, extension });
+        errdefer allocator.free(candidate_name);
+
+        const candidate_path = try std.fs.path.join(allocator, &.{ output_directory, candidate_name });
+        defer allocator.free(candidate_path);
+
+        const file = std.Io.Dir.cwd().createFile(io, candidate_path, .{ .exclusive = true }) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                allocator.free(candidate_name);
+                continue;
+            },
+            else => return err,
+        };
+        file.close(io);
+        return candidate_name;
+    }
+}
+
 const UtcTimestampParts = struct {
     year: u16,
     month: u9,

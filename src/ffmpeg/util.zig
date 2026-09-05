@@ -4,6 +4,8 @@ const imguiz = @import("imguiz").imguiz;
 
 const log = std.log.scoped(.ffmpeg);
 
+pub const ns_time_base = c.AVRational{ .num = 1, .den = std.time.ns_per_s };
+
 pub fn check_err(ret: c_int) !void {
     if (ret < 0) {
         var errbuf = std.mem.zeroes([64]u8);
@@ -19,10 +21,7 @@ pub fn frame_pts_ns(frame: *const c.AVFrame, time_base: c.AVRational) !i64 {
     if (frame.*.best_effort_timestamp == c.AV_NOPTS_VALUE) {
         return error.MissingFrameTimestamp;
     }
-    return c.av_rescale_q(frame.*.best_effort_timestamp, time_base, .{
-        .num = 1,
-        .den = std.time.ns_per_s,
-    });
+    return c.av_rescale_q(frame.*.best_effort_timestamp, time_base, ns_time_base);
 }
 
 pub fn frame_to_sdl_audio_spec(frame: *const c.AVFrame) !imguiz.SDL_AudioSpec {
