@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_util = @import("./build_util.zig");
 
 pub fn build_linux(
     b: *std.Build,
@@ -16,6 +17,8 @@ pub fn build_linux(
     );
 
     // Link Linux specific libs here.
+
+    // zlib is required for PNG image export
     exe.root_module.linkSystemLibrary("zlib", .{});
 }
 
@@ -24,7 +27,7 @@ pub fn build_windows(
     exe: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-) void {
+) !void {
     build_for_target(
         b,
         exe,
@@ -36,6 +39,21 @@ pub fn build_windows(
 
     // Link Windows specific libs here.
     exe.root_module.linkSystemLibrary("bcrypt", .{});
+
+    // zlib is required for PNG image export.
+    const mingw_zlib_path = b.graph.environ_map.get("MINGW_ZLIB_PATH") orelse
+        @panic("MINGW_ZLIB_PATH must be set when building the Windows target");
+    exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mingw_zlib_path, "lib" }) });
+    try build_util.install_and_link_system_library(.{
+        .allocator = b.allocator,
+        .b = b,
+        .exe = exe,
+        .source_dir = b.pathJoin(&.{ mingw_zlib_path, "bin" }),
+        .lib_name = "z.dll",
+        .target = .windows,
+        .file_name_override = "zlib1.dll",
+        .link_options = .{ .use_pkg_config = .no },
+    });
 }
 
 fn build_for_target(
@@ -50,6 +68,8 @@ fn build_for_target(
     // Build FFmpeg.
     // ----------------------------------------------------------------------------
     const ffmpeg = b.dependency("ffmpeg", .{});
+    // Include Vulkan headers for hardware decoding/encoding.
+    const vulkan_headers = b.dependency("vulkan_headers", .{});
     const build_ffmpeg_step = b.addSystemCommand(&.{"bash"});
     build_ffmpeg_step.addFileArg(b.path("build/ffmpeg_build.sh"));
     build_ffmpeg_step.addArg(name);
@@ -57,6 +77,9 @@ fn build_for_target(
         .make_absolute = true,
     });
     build_ffmpeg_step.addDirectoryArg2(ffmpeg.path(""), .{});
+    build_ffmpeg_step.addDirectoryArg2(vulkan_headers.path(""), .{
+        .make_absolute = true,
+    });
     build_ffmpeg_step.expectExitCode(0);
     build_ffmpeg_step.setName(output_dir_name);
     exe.step.dependOn(&build_ffmpeg_step.step);
@@ -73,6 +96,7 @@ fn build_for_target(
         .optimize = optimize,
     });
     ffmpeg_c.addIncludePath(include_dir);
+    ffmpeg_c.addIncludePath(vulkan_headers.path("include"));
     exe.root_module.addImport("ffmpeg_c", ffmpeg_c.createModule());
 
     // ----------------------------------------------------------------------------

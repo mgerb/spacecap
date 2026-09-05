@@ -1,4 +1,5 @@
 const std = @import("std");
+const SessionId = @import("../video/video_editor_session.zig").VideoEditorSession.SessionId;
 
 const Allocator = std.mem.Allocator;
 
@@ -8,8 +9,16 @@ const Allocator = std.mem.Allocator;
 pub const UIStorage = struct {
     const Self = @This();
 
+    pub const EditorDragTarget = enum { trim_start, playhead, trim_end };
+    pub const EditorDrag = struct {
+        session_id: SessionId,
+        target: EditorDragTarget,
+        last_position_ns: ?i64 = null,
+    };
+
     allocator: Allocator,
     audio_level_display_by_id: std.StringHashMap(f32),
+    editor_drag: ?EditorDrag = null,
 
     pub fn init(allocator: Allocator) Self {
         return .{
@@ -19,11 +28,16 @@ pub const UIStorage = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        self.clear_editor_drag();
         var iter = self.audio_level_display_by_id.iterator();
         while (iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
         }
         self.audio_level_display_by_id.deinit();
+    }
+
+    pub fn clear_editor_drag(self: *Self) void {
+        self.editor_drag = null;
     }
 
     pub fn get_audio_level_display(self: *Self, device_id: []const u8) !?f32 {

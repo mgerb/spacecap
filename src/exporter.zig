@@ -8,9 +8,44 @@ const Util = @import("util.zig");
 const ffmpeg = @import("./ffmpeg/main.zig");
 const Png = ffmpeg.Png;
 const Muxer = ffmpeg.Muxer;
+const FileRemuxer = ffmpeg.FileRemuxer;
 const CodecContextInfo = ffmpeg.AudioEncoder.CodecContextInfo;
 
 const log = std.log.scoped(.exporter);
+
+/// Remux a keyframe-aligned editor selection into the video output directory.
+/// Caller owns the returned path.
+pub fn export_trimmed_video(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    input_path: []const u8,
+    trim_start_ns: i64,
+    trim_end_ns: i64,
+    output_directory: []const u8,
+) ![]u8 {
+    try std.Io.Dir.cwd().createDirPath(io, output_directory);
+
+    const input_name = std.fs.path.basename(input_path);
+    const extension = std.fs.path.extension(input_name);
+    if (extension.len < 1) {
+        return error.MissingVideoFileExtension;
+    }
+    const input_stem = input_name[0 .. input_name.len - extension.len];
+    const output_name = try std.fmt.allocPrint(allocator, "{s}_trimmed{s}", .{ input_stem, extension });
+    defer allocator.free(output_name);
+
+    const unique_name = try Util.get_unique_file_name(allocator, io, output_directory, output_name);
+    defer allocator.free(unique_name);
+    const output_path = try std.fs.path.join(allocator, &.{ output_directory, unique_name });
+    errdefer allocator.free(output_path);
+    errdefer std.Io.Dir.cwd().deleteFile(io, output_path) catch {};
+
+    var file_remuxer = try FileRemuxer.init(allocator, input_path, output_path);
+    defer file_remuxer.deinit();
+    try file_remuxer.remux(trim_start_ns, trim_end_ns);
+
+    return output_path;
+}
 
 /// Export audio/video to a file.
 pub fn export_replay_buffers(
@@ -149,6 +184,50 @@ test "Exporter - export_image_to_file writes to the output directory" {
     const file = try std.Io.Dir.openFileAbsolute(io, file_path, .{});
     defer file.close(io);
     try std.testing.expect((try file.stat(io)).size > 0);
+}
+
+test "Exporter - export_trimmed_video preserves the source container" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var tmp_dir_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const tmp_dir_path_len = try tmp_dir.dir.realPathFile(io, ".", &tmp_dir_path_buffer);
+    const output_directory = tmp_dir_path_buffer[0..tmp_dir_path_len];
+
+    const file_path = try export_trimmed_video(
+        allocator,
+        io,
+        "./test/sample_video_1_h264.mp4",
+        1_200_000_000,
+        30_000_000_000,
+        output_directory,
+    );
+    defer allocator.free(file_path);
+
+    try std.testing.expectEqualStrings(output_directory, std.fs.path.dirname(file_path).?);
+    try std.testing.expectEqualStrings(
+        "sample_video_1_h264_trimmed.mp4",
+        std.fs.path.basename(file_path),
+    );
+    const file = try std.Io.Dir.openFileAbsolute(io, file_path, .{});
+    defer file.close(io);
+    try std.testing.expect((try file.stat(io)).size > 0);
+
+    const duplicate_file_path = try export_trimmed_video(
+        allocator,
+        io,
+        "./test/sample_video_1_h264.mp4",
+        1_200_000_000,
+        30_000_000_000,
+        output_directory,
+    );
+    defer allocator.free(duplicate_file_path);
+    try std.testing.expectEqualStrings(
+        "sample_video_1_h264_trimmed_1.mp4",
+        std.fs.path.basename(duplicate_file_path),
+    );
 }
 
 // TODO:

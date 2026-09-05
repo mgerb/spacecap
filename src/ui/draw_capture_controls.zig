@@ -1,0 +1,360 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const c = @import("imguiz").imguiz;
+const Store = @import("../store/store.zig").Store;
+const AudioDevice = @import("../store/audio_session.zig").AudioDevice;
+const UIStorage = @import("./ui_storage.zig").UIStorage;
+const imgui_util = @import("./imgui_util.zig");
+const util = @import("../util.zig");
+const Colors = @import("./theme.zig").Colors;
+
+const AUDIO_GAIN_DB_MIN: f32 = -60.0;
+const AUDIO_GAIN_DB_MAX: f32 = 12.0;
+const VIDEO_CAPTURE_NOT_SUPPORTED_MESSAGE = "Video capture is unavailable on your current hardware, or your video drivers may be out of date.";
+const VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE = "Video encoding is not supported on your current hardware, or your video drivers may be out of date.";
+
+pub fn draw_capture_controls(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
+    // ----------------------------------------------------------------------------
+    // Video collapsing header.
+    // ----------------------------------------------------------------------------
+    if (c.ImGui_CollapsingHeader("Video", c.ImGuiTreeNodeFlags_DefaultOpen)) {
+        const replay_buffer_duration_label = try util.format_duration_label(
+            allocator,
+            .{
+                .seconds = state.capture.replay_buffer_metrics.duration(store.io) orelse 0,
+                .max = state.user_settings.user_settings.replay_seconds,
+            },
+        );
+        defer allocator.free(replay_buffer_duration_label);
+
+        const video_container_width = c.ImGui_GetContentRegionAvail().x;
+        const video_actions_column_width = @max(
+            200,
+            @min(400, video_container_width - 400),
+        );
+
+        // ----------------------------------------------------------------------------
+        // Video container.
+        // ----------------------------------------------------------------------------
+        if (c.ImGui_BeginTable(
+            "##video_container",
+            2,
+            c.ImGuiTableFlags_SizingStretchProp,
+        )) {
+            defer c.ImGui_EndTable();
+
+            c.ImGui_TableSetupColumnEx("video_1", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
+            c.ImGui_TableSetupColumnEx("video_2", c.ImGuiTableColumnFlags_WidthFixed, video_actions_column_width, 0);
+
+            c.ImGui_TableNextRow();
+            _ = c.ImGui_TableNextColumn();
+
+            const video_cell_padding = c.ImVec2{ .x = 5, .y = 5 };
+            c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, video_cell_padding);
+            defer c.ImGui_PopStyleVar();
+
+            const video_capture_ready = state.capture.is_video_capture_supported and state.capture.video_capture_active;
+
+            // ----------------------------------------------------------------------------
+            // Video primary.
+            // ----------------------------------------------------------------------------
+            if (c.ImGui_BeginTable("##video_1", 3, c.ImGuiTableFlags_SizingStretchProp)) {
+                defer c.ImGui_EndTable();
+
+                c.ImGui_TableSetupColumnEx("action", c.ImGuiTableColumnFlags_WidthFixed, 200, 0);
+                c.ImGui_TableSetupColumnEx("size", c.ImGuiTableColumnFlags_WidthFixed, 84, 0);
+                c.ImGui_TableSetupColumnEx("time", c.ImGuiTableColumnFlags_WidthFixed, 84, 0);
+
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                const video_source_button_label = if (state.capture.video_capture_active) "󰦳 New Source" else "󰦳 Select Source";
+                c.ImGui_BeginDisabled(!state.capture.is_video_capture_supported);
+                if (c.ImGui_ButtonEx(video_source_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                    store.dispatch(.{ .capture = .{ .select_video_source = .{ .source_type = .all } } });
+                }
+                c.ImGui_EndDisabled();
+                if (!state.capture.is_video_capture_supported) {
+                    imgui_util.item_tooltip(VIDEO_CAPTURE_NOT_SUPPORTED_MESSAGE);
+                }
+
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                const replay_buffer_button_label = if (state.capture.replay_buffer_active) " Replay Buffer" else " Replay Buffer";
+                const replay_buffer_button_disabled = !state.capture.replay_buffer_active and
+                    (!state.capture.is_video_encoding_supported or !video_capture_ready);
+
+                {
+                    imgui_util.push_button_color(if (state.capture.replay_buffer_active) .red else .green);
+                    defer imgui_util.pop_button_color();
+                    c.ImGui_BeginDisabled(replay_buffer_button_disabled);
+                    if (c.ImGui_ButtonEx(replay_buffer_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                        store.dispatch(.{ .capture = if (state.capture.replay_buffer_active) .stop_replay_buffer else .start_replay_buffer });
+                    }
+                    c.ImGui_EndDisabled();
+                    if (!state.capture.is_video_encoding_supported) {
+                        imgui_util.item_tooltip(VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE);
+                    }
+                }
+
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_Text("%.2fMB", state.capture.replay_buffer_metrics.size_in_mb(.total));
+                if (c.ImGui_BeginItemTooltip()) {
+                    c.ImGui_Text(
+                        "Audio: %.2fMB",
+                        state.capture.replay_buffer_metrics.size_in_mb(.audio),
+                    );
+                    c.ImGui_Text(
+                        "Video: %.2fMB",
+                        state.capture.replay_buffer_metrics.size_in_mb(.video),
+                    );
+                    c.ImGui_EndTooltip();
+                }
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_TextUnformatted(replay_buffer_duration_label);
+
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                const recording_button_label = if (state.capture.recording_to_disk) " Record" else " Record";
+                {
+                    imgui_util.push_button_color(if (state.capture.recording_to_disk) .red else .green);
+                    defer imgui_util.pop_button_color();
+                    const recording_button_disabled = !state.capture.recording_to_disk and
+                        (!state.capture.is_video_encoding_supported or !video_capture_ready);
+                    c.ImGui_BeginDisabled(recording_button_disabled);
+                    if (c.ImGui_ButtonEx(recording_button_label, .{ .x = c.ImGui_GetContentRegionAvail().x, .y = 0 })) {
+                        store.dispatch(.{ .capture = if (state.capture.recording_to_disk) .stop_recording_to_disk else .start_recording_to_disk });
+                    }
+                    c.ImGui_EndDisabled();
+                    if (!state.capture.is_video_encoding_supported) {
+                        imgui_util.item_tooltip(VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE);
+                    }
+                }
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_Text("%.2fMB", state.capture.recording_metrics.size_in_mb(.total));
+                if (c.ImGui_BeginItemTooltip()) {
+                    c.ImGui_Text("Audio: %.2fMB", state.capture.recording_metrics.size_in_mb(.audio));
+                    c.ImGui_Text("Video: %.2fMB", state.capture.recording_metrics.size_in_mb(.video));
+                    c.ImGui_EndTooltip();
+                }
+
+                _ = c.ImGui_TableNextColumn();
+                if (state.capture.recording_to_disk) {
+                    const recording_duration_label = try util.format_duration_label(allocator, .{
+                        .seconds = state.capture.recording_metrics.duration(store.io) orelse 0,
+                    });
+                    defer allocator.free(recording_duration_label);
+                    c.ImGui_TextUnformatted(recording_duration_label);
+                } else {
+                    c.ImGui_TextUnformatted("0s");
+                }
+            }
+
+            _ = c.ImGui_TableNextColumn();
+
+            // ----------------------------------------------------------------------------
+            // Video actions.
+            // ----------------------------------------------------------------------------
+            if (c.ImGui_BeginTable("##video_2", 1, c.ImGuiTableFlags_SizingStretchProp)) {
+                defer c.ImGui_EndTable();
+
+                const button_height = c.ImGui_GetFrameHeight() * 1.5 + video_cell_padding.y;
+
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                const save_replay_enabled = state.capture.is_video_encoding_supported and state.capture.replay_buffer_active;
+                c.ImGui_BeginDisabled(!save_replay_enabled);
+                if (c.ImGui_ButtonEx("󰆓 Save Replay", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = button_height })) {
+                    store.dispatch(.{ .capture = .save_replay });
+                }
+                c.ImGui_EndDisabled();
+
+                c.ImGui_TableNextRow();
+                _ = c.ImGui_TableNextColumn();
+                c.ImGui_BeginDisabled(!video_capture_ready);
+                if (c.ImGui_ButtonEx("󰹑 Screenshot", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = button_height })) {
+                    store.dispatch(.{ .capture = .screenshot_request });
+                }
+                c.ImGui_EndDisabled();
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------------------
+    // Audio collapsing header.
+    // ----------------------------------------------------------------------------
+    if (c.ImGui_CollapsingHeader("Audio", c.ImGuiTreeNodeFlags_DefaultOpen)) {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, .{ .x = 8, .y = 5 });
+        defer c.ImGui_PopStyleVar();
+
+        if (c.ImGui_BeginTable("##audio_devices", 3, c.ImGuiTableFlags_BordersInnerH)) {
+            defer c.ImGui_EndTable();
+
+            c.ImGui_TableSetupColumnEx("audio device", c.ImGuiTableColumnFlags_WidthStretch, 1.0, 0);
+            c.ImGui_TableSetupColumnEx("level", c.ImGuiTableColumnFlags_WidthFixed, 160, 0);
+            c.ImGui_TableSetupColumnEx("gain", c.ImGuiTableColumnFlags_WidthFixed, 160, 0);
+
+            c.ImGui_TableNextRow();
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text("Audio Device");
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text("Level");
+            _ = c.ImGui_TableNextColumn();
+            c.ImGui_Text("Gain");
+
+            const now_ns = std.Io.Timestamp.now(store.io, .awake).nanoseconds;
+            for (state.capture.audio_devices.list.items, 0..) |*audio_device, i| {
+                if (audio_device.selected) {
+                    c.ImGui_PushIDInt(@intCast(i));
+                    defer c.ImGui_PopID();
+                    try draw_audio_device(allocator, ui_storage, store, audio_device, now_ns);
+                } else {
+                    ui_storage.clear_audio_level_display(audio_device.id);
+                }
+            }
+
+            // ----------------------------------------------------------------------------
+            // Combo box to select devices.
+            // ----------------------------------------------------------------------------
+            c.ImGui_TableNextRow();
+            _ = c.ImGui_TableNextColumn();
+
+            if (c.ImGui_BeginCombo("##audio_sources", "Add audio device...", 0)) {
+                defer c.ImGui_EndCombo();
+
+                if (state.capture.audio_devices.list.items.len == 0) {
+                    c.ImGui_Text("No audio devices found");
+                } else {
+                    for (state.capture.audio_devices.list.items, 0..) |*audio_device, i| {
+                        c.ImGui_PushIDInt(@intCast(i));
+                        defer c.ImGui_PopID();
+
+                        var selected = audio_device.selected;
+                        var flags = c.ImGuiSelectableFlags_None;
+                        if (selected) {
+                            flags |= c.ImGuiSelectableFlags_Disabled;
+                        }
+                        const item_label = try std.fmt.allocPrintSentinel(allocator, "{s}  {s}{s}##audio-device-{s}", .{
+                            if (audio_device.device_type == .source) "" else "",
+                            audio_device.name,
+                            if (audio_device.is_default) " (default)" else "",
+                            audio_device.id,
+                        }, 0);
+                        defer allocator.free(item_label);
+
+                        if (c.ImGui_SelectableBoolPtr(
+                            item_label,
+                            &selected,
+                            flags,
+                        )) {
+                            store.dispatch(.{ .capture = .{ .toggle_audio_device = try .init(store.allocator, audio_device.id) } });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Draw an audio device in the table.
+fn draw_audio_device(allocator: Allocator, ui_storage: *UIStorage, store: *Store, audio_device: *AudioDevice, now_ns: i128) !void {
+    c.ImGui_TableNextRow();
+
+    _ = c.ImGui_TableNextColumn();
+
+    if (c.ImGui_Button("")) {
+        store.dispatch(.{ .capture = .{ .toggle_audio_device = try .init(allocator, audio_device.id) } });
+    }
+    imgui_util.item_tooltip("Remove device");
+
+    c.ImGui_SameLine();
+
+    const name = try std.fmt.allocPrintSentinel(allocator, "{s}  {s}{s}", .{
+        if (audio_device.device_type == .source) "" else "",
+        audio_device.name,
+        if (audio_device.is_default) " (default)" else "",
+    }, 0);
+    defer allocator.free(name);
+
+    c.ImGui_TextUnformatted(name);
+    imgui_util.item_tooltip(name);
+
+    _ = c.ImGui_TableNextColumn();
+    try draw_audio_device_audio_level(ui_storage, audio_device, now_ns);
+
+    var gain_db = util.audio_linear_to_db(audio_device.gain, .{
+        .min = AUDIO_GAIN_DB_MIN,
+        .max = AUDIO_GAIN_DB_MAX,
+    });
+
+    _ = c.ImGui_TableNextColumn();
+    c.ImGui_SetNextItemWidth(c.ImGui_GetContentRegionAvail().x);
+    if (c.ImGui_SliderFloatEx("", &gain_db, AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX, "%.0f dB", 0)) {
+        gain_db = @round(gain_db);
+        store.dispatch(.{
+            .capture = .{
+                .set_audio_device_gain = .{
+                    .allocator = allocator,
+                    .device_id = try allocator.dupe(u8, audio_device.id),
+                    .gain = util.audio_db_to_linear(gain_db),
+                },
+            },
+        });
+    }
+}
+
+/// Draw the audio device level meter for one device. This handles smoothing, decay, etc.
+fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDevice, now_ns: i128) !void {
+    // Load the previous display level so the meter can animate between frames.
+    // ----------------------------------------------------------------------------
+    const previous_audio_level_display = try ui_storage.get_audio_level_display(audio_device.id) orelse 0;
+
+    // Decay old capture levels so the meter falls back to zero when updates stop.
+    // ----------------------------------------------------------------------------
+    const target_level = blk: {
+        const updated_at = audio_device.audio_level_updated_at orelse break :blk 0.0;
+        const age_ns = @max(now_ns - updated_at, 0);
+        // Decay to 0 over 500ms.
+        const decay = 1.0 - std.math.clamp(
+            @as(f32, @floatFromInt(age_ns)) / @as(f32, @floatFromInt(500 * std.time.ns_per_ms)),
+            0.0,
+            1.0,
+        );
+        const next = audio_device.audio_level * decay;
+        break :blk if (next < 0.0001) 0.0 else next;
+    };
+
+    // Smooth the display level with a fast attack and slower release.
+    // ----------------------------------------------------------------------------
+    const audio_level_linear = blk: {
+        const duration: f32 = if (target_level > previous_audio_level_display) 0.04 else 0.18;
+        const alpha = std.math.clamp(c.ImGui_GetIO().*.DeltaTime / duration, 0.0, 1.0);
+        break :blk previous_audio_level_display + ((target_level - previous_audio_level_display) * alpha);
+    };
+
+    try ui_storage.put_audio_level_display(audio_device.id, audio_level_linear);
+
+    // Convert the smoothed linear level to dB.
+    // ----------------------------------------------------------------------------
+    const audio_level_db = blk: {
+        if (audio_level_linear <= 0.0) break :blk 0.0;
+        // NOTE: The meter goes from -60 to 0, even though the gain goes up to +12.
+        const db = util.audio_linear_to_db(audio_level_linear, .{ .min = AUDIO_GAIN_DB_MIN, .max = 0.0 });
+        break :blk std.math.clamp((db - AUDIO_GAIN_DB_MIN) / -AUDIO_GAIN_DB_MIN, 0.0, 1.0);
+    };
+
+    // Pick the meter color and draw the progress bar.
+    // ----------------------------------------------------------------------------
+    const color = if (audio_level_linear >= 0.9)
+        Colors.red.as_vec4()
+    else if (audio_level_linear >= 0.75)
+        Colors.accent.as_vec4()
+    else
+        Colors.green.as_vec4();
+    const size = c.ImVec2{
+        .x = c.ImGui_GetContentRegionAvail().x,
+        .y = c.ImGui_GetFrameHeight(),
+    };
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_PlotHistogram, color);
+    defer c.ImGui_PopStyleColor();
+    c.ImGui_ProgressBar(audio_level_db, size, "");
+}

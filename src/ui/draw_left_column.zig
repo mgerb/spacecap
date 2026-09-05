@@ -5,6 +5,7 @@ const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
 const Store = @import("../store/store.zig").Store;
 const dockspace = @import("./dockspace.zig");
+const file_browser = @import("./draw_file_browser.zig");
 
 const GROUP_SPACING: f32 = 4;
 const CAPTURE_FPS_MIN: c_int = 1;
@@ -32,7 +33,11 @@ var bg_fps_local: ?i32 = null;
 var video_output_directory_local: ?[OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
 var screenshot_output_directory_local: ?[OUTPUT_DIRECTORY_MAX_BYTES:0]u8 = null;
 
-pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Store.State) !void {
+pub fn draw_left_column(
+    allocator: std.mem.Allocator,
+    store: *Store,
+    state: *Store.State,
+) !void {
     _ = c.ImGui_Begin(dockspace.LEFT_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
     defer c.ImGui_End();
 
@@ -50,6 +55,8 @@ pub fn draw_left_column(allocator: std.mem.Allocator, store: *Store, state: *Sto
         defer c.ImGui_EndChild();
         if (c.ImGui_BeginTabBar("main_tab_bar", 0)) {
             defer c.ImGui_EndTabBar();
+
+            try file_browser.draw(store, &state.file_browser);
 
             if (c.ImGui_BeginTabItem(" Settings", null, 0)) {
                 defer c.ImGui_EndTabItem();

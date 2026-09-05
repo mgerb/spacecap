@@ -111,11 +111,11 @@ const LoggerInternal = struct {
         comptime format: []const u8,
         args: anytype,
     ) !void {
-        if (@intFromEnum(self.console_log_level) >= @intFromEnum(level)) {
+        if (@backingInt(self.console_log_level) >= @backingInt(level)) {
             std.log.defaultLog(level, scope, format, args);
         }
 
-        if (@intFromEnum(self.file_log_level) >= @intFromEnum(level)) {
+        if (@backingInt(self.file_log_level) >= @backingInt(level)) {
             try self.write_log(level, scope, format, args);
         }
     }
