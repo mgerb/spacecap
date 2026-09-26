@@ -114,6 +114,14 @@
             zlib
             glib
 
+            # Required for unit tests. Tests need to run on
+            # Github action servers, which don't have
+            # graphics. We can use lavapipe. Tests are
+            # configured to use it in build.zig. This means
+            # all tests use software decoding. See
+            # LAVAPIPE_ICD below.
+            mesa
+
             # Required for linux tray icon.
             gtk3
             libayatana-appindicator
@@ -126,11 +134,14 @@
 
             # Windows
             pkgsCross.mingwW64.vulkan-loader
+            pkgsCross.mingwW64.zlib
             pkgsCross.mingwW64.stdenv.cc
           ];
 
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+          LAVAPIPE_ICD = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
           VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
+          MINGW_ZLIB_PATH = "${pkgs.pkgsCross.mingwW64.zlib}";
           GTK3_LIB = "${pkgs.gtk3}/lib/libgtk-3.so.0";
           APPINDICATOR_LIB = "${pkgs.libayatana-appindicator}/lib/libayatana-appindicator3.so.1";
 

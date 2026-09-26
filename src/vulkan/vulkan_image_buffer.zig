@@ -2,6 +2,7 @@ const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const std = @import("std");
 const vk = @import("vulkan");
 const Arc = @import("../arc.zig").Arc;
+const VulkanImGuiTexture = @import("./vulkan_imgui_texture.zig").VulkanImGuiTexture;
 
 /// An image buffer that goes in the vulkan image ring buffer.
 pub const VulkanImageBuffer = struct {
@@ -12,6 +13,7 @@ pub const VulkanImageBuffer = struct {
     vulkan: *Vulkan,
     image: vk.Image,
     image_view: vk.ImageView,
+    imgui_texture: ?VulkanImGuiTexture = null,
     image_memory: vk.DeviceMemory,
     image_layout: vk.ImageLayout,
     dst_stage_mask: vk.PipelineStageFlags2,
@@ -51,6 +53,7 @@ pub const VulkanImageBuffer = struct {
     ) !Arc(Self) {
         const base_image_usage: vk.ImageUsageFlags = .{
             .transfer_dst = true,
+            .transfer_src = true,
         };
 
         const image_create_info = vk.ImageCreateInfo{
@@ -136,13 +139,21 @@ pub const VulkanImageBuffer = struct {
         _ = self.vulkan.device.waitForFences(&.{self.fence}, .true, std.math.maxInt(u64)) catch |err| {
             log.err("[deinit] error waiting for fences: {}", .{err});
         };
-        self.vulkan.device.destroyImage(self.image, null);
+        if (self.imgui_texture) |*texture| texture.deinit();
         self.vulkan.device.destroyImageView(self.image_view, null);
+        self.vulkan.device.destroyImage(self.image, null);
         self.vulkan.device.freeMemory(self.image_memory, null);
         self.vulkan.device.freeCommandBuffers(self.command_pool, &.{self.command_buffer});
         self.vulkan.device.destroyCommandPool(self.command_pool, null);
         self.vulkan.device.destroyFence(self.fence, null);
         self.vulkan.device.destroySemaphore(self.signal_semaphore, null);
+    }
+
+    pub fn get_imgui_texture(self: *Self) !*VulkanImGuiTexture {
+        if (self.imgui_texture == null) {
+            self.imgui_texture = try VulkanImGuiTexture.init(self.image_view);
+        }
+        return &self.imgui_texture.?;
     }
 
     /// Copy an external vulkan image into the local image buffer.

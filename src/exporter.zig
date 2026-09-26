@@ -1,4 +1,5 @@
 //! Contains functions to export audio, video, images, etc.
+//! Every media file Spacecap creates should go through the logic in this file.
 
 const std = @import("std");
 const VideoReplayBuffer = @import("./video/video_replay_buffer.zig").VideoReplayBuffer;
@@ -8,9 +9,44 @@ const Util = @import("util.zig");
 const ffmpeg = @import("./ffmpeg/main.zig");
 const Png = ffmpeg.Png;
 const Muxer = ffmpeg.Muxer;
+const FileRemuxer = ffmpeg.FileRemuxer;
 const CodecContextInfo = ffmpeg.AudioEncoder.CodecContextInfo;
 
 const log = std.log.scoped(.exporter);
+
+/// Remux input_file and save to output_dir. Original file name is preserved
+/// and appened by "_copy".
+pub fn export_trimmed_video(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    input_path: []const u8,
+    output_dir: []const u8,
+    trim_start_ns: i64,
+    trim_end_ns: i64,
+) ![]u8 {
+    try std.Io.Dir.cwd().createDirPath(io, output_dir);
+
+    const input_name = std.fs.path.basename(input_path);
+    const extension = std.fs.path.extension(input_name);
+    const input_stem = input_name[0 .. input_name.len - extension.len];
+    const output_name = try std.fmt.allocPrint(allocator, "{s}_copy{s}", .{ input_stem, extension });
+    defer allocator.free(output_name);
+
+    const unique_name = try Util.get_unique_file_name(allocator, io, output_dir, output_name);
+    defer allocator.free(unique_name);
+    const output_path = try std.fs.path.join(allocator, &.{ output_dir, unique_name });
+    errdefer allocator.free(output_path);
+    errdefer std.Io.Dir.cwd().deleteFile(io, output_path) catch |err| {
+        log.err("[export_trimmed_video] failed to delete file: {}", .{err});
+    };
+
+    var file_remuxer = try FileRemuxer.init(allocator, input_path, output_path);
+    defer file_remuxer.deinit();
+
+    try file_remuxer.remux_range(trim_start_ns, trim_end_ns);
+
+    return output_path;
+}
 
 /// Export audio/video to a file.
 pub fn export_replay_buffers(

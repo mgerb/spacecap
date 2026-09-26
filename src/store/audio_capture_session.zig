@@ -19,11 +19,11 @@ const AudioEncoder = ffmpeg.AudioEncoder;
 const CodecContextInfo = ffmpeg.AudioEncoder.CodecContextInfo;
 const Muxer = ffmpeg.Muxer;
 
-/// AudioSession owns the main audio capture loop. All audio captured by the
-/// system goes through the AudioSession.
-pub const AudioSession = struct {
+/// AudioCaptureSession owns the main audio capture loop. All audio captured by the
+/// system goes through the AudioCaptureSession.
+pub const AudioCaptureSession = struct {
     const Self = @This();
-    const log = std.log.scoped(.audio_session);
+    const log = std.log.scoped(.audio_capture_session);
 
     allocator: Allocator,
     io: std.Io,
@@ -53,6 +53,9 @@ pub const AudioSession = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        self.stop_capture_thread();
+        assert(self.capture_thread == null);
+
         {
             const device_gain_locked = self.device_gain_map.lock();
             defer device_gain_locked.unlock();
@@ -63,9 +66,6 @@ pub const AudioSession = struct {
             }
             device_gain.deinit();
         }
-
-        self.stop_capture_thread();
-        assert(self.capture_thread == null);
 
         {
             var replay_buffer_locked = self.audio_replay_buffer.lock();

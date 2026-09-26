@@ -2,17 +2,16 @@ const std = @import("std");
 
 const c = @import("imguiz").imguiz;
 const vk = @import("vulkan");
-const sdl = @import("./sdl.zig");
 const Tray = @import("./tray.zig").Tray;
 const Arc = @import("../arc.zig").Arc;
 
-const VulkanCapturePreviewTexture = @import("../vulkan/vulkan_capture_preview_texture.zig").VulkanCapturePreviewTexture;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const API_VERSION = @import("../vulkan/vulkan.zig").API_VERSION;
 const draw_dockspace = @import("./dockspace.zig").draw_dockspace;
-const draw_left_column = @import("./draw_left_column.zig").draw_left_column;
-const draw_video_preview = @import("./draw_video_preview.zig").draw_video_preview;
-const draw_bottom_panel = @import("./draw_bottom_panel.zig").draw_bottom_panel;
+const left_column = @import("./draw_left_column.zig");
+const draw_left_column = left_column.draw_left_column;
+const draw_video_player_tabs = @import("./draw_video_player_tabs.zig").draw_video_player_tabs;
+const draw_controls_panel = @import("./draw_controls_panel.zig").draw_controls_panel;
 const UIStorage = @import("./ui_storage.zig").UIStorage;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const WaylandPresentGate = @import("./wayland_present_gate.zig").WaylandPresentGate;
@@ -26,6 +25,7 @@ const WIDTH = 1600;
 const HEIGHT = 1000;
 
 const MIN_IMAGE_COUNT = 2;
+const IMGUI_SAMPLED_IMAGE_POOL_SIZE = 256;
 const IMGUI_FREETYPE_LOADER_FLAGS_LIGHT_HINTING = 1 << 3;
 var g_PipelineCache: c.VkPipelineCache = std.mem.zeroes(c.VkPipelineCache);
 
@@ -161,8 +161,6 @@ pub const UI = struct {
             .ui_storage = .init(allocator),
         };
 
-        try sdl.init();
-
         const version = c.SDL_GetVersion();
         std.log.info("SDL version: {}\n", .{version});
 
@@ -227,7 +225,6 @@ pub const UI = struct {
         if (self.window_icon_surface) |icon_surface| {
             c.SDL_DestroySurface(icon_surface);
         }
-        c.SDL_Quit();
     }
 
     // TODO: Split off the main loop into its own method.
@@ -321,7 +318,7 @@ pub const UI = struct {
         const pool_sizes = [_]vk.DescriptorPoolSize{
             .{
                 .type = .sampled_image,
-                .descriptor_count = c.IMGUI_IMPL_VULKAN_MINIMUM_SAMPLED_IMAGE_POOL_SIZE,
+                .descriptor_count = IMGUI_SAMPLED_IMAGE_POOL_SIZE,
             },
             .{
                 .type = .sampler,
@@ -338,8 +335,6 @@ pub const UI = struct {
             .flags = .{
                 .free_descriptor_set = true,
             },
-            // NOTE: If we create more textures then this number
-            // needs to increase, otherwise we'll get segfaults.
             .max_sets = max_descriptor_sets,
             .p_pool_sizes = @ptrCast(&pool_sizes),
             .pool_size_count = pool_sizes.len,
@@ -489,25 +484,26 @@ pub const UI = struct {
             c.ImGui_NewFrame();
 
             {
-                var capture_preview_buffer: ?Arc(VulkanImageBuffer) = null;
-                var capture_preview_texture: ?Arc(VulkanCapturePreviewTexture) = null;
+                var preview_buffer: ?Arc(VulkanImageBuffer) = null;
                 // Hold onto the buffer until draw/render/present is done.
                 defer {
-                    if (capture_preview_buffer) |buffer| {
+                    if (preview_buffer) |buffer| {
                         buffer.as_ptr().in_use.store(false, .release);
                         buffer.deinit();
                     }
-                    if (capture_preview_texture) |_capture_preview_texture| {
-                        _capture_preview_texture.deinit();
-                    }
                 }
 
+                // ----------------------------------------------------------------------------
+                // Begin draw.
+                // ----------------------------------------------------------------------------
                 {
                     const state_locked = self.store.state.lock();
                     defer state_locked.unlock();
                     const state = state_locked.unwrap_ptr();
 
-                    // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
+                    // 1. Show the big demo window (Most of the sample code is
+                    // in ImGui::ShowDemoWindow()! You can browse its code to
+                    // learn more about Dear ImGui!).
                     if (state.show_demo) {
                         var show_demo_window: bool = true;
                         c.ImGui_ShowDemoWindow(&show_demo_window);
@@ -519,30 +515,37 @@ pub const UI = struct {
 
                     draw_dockspace();
 
+                    // ----------------------------------------------------------------------------
+                    // Draw the left column - file browser, settings, etc.
+                    // ----------------------------------------------------------------------------
                     try draw_left_column(self.allocator, self.store, state);
 
-                    if (!state.capture.is_video_capture_supported) {
-                        try draw_video_preview(self.store, .capture_not_supported);
-                    } else if (state.capture.video_capture_active) {
-                        const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
-                        defer capture_preview_ring_buffer_locked.unlock();
-                        if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
-                            if (capture_preview_ring_buffer.get_most_recent_buffer()) |buffer| {
-                                capture_preview_buffer = buffer;
-                                capture_preview_texture = try self.vulkan.get_capture_preview_texture(buffer.as_ptr());
-                                try draw_video_preview(self.store, .{ .capture_preview = .{
-                                    .capture_preview_buffer = capture_preview_texture.?.as_ptr(),
-                                    .width = buffer.as_ptr().width,
-                                    .height = buffer.as_ptr().height,
-                                } });
-                            }
-                        }
-                    } else {
-                        try draw_video_preview(self.store, .empty);
-                    }
+                    // ----------------------------------------------------------------------------
+                    // Draw main tabs. The capture tab is always visible and each new video editor
+                    // tab is dynamically added.
+                    // ----------------------------------------------------------------------------
+                    const player_result = try draw_video_player_tabs(
+                        self.store,
+                        state,
+                        &self.vulkan.capture_preview_ring_buffer,
+                    );
 
-                    try draw_bottom_panel(self.allocator, &self.ui_storage, self.store, state);
+                    preview_buffer = player_result.display_frame_buffer;
+
+                    // ----------------------------------------------------------------------------
+                    // Draw the controls panel based on what tab is selected.
+                    // ----------------------------------------------------------------------------
+                    try draw_controls_panel(
+                        self.allocator,
+                        &self.ui_storage,
+                        self.store,
+                        state,
+                        player_result.active_tab,
+                    );
                 }
+                // ----------------------------------------------------------------------------
+                // End draw.
+                // ----------------------------------------------------------------------------
 
                 // Rendering while preview locks are held.
                 c.ImGui_Render();
@@ -568,6 +571,7 @@ pub const UI = struct {
             }
         }
 
+        self.store.dispatch(.{ .video_editor = .close_all_sessions });
         self.store.dispatch(.exit);
     }
 
@@ -577,9 +581,9 @@ pub const UI = struct {
         const image_acquired_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].ImageAcquiredSemaphore;
         var render_complete_semaphore = wd.FrameSemaphores.Data[wd.SemaphoreIndex].RenderCompleteSemaphore;
         const result = (self.vulkan.device.acquireNextImageKHR(
-            @enumFromInt(@intFromPtr(wd.Swapchain)),
+            @fromBackingInt(@intCast(@intFromPtr(wd.Swapchain))),
             std.math.maxInt(u64),
-            @enumFromInt(@intFromPtr(image_acquired_semaphore)),
+            @fromBackingInt(@intCast(@intFromPtr(image_acquired_semaphore))),
             .null_handle,
         ) catch |err| {
             switch (err) {
@@ -600,27 +604,27 @@ pub const UI = struct {
         var fd = &wd.Frames.Data[wd.FrameIndex];
 
         {
-            const fence: vk.Fence = @enumFromInt(@intFromPtr(fd.Fence.?));
+            const fence: vk.Fence = @fromBackingInt(@intCast(@intFromPtr(fd.Fence.?)));
             const err = try self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64));
-            check_vk_result(@intFromEnum(err));
+            check_vk_result(@backingInt(err));
         }
 
         {
-            try self.vulkan.device.resetCommandPool(@enumFromInt(@intFromPtr(fd.CommandPool)), .{});
+            try self.vulkan.device.resetCommandPool(@fromBackingInt(@intCast(@intFromPtr(fd.CommandPool))), .{});
             const info = vk.CommandBufferBeginInfo{
                 .flags = .{ .one_time_submit = true },
             };
-            try self.vulkan.device.beginCommandBuffer(@enumFromInt(@intFromPtr(fd.CommandBuffer)), @ptrCast(&info));
+            try self.vulkan.device.beginCommandBuffer(@fromBackingInt(@intCast(@intFromPtr(fd.CommandBuffer))), @ptrCast(&info));
         }
         {
             const info = vk.RenderPassBeginInfo{
-                .render_pass = @enumFromInt(@intFromPtr(wd.RenderPass)),
-                .framebuffer = @enumFromInt(@intFromPtr(fd.Framebuffer)),
+                .render_pass = @fromBackingInt(@intCast(@intFromPtr(wd.RenderPass))),
+                .framebuffer = @fromBackingInt(@intCast(@intFromPtr(fd.Framebuffer))),
                 .render_area = .{ .extent = .{ .width = @intCast(wd.Width), .height = @intCast(wd.Height) }, .offset = .{ .x = 0, .y = 0 } },
                 .clear_value_count = 1,
                 .p_clear_values = @ptrCast(&wd.ClearValue),
             };
-            self.vulkan.device.cmdBeginRenderPass(@enumFromInt(@intFromPtr(fd.CommandBuffer)), @ptrCast(&info), .@"inline");
+            self.vulkan.device.cmdBeginRenderPass(@fromBackingInt(@intCast(@intFromPtr(fd.CommandBuffer))), @ptrCast(&info), .@"inline");
         }
 
         {
@@ -630,7 +634,7 @@ pub const UI = struct {
         }
 
         // Submit command buffer
-        self.vulkan.device.cmdEndRenderPass(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
+        self.vulkan.device.cmdEndRenderPass(@fromBackingInt(@intCast(@intFromPtr(fd.CommandBuffer))));
         {
             var wait_stage = vk.PipelineStageFlags{ .color_attachment_output = true };
             const info = vk.SubmitInfo{
@@ -643,8 +647,8 @@ pub const UI = struct {
                 .p_signal_semaphores = @ptrCast(&render_complete_semaphore),
             };
 
-            try self.vulkan.device.endCommandBuffer(@enumFromInt(@intFromPtr(fd.CommandBuffer)));
-            try self.vulkan.queue_submit(.graphics, &.{info}, .{ .fence = @enumFromInt(@intFromPtr(fd.Fence.?)) });
+            try self.vulkan.device.endCommandBuffer(@fromBackingInt(@intCast(@intFromPtr(fd.CommandBuffer))));
+            try self.vulkan.queue_submit(.graphics, &.{info}, .{ .fence = @fromBackingInt(@intCast(@intFromPtr(fd.Fence.?))) });
         }
     }
 
@@ -757,11 +761,15 @@ pub const UI = struct {
         };
 
         // Check for WSI support
-        _ = self.vulkan.instance.getPhysicalDeviceSurfaceSupportKHR(
+        const surface_support = self.vulkan.instance.getPhysicalDeviceSurfaceSupportKHR(
             self.vulkan.physical_device,
             self.vulkan.graphics_queue.family,
-            @enumFromInt(@intFromPtr(self.vulkan.window.?.Surface)),
+            @fromBackingInt(@intCast(@intFromPtr(self.vulkan.window.?.Surface))),
         ) catch return error.NoWSISupport;
+
+        if (surface_support != .true) {
+            return error.NoWSISupport;
+        }
 
         // Select Surface Format
         const requestSurfaceImageFormat = [_]c.VkFormat{ c.VK_FORMAT_B8G8R8A8_UNORM, c.VK_FORMAT_R8G8B8A8_UNORM, c.VK_FORMAT_B8G8R8_UNORM, c.VK_FORMAT_R8G8B8_UNORM };
@@ -828,22 +836,22 @@ pub const UI = struct {
     }
 
     fn vk_instance(self: *const Self) c.VkInstance {
-        return @ptrFromInt(@intFromEnum(self.vulkan.instance.handle));
+        return @ptrFromInt(@backingInt(self.vulkan.instance.handle));
     }
 
     fn vk_device(self: *const Self) c.VkDevice {
-        return @ptrFromInt(@intFromEnum(self.vulkan.device.handle));
+        return @ptrFromInt(@backingInt(self.vulkan.device.handle));
     }
 
     fn vk_physical_device(self: *const Self) c.VkPhysicalDevice {
-        return @ptrFromInt(@intFromEnum(self.vulkan.physical_device));
+        return @ptrFromInt(@backingInt(self.vulkan.physical_device));
     }
 
     fn vk_descriptor_pool(self: *const Self) c.VkDescriptorPool {
-        return @ptrFromInt(@intFromEnum(self.descriptor_pool.?));
+        return @ptrFromInt(@backingInt(self.descriptor_pool.?));
     }
 
     fn vk_queue(self: *const Self) c.VkQueue {
-        return @ptrFromInt(@intFromEnum(self.vulkan.graphics_queue.handle));
+        return @ptrFromInt(@backingInt(self.vulkan.graphics_queue.handle));
     }
 };

@@ -39,9 +39,8 @@ fn add_shared_dependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
-    try compile_shader(allocator, b, exe, "random.frag", "random_frag_shader");
-    try compile_shader(allocator, b, exe, "random.vert", "random_vert_shader");
-    try compile_shader(allocator, b, exe, "bgr-ycbcr-shader-2plane.comp", "bgr-ycbcr-shader-2plane");
+    try compile_shader(allocator, b, exe, "bgr-to-ycbcr.comp", "bgr-to-ycbcr");
+    try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr-to-rgba");
 
     inline for (.{ "logo_blue.png", "logo_red.png", "logo_green.png" }) |logo_file| {
         exe.root_module.addAnonymousImport(logo_file, .{
@@ -59,13 +58,14 @@ fn add_shared_dependencies(
         },
     ).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
-    exe.root_module.addIncludePath(vulkan_headers.path(""));
+    exe.root_module.addIncludePath(vulkan_headers.path("include"));
 
     // NOTE: SDL3 is statically linked by imguiz.
     const imguiz = b.dependency("imguiz", .{
         .target = target,
         .optimize = optimize,
         .freetype = true,
+        .pipewire_linkage = .static,
     }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 }
@@ -116,57 +116,11 @@ fn add_windows_dependencies(
     optimize: std.builtin.OptimizeMode,
 ) !void {
     _ = allocator;
-    ffmpeg_build_util.build_windows(b, exe, target, optimize);
+    try ffmpeg_build_util.build_windows(b, exe, target, optimize);
     const vulkan_sdk_path_windows = b.graph.environ_map.get("VULKAN_SDK_PATH_WINDOWS").?;
     exe.root_module.addLibraryPath(.{ .cwd_relative = vulkan_sdk_path_windows });
 
     exe.root_module.linkSystemLibrary("vulkan-1", .{});
-}
-
-/// NOTE: This is not used anymore. We are statically linking everything we can
-/// and it is not necessary. Keeping it around in case we need it for Windows
-/// things.
-///
-/// Install a dynamic library in the <target>/lib directory
-/// e.g. zig-out/linux/lib/SDL3.so
-///
-/// Lib name should be the name of the lib without extensions
-/// e.g. avformat NOT libavformat.so
-fn install_and_link_system_library(args: struct {
-    allocator: std.mem.Allocator,
-    b: *std.Build,
-    exe: *std.Build.Step.Compile,
-    source_dir: []const u8,
-    lib_name: []const u8,
-    target: enum { linux, windows },
-    file_name_override: ?[]const u8 = null,
-    link_options: std.Build.Module.LinkSystemLibraryOptions = .{},
-}) !void {
-    const file_name = args.file_name_override orelse switch (args.target) {
-        .linux => try std.fmt.allocPrint(args.allocator, "lib{s}.so", .{args.lib_name}),
-        .windows => try std.fmt.allocPrint(args.allocator, "{s}.dll", .{args.lib_name}),
-    };
-    defer {
-        if (args.file_name_override == null) {
-            args.allocator.free(file_name);
-        }
-    }
-
-    const full_file_path = try std.fmt.allocPrint(args.allocator, "{s}/{s}", .{ args.source_dir, file_name });
-    defer args.allocator.free(full_file_path);
-
-    const target_name = switch (args.target) {
-        .linux => "linux/lib",
-        .windows => "windows/lib",
-    };
-
-    const dest_path = try std.fmt.allocPrint(args.allocator, "{s}/{s}", .{ target_name, file_name });
-    defer args.allocator.free(dest_path);
-
-    const step = args.b.addInstallFile(.{ .cwd_relative = full_file_path }, dest_path);
-    args.exe.step.dependOn(&step.step);
-
-    args.exe.root_module.linkSystemLibrary(args.lib_name, args.link_options);
 }
 
 fn build_windows(
@@ -288,6 +242,12 @@ fn build_unit_tests(
         try add_linux_dependencies(allocator, b, exe, target, optimize);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
+        // Force tests to use lavapipe, because they need to
+        // run on build servers without GPUs.
+        if (b.graph.environ_map.get("LAVAPIPE_ICD")) |lavapipe_icd| {
+            run_exe_unit_tests.setEnvironmentVariable("VK_DRIVER_FILES", lavapipe_icd);
+            run_exe_unit_tests.setEnvironmentVariable("VK_LOADER_LAYERS_DISABLE", "~implicit~");
+        }
 
         // Similar to creating the run step earlier, this exposes a `test` step to
         // the `zig build --help` menu, providing a way for the user to request

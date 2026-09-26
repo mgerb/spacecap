@@ -1,12 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const AudioSession = @import("./audio_session.zig").AudioSession;
-const VideoSession = @import("./video_session.zig").VideoSession;
+const AudioCaptureSession = @import("./audio_capture_session.zig").AudioCaptureSession;
+const VideoCaptureSession = @import("./video_capture_session.zig").VideoCaptureSession;
 const AudioCapture = @import("../capture/audio/audio_capture.zig").AudioCapture;
 const VideoCapture = @import("../capture/video/video_capture.zig").VideoCapture;
 const Store = @import("./store.zig").Store;
-const AudioDevices = @import("./audio_session.zig").AudioDevices;
+const AudioDevices = @import("./audio_capture_session.zig").AudioDevices;
 const String = @import("../string.zig").String;
 const SelectedAudioDevice = @import("../capture/audio/audio_capture.zig").SelectedAudioDevice;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
@@ -27,8 +27,8 @@ pub const CaptureStore = struct {
     const log = std.log.scoped(.capture_store);
 
     vulkan: *Vulkan,
-    audio_session: AudioSession,
-    video_session: VideoSession,
+    audio_capture_session: AudioCaptureSession,
+    video_capture_session: VideoCaptureSession,
     muxer: Mutex(?Muxer),
 
     pub const Message = union(enum) {
@@ -132,12 +132,12 @@ pub const CaptureStore = struct {
             .load_system_audio_devices = .{effect_load_system_audio_devices},
             .load_system_audio_devices_success = .{
                 effect_update_selected_audio_devices,
-                effect_update_audio_session_device_gain,
+                effect_update_audio_capture_session_device_gain,
             },
             .audio_devices_ready = .{effect_maybe_start_replay_buffer},
             .start_audio_capture_thread = .{effect_start_audio_capture_thread},
             .toggle_audio_device = .{ effect_toggle_audio_device, effect_update_selected_audio_devices },
-            .set_audio_device_gain = .{ effect_set_audio_device_gain, effect_update_audio_session_device_gain },
+            .set_audio_device_gain = .{ effect_set_audio_device_gain, effect_update_audio_capture_session_device_gain },
             .start_replay_buffer = .{effect_start_replay_buffer},
             .stop_replay_buffer = .{effect_stop_replay_buffer},
             .start_recording_to_disk = .{effect_start_recording_to_disk},
@@ -258,15 +258,15 @@ pub const CaptureStore = struct {
     ) !Self {
         return .{
             .vulkan = vulkan,
-            .audio_session = try .init(allocator, io, store, audio_capture),
-            .video_session = try .init(allocator, io, vulkan, store, video_capture),
+            .audio_capture_session = try .init(allocator, io, store, audio_capture),
+            .video_capture_session = try .init(allocator, io, vulkan, store, video_capture),
             .muxer = .init(io, null),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.video_session.deinit();
-        self.audio_session.deinit();
+        self.video_capture_session.deinit();
+        self.audio_capture_session.deinit();
         var muxer_locked = self.muxer.lock();
         defer muxer_locked.unlock();
         const muxer_ptr = muxer_locked.unwrap_ptr();
@@ -280,13 +280,13 @@ pub const CaptureStore = struct {
         self.stop_recording_to_disk() catch |err| {
             log.err("[exit] stop recording to disk error: {}", .{err});
         };
-        self.audio_session.stop_replay_buffer() catch |err| {
+        self.audio_capture_session.stop_replay_buffer() catch |err| {
             log.err("[exit] stop audio replay buffer error: {}", .{err});
         };
-        self.video_session.stop_replay_buffer() catch |err| {
+        self.video_capture_session.stop_replay_buffer() catch |err| {
             log.err("[exit] stop video replay buffer error: {}", .{err});
         };
-        self.video_session.stop_capture() catch |err| {
+        self.video_capture_session.stop_capture() catch |err| {
             log.err("[exit] stop capture error: {}", .{err});
         };
     }
@@ -410,16 +410,16 @@ pub const CaptureStore = struct {
     // ----------------------------------------------------------------------------
     pub fn effect_update_video_capture_fps(store: *Store, fps: u32) !void {
         var self = &store.capture_store;
-        try self.video_session.video_capture.update_fps(fps);
+        try self.video_capture_session.video_capture.update_fps(fps);
     }
 
     pub fn effect_sync_replay_buffer_with_user_settings(store: *Store, replay_seconds: u32) void {
-        store.capture_store.audio_session.set_replay_buffer_seconds(replay_seconds);
-        store.capture_store.video_session.set_replay_buffer_values(.{ .replay_seconds = replay_seconds });
+        store.capture_store.audio_capture_session.set_replay_buffer_seconds(replay_seconds);
+        store.capture_store.video_capture_session.set_replay_buffer_values(.{ .replay_seconds = replay_seconds });
     }
 
     pub fn effect_sync_replay_buffer_max_bytes(store: *Store, replay_max_bytes: u64) void {
-        store.capture_store.video_session.set_replay_buffer_values(.{ .replay_max_bytes = replay_max_bytes });
+        store.capture_store.video_capture_session.set_replay_buffer_values(.{ .replay_max_bytes = replay_max_bytes });
     }
     // ----------------------------------------------------------------------------
 
@@ -432,7 +432,7 @@ pub const CaptureStore = struct {
         };
         defer user_settings.deinit(store.allocator);
 
-        const audio_devices = try store.capture_store.audio_session.load_system_devices(store.allocator, user_settings.audio_devices);
+        const audio_devices = try store.capture_store.audio_capture_session.load_system_devices(store.allocator, user_settings.audio_devices);
         store.dispatch(.{ .capture = .{ .load_system_audio_devices_success = audio_devices } });
     }
 
@@ -469,12 +469,12 @@ pub const CaptureStore = struct {
         }
 
         // Audio devices are cloned so that we can execute this outside the lock.
-        try store.capture_store.audio_session.update_selected_devices(selected_audio_devices);
+        try store.capture_store.audio_capture_session.update_selected_devices(selected_audio_devices);
         store.dispatch(.{ .capture = .audio_devices_ready });
     }
 
     fn effect_start_audio_capture_thread(store: *Store, _: anytype) !void {
-        try store.capture_store.audio_session.start_capture_thread();
+        try store.capture_store.audio_capture_session.start_capture_thread();
     }
 
     /// Sync user settings.
@@ -526,27 +526,27 @@ pub const CaptureStore = struct {
     }
 
     // Sync audio device gain state with the audio session.
-    fn effect_update_audio_session_device_gain(store: *Store, _: anytype) !void {
+    fn effect_update_audio_capture_session_device_gain(store: *Store, _: anytype) !void {
         const state_locked = store.state.lock();
         defer state_locked.unlock();
         const state = state_locked.unwrap_ptr();
 
         for (state.capture.audio_devices.list.items) |audio_device| {
-            try store.capture_store.audio_session.update_device_gain(audio_device.id, audio_device.gain);
+            try store.capture_store.audio_capture_session.update_device_gain(audio_device.id, audio_device.gain);
         }
     }
 
     fn effect_start_video_capture(store: *Store, _: anytype) !void {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .start_video_capture_fail });
-        try self.video_session.start_capture();
+        try self.video_capture_session.start_capture();
         store.dispatch(.{ .capture = .start_video_capture_success });
     }
 
     fn effect_stop_video_capture(store: *Store, _: anytype) !void {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .stop_video_capture_fail });
-        try self.video_session.stop_capture();
+        try self.video_capture_session.stop_capture();
         store.dispatch(.{ .capture = .stop_video_capture_success });
     }
 
@@ -594,11 +594,11 @@ pub const CaptureStore = struct {
             };
         };
 
-        try self.audio_session.start_replay_buffer(state_local.replay_seconds);
-        errdefer self.audio_session.stop_replay_buffer() catch |err| {
+        try self.audio_capture_session.start_replay_buffer(state_local.replay_seconds);
+        errdefer self.audio_capture_session.stop_replay_buffer() catch |err| {
             log.err("[effect_start_replay_buffer] stop_replay_buffer error: {}", .{err});
         };
-        try self.video_session.start_replay_buffer(
+        try self.video_capture_session.start_replay_buffer(
             state_local.fps,
             state_local.bit_rate,
             state_local.replay_seconds,
@@ -610,8 +610,8 @@ pub const CaptureStore = struct {
     fn effect_stop_replay_buffer(store: *Store, _: anytype) !void {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .stop_replay_buffer_fail });
-        try self.audio_session.stop_replay_buffer();
-        try self.video_session.stop_replay_buffer();
+        try self.audio_capture_session.stop_replay_buffer();
+        try self.video_capture_session.stop_replay_buffer();
         store.dispatch(.{ .capture = .stop_replay_buffer_success });
     }
 
@@ -640,15 +640,15 @@ pub const CaptureStore = struct {
             return;
         }
 
-        const audio_codec_context = try self.audio_session.start_recording_to_disk();
-        errdefer self.audio_session.stop_recording_to_disk(null) catch |err| {
-            log.err("[effect_start_recording_to_disk] audio_session.stop_recording_to_disk error: {}", .{err});
+        const audio_codec_context = try self.audio_capture_session.start_recording_to_disk();
+        errdefer self.audio_capture_session.stop_recording_to_disk(null) catch |err| {
+            log.err("[effect_start_recording_to_disk] audio_capture_session.stop_recording_to_disk error: {}", .{err});
         };
 
-        try self.video_session.start_recording_to_disk(local_state.fps, local_state.capture_bit_rate);
-        errdefer self.video_session.stop_recording_to_disk();
+        try self.video_capture_session.start_recording_to_disk(local_state.fps, local_state.capture_bit_rate);
+        errdefer self.video_capture_session.stop_recording_to_disk();
 
-        const size = self.video_session.video_capture.size() orelse {
+        const size = self.video_capture_session.video_capture.size() orelse {
             return error.VideoCaptureSizeNotFound;
         };
 
@@ -677,12 +677,16 @@ pub const CaptureStore = struct {
                 },
             },
         );
+        store.dispatch(.{ .file_browser = .load_files });
     }
 
+    /// Also called on exit and source changes (when no recording is active).
+    /// This is why it checks for the muxer and still is valid when there is no
+    /// muxer.
     fn stop_recording_to_disk(self: *Self) !void {
         // Keep this before locking muxer. The capture thread can hold video_record_mutex
         // and then lock muxer while writing packets, so taking muxer first can deadlock.
-        self.video_session.stop_recording_to_disk();
+        self.video_capture_session.stop_recording_to_disk();
 
         var muxer_locked = self.muxer.lock();
         defer muxer_locked.unlock();
@@ -694,12 +698,12 @@ pub const CaptureStore = struct {
                 muxer_locked.set(null);
             }
 
-            try self.audio_session.stop_recording_to_disk(muxer);
+            try self.audio_capture_session.stop_recording_to_disk(muxer);
             try muxer.finish();
             return;
         }
 
-        try self.audio_session.stop_recording_to_disk(null);
+        try self.audio_capture_session.stop_recording_to_disk(null);
     }
 
     fn effect_stop_recording_to_disk(store: *Store, _: anytype) !void {
@@ -709,20 +713,21 @@ pub const CaptureStore = struct {
         try self.stop_recording_to_disk();
 
         store.dispatch(.{ .capture = .stop_recording_to_disk_success });
+        store.dispatch(.{ .file_browser = .load_files });
     }
 
     /// See sync_replay_buffers message type for details.
     fn effect_sync_replay_buffers(store: *Store, _: anytype) !void {
         const self = &store.capture_store;
         const video_start_ns = blk: {
-            var replay_buffer_locked = self.video_session.video_replay_buffer.lock();
+            var replay_buffer_locked = self.video_capture_session.video_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             const replay_buffer = replay_buffer_locked.unwrap() orelse return;
             const start_time = replay_buffer.get_start_time() orelse return;
             break :blk start_time.nanoseconds;
         };
         const audio_bytes = blk: {
-            var replay_buffer_locked = self.audio_session.audio_replay_buffer.lock();
+            var replay_buffer_locked = self.audio_capture_session.audio_replay_buffer.lock();
             defer replay_buffer_locked.unlock();
             const replay_buffer = replay_buffer_locked.unwrap() orelse return;
             replay_buffer.trim_packets(.{ .oldest_time_ns = video_start_ns });
@@ -763,15 +768,15 @@ pub const CaptureStore = struct {
         }
 
         // We should always have a size if the state is recording.
-        assert(self.video_session.video_capture.size() != null);
-        const size = self.video_session.video_capture.size().?;
+        assert(self.video_capture_session.video_capture.size() != null);
+        const size = self.video_capture_session.video_capture.size().?;
 
-        const audio_replay_buffer = (try self.audio_session.take_and_swap_replay_buffer(
+        const audio_replay_buffer = (try self.audio_capture_session.take_and_swap_replay_buffer(
             replay_seconds,
         ));
         defer if (audio_replay_buffer) |_audio_replay_buffer| _audio_replay_buffer.deinit();
 
-        const video_replay_buffer: ?*VideoReplayBuffer = (try self.video_session.take_and_swap_replay_buffer(
+        const video_replay_buffer: ?*VideoReplayBuffer = (try self.video_capture_session.take_and_swap_replay_buffer(
             replay_seconds,
             replay_max_bytes,
         ));
@@ -789,6 +794,7 @@ pub const CaptureStore = struct {
         );
 
         store.dispatch(.{ .capture = .save_replay_success });
+        store.dispatch(.{ .file_browser = .load_files });
     }
 
     fn effect_screenshot_request(store: *Store, _: anytype) !void {
@@ -805,7 +811,7 @@ pub const CaptureStore = struct {
             return;
         }
 
-        self.video_session.screenshot_request();
+        self.video_capture_session.screenshot_request();
         log.debug("[effect_screenshot_request] screenshot requested", .{});
     }
 
@@ -831,6 +837,7 @@ pub const CaptureStore = struct {
         defer store.allocator.free(file_path);
 
         log.debug("[effect_screenshot_response] screenshot saved: {s}", .{file_path});
+        store.dispatch(.{ .file_browser = .load_files });
     }
 
     fn effect_select_video_source(store: *Store, video_capture_selection: VideoCaptureSelection) !void {
@@ -838,16 +845,17 @@ pub const CaptureStore = struct {
         errdefer store.dispatch(.{ .capture = .{ .select_video_source_fail = video_capture_selection } });
 
         if (video_capture_selection == .restore_session and
-            !try self.video_session.video_capture.should_restore_capture_session())
+            !try self.video_capture_session.video_capture.should_restore_capture_session())
         {
             return;
         }
 
         // Stop all capturing.
         try self.stop_recording_to_disk();
-        try self.audio_session.stop_replay_buffer();
-        try self.video_session.stop_replay_buffer();
-        try self.video_session.stop_capture();
+        store.dispatch(.{ .file_browser = .load_files });
+        try self.audio_capture_session.stop_replay_buffer();
+        try self.video_capture_session.stop_replay_buffer();
+        try self.video_capture_session.stop_capture();
 
         store.dispatch(.{ .capture = .{ .select_video_source_prepared = video_capture_selection } });
     }
@@ -863,7 +871,7 @@ pub const CaptureStore = struct {
             break :blk state.user_settings.user_settings.capture_fps;
         };
 
-        if (try self.video_session.select_video_source(video_capture_selection, fps)) {
+        if (try self.video_capture_session.select_video_source(video_capture_selection, fps)) {
             store.dispatch(.{ .capture = .{ .select_video_source_prepared_success = video_capture_selection } });
             store.dispatch(.{ .capture = .start_video_capture });
         }
@@ -921,7 +929,7 @@ test "CaptureStore - load_system_audio_devices" {
     try std.testing.expect(state.capture.startup.audio_devices_ready);
 
     // Should update the device gain audio map on the audio session.
-    try std.testing.expect(store.capture_store.audio_session.device_gain_map.private.value.get("test1").? == 1.0);
+    try std.testing.expect(store.capture_store.audio_capture_session.device_gain_map.private.value.get("test1").? == 1.0);
 }
 
 test "CaptureStore - toggle_audio_device" {
@@ -969,7 +977,7 @@ test "CaptureStore - set_audio_device_gain" {
     store.run(.{ .once = true, .wait_for_effects = true });
 
     try std.testing.expectEqual(@as(f32, 1.25), state.capture.audio_devices.list.items[0].gain);
-    try std.testing.expectEqual(@as(f32, 1.25), store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
+    try std.testing.expectEqual(@as(f32, 1.25), store.capture_store.audio_capture_session.device_gain_map.private.value.get("test1").?);
 
     // Should clamp to the maximum linear gain.
     store.dispatch(.{ .capture = .{
@@ -983,7 +991,7 @@ test "CaptureStore - set_audio_device_gain" {
     store.run(.{ .once = true, .wait_for_effects = true });
 
     try std.testing.expectEqual(AUDIO_GAIN_MAX, state.capture.audio_devices.list.items[0].gain);
-    try std.testing.expectEqual(AUDIO_GAIN_MAX, store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
+    try std.testing.expectEqual(AUDIO_GAIN_MAX, store.capture_store.audio_capture_session.device_gain_map.private.value.get("test1").?);
 
     // Should clamp to the minimum linear gain.
     store.dispatch(.{ .capture = .{
@@ -997,7 +1005,7 @@ test "CaptureStore - set_audio_device_gain" {
     store.run(.{ .once = true, .wait_for_effects = true });
 
     try std.testing.expectEqual(AUDIO_GAIN_MIN, state.capture.audio_devices.list.items[0].gain);
-    try std.testing.expectEqual(AUDIO_GAIN_MIN, store.capture_store.audio_session.device_gain_map.private.value.get("test1").?);
+    try std.testing.expectEqual(AUDIO_GAIN_MIN, store.capture_store.audio_capture_session.device_gain_map.private.value.get("test1").?);
 }
 
 test "CaptureStore - update_audio_device_level" {
@@ -1126,7 +1134,7 @@ test "CaptureStore - sync_replay_buffers - should remove audio frames when the v
     const video_start_ns = (2 * std.time.ns_per_s);
 
     var audio_replay_buffer = try AudioReplayBuffer.init(allocator, 10);
-    store.capture_store.audio_session.audio_replay_buffer.set(audio_replay_buffer);
+    store.capture_store.audio_capture_session.audio_replay_buffer.set(audio_replay_buffer);
 
     for (0..4) |second| {
         const chunk = try AudioReplayBufferTestUtil.create_audio_capture_data(
@@ -1143,7 +1151,7 @@ test "CaptureStore - sync_replay_buffers - should remove audio frames when the v
     try std.testing.expect(audio_bytes_before > 0);
 
     var video_replay_buffer = try VideoReplayBuffer.init(allocator, 10, 0, &.{});
-    store.capture_store.video_session.video_replay_buffer.set(video_replay_buffer);
+    store.capture_store.video_capture_session.video_replay_buffer.set(video_replay_buffer);
 
     try video_replay_buffer.add_frame(&.{1}, video_start_ns, true);
     try video_replay_buffer.add_frame(&.{2}, video_start_ns + std.time.ns_per_s, false);
@@ -1173,7 +1181,7 @@ test "CaptureStore - screenshot_request - should skip when capture is inactive" 
     store.dispatch(.{ .capture = .screenshot_request });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    var requests_locked = store.capture_store.video_session.screenshot_requests.lock();
+    var requests_locked = store.capture_store.video_capture_session.screenshot_requests.lock();
     defer requests_locked.unlock();
     try std.testing.expectEqual(0, requests_locked.unwrap());
 }
@@ -1189,7 +1197,7 @@ test "CaptureStore - screenshot_request - should queue a screenshot when video c
     store.dispatch(.{ .capture = .screenshot_request });
     store.run(.{ .once = true, .wait_for_effects = true });
 
-    var requests_locked = store.capture_store.video_session.screenshot_requests.lock();
+    var requests_locked = store.capture_store.video_capture_session.screenshot_requests.lock();
     defer requests_locked.unlock();
     try std.testing.expectEqual(1, requests_locked.unwrap());
 }

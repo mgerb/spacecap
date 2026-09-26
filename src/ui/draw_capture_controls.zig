@@ -1,9 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("imguiz").imguiz;
-const dockspace = @import("./dockspace.zig");
 const Store = @import("../store/store.zig").Store;
-const AudioDevice = @import("../store/audio_session.zig").AudioDevice;
+const AudioDevice = @import("../store/audio_capture_session.zig").AudioDevice;
 const UIStorage = @import("./ui_storage.zig").UIStorage;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
@@ -14,35 +13,17 @@ const AUDIO_GAIN_DB_MAX: f32 = 12.0;
 const VIDEO_CAPTURE_NOT_SUPPORTED_MESSAGE = "Video capture is unavailable on your current hardware, or your video drivers may be out of date.";
 const VIDEO_ENCODING_NOT_SUPPORTED_MESSAGE = "Video encoding is not supported on your current hardware, or your video drivers may be out of date.";
 
-pub fn draw_bottom_panel(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
-    _ = c.ImGui_Begin(dockspace.BOTTOM_WINDOW_NAME, null, c.ImGuiWindowFlags_None);
-    defer c.ImGui_End();
-
-    {
-        _ = c.ImGui_BeginChild(
-            "##bottom_panel_content",
-            .{ .x = 0, .y = 0 },
-            c.ImGuiChildFlags_None,
-            c.ImGuiWindowFlags_None,
-        );
-        defer c.ImGui_EndChild();
-        try draw_bottom_panel_content(allocator, ui_storage, store, state);
-    }
-}
-
-fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
+pub fn draw_capture_controls(allocator: Allocator, ui_storage: *UIStorage, store: *Store, state: *Store.State) !void {
     // ----------------------------------------------------------------------------
     // Video collapsing header.
     // ----------------------------------------------------------------------------
     if (c.ImGui_CollapsingHeader("Video", c.ImGuiTreeNodeFlags_DefaultOpen)) {
-        const replay_buffer_duration_label = try util.format_duration_label(
-            allocator,
+        const replay_buffer_duration_label = util.format_duration_label(
             .{
                 .seconds = state.capture.replay_buffer_metrics.duration(store.io) orelse 0,
                 .max = state.user_settings.user_settings.replay_seconds,
             },
         );
-        defer allocator.free(replay_buffer_duration_label);
 
         const video_container_width = c.ImGui_GetContentRegionAvail().x;
         const video_actions_column_width = @max(
@@ -127,7 +108,7 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
                     c.ImGui_EndTooltip();
                 }
                 _ = c.ImGui_TableNextColumn();
-                c.ImGui_TextUnformatted(replay_buffer_duration_label);
+                c.ImGui_TextUnformatted(&replay_buffer_duration_label);
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();
@@ -156,11 +137,10 @@ fn draw_bottom_panel_content(allocator: Allocator, ui_storage: *UIStorage, store
 
                 _ = c.ImGui_TableNextColumn();
                 if (state.capture.recording_to_disk) {
-                    const recording_duration_label = try util.format_duration_label(allocator, .{
+                    const recording_duration_label = util.format_duration_label(.{
                         .seconds = state.capture.recording_metrics.duration(store.io) orelse 0,
                     });
-                    defer allocator.free(recording_duration_label);
-                    c.ImGui_TextUnformatted(recording_duration_label);
+                    c.ImGui_TextUnformatted(&recording_duration_label);
                 } else {
                     c.ImGui_TextUnformatted("0s");
                 }
@@ -321,10 +301,12 @@ fn draw_audio_device(allocator: Allocator, ui_storage: *UIStorage, store: *Store
 
 /// Draw the audio device level meter for one device. This handles smoothing, decay, etc.
 fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDevice, now_ns: i128) !void {
+    // ----------------------------------------------------------------------------
     // Load the previous display level so the meter can animate between frames.
     // ----------------------------------------------------------------------------
     const previous_audio_level_display = try ui_storage.get_audio_level_display(audio_device.id) orelse 0;
 
+    // ----------------------------------------------------------------------------
     // Decay old capture levels so the meter falls back to zero when updates stop.
     // ----------------------------------------------------------------------------
     const target_level = blk: {
@@ -340,6 +322,7 @@ fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDev
         break :blk if (next < 0.0001) 0.0 else next;
     };
 
+    // ----------------------------------------------------------------------------
     // Smooth the display level with a fast attack and slower release.
     // ----------------------------------------------------------------------------
     const audio_level_linear = blk: {
@@ -350,6 +333,7 @@ fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDev
 
     try ui_storage.put_audio_level_display(audio_device.id, audio_level_linear);
 
+    // ----------------------------------------------------------------------------
     // Convert the smoothed linear level to dB.
     // ----------------------------------------------------------------------------
     const audio_level_db = blk: {
@@ -359,6 +343,7 @@ fn draw_audio_device_audio_level(ui_storage: *UIStorage, audio_device: *AudioDev
         break :blk std.math.clamp((db - AUDIO_GAIN_DB_MIN) / -AUDIO_GAIN_DB_MIN, 0.0, 1.0);
     };
 
+    // ----------------------------------------------------------------------------
     // Pick the meter color and draw the progress bar.
     // ----------------------------------------------------------------------------
     const color = if (audio_level_linear >= 0.9)

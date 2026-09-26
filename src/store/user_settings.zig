@@ -14,6 +14,7 @@ pub const UserSettings = struct {
     pub const OutputDirectory = enum {
         screenshots,
         videos,
+        file_browser,
     };
 
     pub const AudioDeviceSettings = struct {
@@ -35,9 +36,11 @@ pub const UserSettings = struct {
     restore_capture_source_on_startup: bool = true,
     // Doesn't have a default value because an allocator is
     // required to find the directory. It must be set before
-    // settings are used anywhere.
+    // settings are used anywhere. We can assume that it will
+    // never be null.
     video_output_directory: ?String = null,
     screenshot_output_directory: ?String = null,
+    file_browser_directory: ?String = null,
     audio_devices: std.json.ArrayHashMap(AudioDeviceSettings) = .{},
 
     /// Read the settings json file if it exists, otherwise use defaults.
@@ -51,6 +54,7 @@ pub const UserSettings = struct {
             const _default_settings = try default_settings(allocator, io);
             assert(_default_settings.video_output_directory != null);
             assert(_default_settings.screenshot_output_directory != null);
+            assert(_default_settings.file_browser_directory != null);
             return _default_settings;
         };
     }
@@ -86,6 +90,10 @@ pub const UserSettings = struct {
             const screenshot_output_directory = try util.get_default_output_dir(allocator, io, .pictures);
             loaded.screenshot_output_directory = try String.from(allocator, screenshot_output_directory);
         }
+        if (loaded.file_browser_directory == null) {
+            const file_browser_directory = try util.get_default_output_dir(allocator, io, .videos);
+            loaded.file_browser_directory = try String.from(allocator, file_browser_directory);
+        }
 
         return loaded;
     }
@@ -93,6 +101,7 @@ pub const UserSettings = struct {
     pub fn deinit(self: *@This(), allocator: Allocator) void {
         self.clear_output_directory(.videos);
         self.clear_output_directory(.screenshots);
+        self.clear_output_directory(.file_browser);
         self.clear_audio_device_settings(allocator);
         self.audio_devices.deinit(allocator);
     }
@@ -108,6 +117,10 @@ pub const UserSettings = struct {
             allocator,
             try util.get_default_output_dir(allocator, io, .pictures),
         );
+        settings.file_browser_directory = try String.from(
+            allocator,
+            try util.get_default_output_dir(allocator, io, .videos),
+        );
         return settings;
     }
 
@@ -122,6 +135,7 @@ pub const UserSettings = struct {
             switch (output_directory) {
                 .videos => self.video_output_directory = _directory,
                 .screenshots => self.screenshot_output_directory = _directory,
+                .file_browser => self.file_browser_directory = _directory,
             }
         }
     }
@@ -163,6 +177,7 @@ pub const UserSettings = struct {
         const directory = switch (output_directory) {
             .videos => &self.video_output_directory,
             .screenshots => &self.screenshot_output_directory,
+            .file_browser => &self.file_browser_directory,
         };
         if (directory.*) |*value| {
             value.deinit();
@@ -175,6 +190,7 @@ pub const UserSettings = struct {
         var settings_copy = self;
         settings_copy.video_output_directory = null;
         settings_copy.screenshot_output_directory = null;
+        settings_copy.file_browser_directory = null;
         settings_copy.audio_devices = .{};
         errdefer settings_copy.deinit(allocator);
 
@@ -188,6 +204,13 @@ pub const UserSettings = struct {
         try settings_copy.set_output_directory(
             .screenshots,
             if (self.screenshot_output_directory) |directory|
+                try directory.clone(allocator)
+            else
+                null,
+        );
+        try settings_copy.set_output_directory(
+            .file_browser,
+            if (self.file_browser_directory) |directory|
                 try directory.clone(allocator)
             else
                 null,
@@ -294,6 +317,7 @@ test "UserSettings - load" {
     try std.testing.expect(!settings.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-output", settings.video_output_directory.?.bytes);
     try std.testing.expectEqualStrings(Test.TEST_APP_DATA_DIR.?, settings.screenshot_output_directory.?.bytes);
+    try std.testing.expectEqualStrings(Test.TEST_APP_DATA_DIR.?, settings.file_browser_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(settings, "microphone-1", true, 0.5);
 }
 
@@ -312,6 +336,7 @@ test "UserSettings - save" {
         .restore_capture_source_on_startup = false,
         .video_output_directory = try String.init(allocator, "/tmp/spacecap-recordings"),
         .screenshot_output_directory = try String.init(allocator, "/tmp/spacecap-screenshots"),
+        .file_browser_directory = try String.init(allocator, "/tmp/spacecap-browser"),
     };
     defer settings.deinit(allocator);
     try settings.update_audio_device_settings(allocator, "desktop-audio", true, 1.25);
@@ -329,6 +354,7 @@ test "UserSettings - save" {
     try std.testing.expect(!loaded.restore_capture_source_on_startup);
     try std.testing.expectEqualStrings("/tmp/spacecap-recordings", loaded.video_output_directory.?.bytes);
     try std.testing.expectEqualStrings("/tmp/spacecap-screenshots", loaded.screenshot_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/spacecap-browser", loaded.file_browser_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(loaded, "desktop-audio", true, 1.25);
 }
 
@@ -342,6 +368,7 @@ test "UserSettings - clone" {
         .replay_max_bytes = 128 * 1024 * 1024,
         .video_output_directory = try String.init(allocator, "/tmp/original"),
         .screenshot_output_directory = try String.init(allocator, "/tmp/original-screenshots"),
+        .file_browser_directory = try String.init(allocator, "/tmp/original-browser"),
     };
     defer original.deinit(allocator);
     try original.update_audio_device_settings(allocator, "device-1", true, 0.75);
@@ -351,12 +378,14 @@ test "UserSettings - clone" {
 
     try std.testing.expect(original.video_output_directory.?.bytes.ptr != cloned.video_output_directory.?.bytes.ptr);
     try std.testing.expect(original.screenshot_output_directory.?.bytes.ptr != cloned.screenshot_output_directory.?.bytes.ptr);
+    try std.testing.expect(original.file_browser_directory.?.bytes.ptr != cloned.file_browser_directory.?.bytes.ptr);
     const original_device_before = original.audio_devices.map.get("device-1").?;
     const cloned_device_before = cloned.audio_devices.map.get("device-1").?;
     try std.testing.expect(original_device_before.id.ptr != cloned_device_before.id.ptr);
 
     try cloned.set_output_directory(.videos, try String.init(allocator, "/tmp/cloned"));
     try cloned.set_output_directory(.screenshots, try String.init(allocator, "/tmp/cloned-screenshots"));
+    try cloned.set_output_directory(.file_browser, try String.init(allocator, "/tmp/cloned-browser"));
     cloned.capture_fps = 120;
     cloned.replay_max_bytes = 512 * 1024 * 1024;
     try cloned.update_audio_device_settings(allocator, "device-1", false, 2.0);
@@ -366,6 +395,7 @@ test "UserSettings - clone" {
     try std.testing.expectEqual(128 * 1024 * 1024, original.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/original", original.video_output_directory.?.bytes);
     try std.testing.expectEqualStrings("/tmp/original-screenshots", original.screenshot_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/original-browser", original.file_browser_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(original, "device-1", true, 0.75);
     try std.testing.expect(original.audio_devices.map.get("device-2") == null);
 
@@ -373,6 +403,7 @@ test "UserSettings - clone" {
     try std.testing.expectEqual(512 * 1024 * 1024, cloned.replay_max_bytes);
     try std.testing.expectEqualStrings("/tmp/cloned", cloned.video_output_directory.?.bytes);
     try std.testing.expectEqualStrings("/tmp/cloned-screenshots", cloned.screenshot_output_directory.?.bytes);
+    try std.testing.expectEqualStrings("/tmp/cloned-browser", cloned.file_browser_directory.?.bytes);
     try TestUtil.expect_audio_device_settings(cloned, "device-1", false, 2.0);
     try TestUtil.expect_audio_device_settings(cloned, "device-2", true, 1.0);
 }
