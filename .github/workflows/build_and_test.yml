@@ -20,7 +20,7 @@ jobs:
   build-and-test:
     name: Build and Test
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
