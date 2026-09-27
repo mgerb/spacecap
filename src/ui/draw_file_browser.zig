@@ -68,21 +68,47 @@ pub fn draw(store: *Store, state: *const FileBrowserState, directory: []const u8
         c.ImGui_TableNextRow();
         _ = c.ImGui_TableNextColumn();
         const icon_pos = c.ImGui_GetCursorPos();
-        c.ImGui_PushIDInt(@intCast(index));
-        const row_clicked = c.ImGui_SelectableEx(
-            "##file_row",
-            false,
-            c.ImGuiSelectableFlags_SpanAllColumns | c.ImGuiSelectableFlags_AllowOverlap,
-            .{ .x = 0, .y = c.ImGui_GetTextLineHeight() },
-        );
-        c.ImGui_PopID();
+
+        {
+            c.ImGui_PushIDInt(@intCast(index));
+            defer c.ImGui_PopID();
+
+            const row_clicked = c.ImGui_SelectableEx(
+                "##file_row",
+                false,
+                c.ImGuiSelectableFlags_SpanAllColumns | c.ImGuiSelectableFlags_AllowOverlap,
+                .{ .x = 0, .y = c.ImGui_GetTextLineHeight() },
+            );
+            if (row_clicked) {
+                store.dispatch(.{ .file_browser = .{
+                    .select_file = try String.init(store.allocator, entry.path.bytes),
+                } });
+            }
+
+            // ----------------------------------------------------------------------------
+            // Right click menu.
+            // ----------------------------------------------------------------------------
+            if (c.ImGui_BeginPopupContextItem()) {
+                if (c.ImGui_MenuItem("Show in system explorer")) {
+                    store.dispatch(.{ .file_browser = .{
+                        .open_file_explorer = try String.init(store.allocator, entry.path.bytes),
+                    } });
+                }
+                if (c.ImGui_MenuItem("Copy file path")) {
+                    const path = try store.allocator.dupeSentinel(u8, entry.path.bytes, 0);
+                    defer store.allocator.free(path);
+                    c.ImGui_SetClipboardText(path.ptr);
+                }
+                if (c.ImGui_MenuItem("Delete")) {
+                    store.dispatch(.{ .file_browser = .{
+                        .delete_file = try String.init(store.allocator, entry.path.bytes),
+                    } });
+                }
+                c.ImGui_EndPopup();
+            }
+        }
 
         const file_name = std.fs.path.basename(entry.path.bytes);
-        if (row_clicked) {
-            store.dispatch(.{ .file_browser = .{
-                .select_file = try String.init(store.allocator, entry.path.bytes),
-            } });
-        }
 
         // ----------------------------------------------------------------------------
         // Column 1: file type icon (optional)

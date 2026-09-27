@@ -537,11 +537,14 @@ pub const TestStore = struct {
             return allocator.dupe(u8, "/tmp");
         }
 
+        fn open_file_explorer(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) anyerror!void {}
+
         fn file_picker(self: *@This()) FilePicker {
             return .{
                 .ptr = self,
                 .vtable = &.{
                     .open_directory_picker = open_directory_picker,
+                    .open_file_explorer = open_file_explorer,
                 },
             };
         }

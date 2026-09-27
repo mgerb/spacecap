@@ -124,7 +124,7 @@ pub const VideoEditorStore = struct {
         }
 
         /// Find the session already open for a file path.
-        fn get_session_id_for_path(self: *@This(), file_path: []const u8) ?SessionId {
+        pub fn get_session_id_for_path(self: *@This(), file_path: []const u8) ?SessionId {
             for (self.sessions.values()) |session_ref| {
                 const session = session_ref.as_ptr();
                 if (std.mem.eql(u8, session.file_path.bytes, file_path)) {

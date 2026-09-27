@@ -25,7 +25,7 @@ fn map_g_error(err: *c.GError) ?(FilePickerError || anyerror) {
     return null;
 }
 
-const OpenDirectoryPickerContext = struct {
+const PortalRequestContext = struct {
     loop: *c.GMainLoop,
     response_code: u32 = 2,
     response_data: ?*c.GVariant = null,
@@ -54,7 +54,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         };
     }
 
-    fn open_directory_picker_response(
+    fn portal_request_response(
         _: ?*c.GDBusConnection,
         _: [*c]const u8,
         _: [*c]const u8,
@@ -63,7 +63,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         parameters: ?*c.GVariant,
         user_data: ?*anyopaque,
     ) callconv(.c) void {
-        const ctx: *OpenDirectoryPickerContext = @ptrCast(@alignCast(user_data));
+        const ctx: *PortalRequestContext = @ptrCast(@alignCast(user_data));
         c.g_variant_get(parameters.?, "(u@a{sv})", &ctx.response_code, &ctx.response_data);
         c.g_main_loop_quit(ctx.loop);
     }
@@ -135,7 +135,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         const loop = c.g_main_loop_new(null, 0) orelse return error.GMainLoopNewFailed;
         defer c.g_main_loop_unref(loop);
 
-        var ctx = OpenDirectoryPickerContext{ .loop = loop };
+        var ctx = PortalRequestContext{ .loop = loop };
         var subscription_id = c.g_dbus_connection_signal_subscribe(
             self.dbus,
             null,
@@ -144,7 +144,7 @@ pub const XdgDesktopPortalFilePicker = struct {
             request_path.ptr,
             null,
             c.G_DBUS_SIGNAL_FLAGS_NONE,
-            open_directory_picker_response,
+            portal_request_response,
             &ctx,
             null,
         );
@@ -204,7 +204,7 @@ pub const XdgDesktopPortalFilePicker = struct {
                 actual_request_path,
                 null,
                 c.G_DBUS_SIGNAL_FLAGS_NONE,
-                open_directory_picker_response,
+                portal_request_response,
                 &ctx,
                 null,
             );
@@ -224,6 +224,75 @@ pub const XdgDesktopPortalFilePicker = struct {
         return selected_directory_from_result(allocator, result);
     }
 
+    const OpenFileExplorerContext = struct {
+        loop: *c.GMainLoop,
+        success: bool = false,
+        g_error: ?*c.GError = null,
+    };
+
+    fn open_file_explorer_callback(
+        source_object: ?*c.GObject,
+        result: ?*c.GAsyncResult,
+        user_data: ?*anyopaque,
+    ) callconv(.c) void {
+        const ctx: *OpenFileExplorerContext = @ptrCast(@alignCast(user_data));
+        ctx.success = c.xdp_portal_open_directory_finish(@ptrCast(source_object), result, &ctx.g_error) != 0;
+        c.g_main_loop_quit(ctx.loop);
+    }
+
+    pub fn open_file_explorer(
+        _: *anyopaque,
+        allocator: Allocator,
+        _: std.Io,
+        file_path: []const u8,
+    ) !void {
+        const file_path_z = try allocator.dupeSentinel(u8, file_path, 0);
+        defer allocator.free(file_path_z);
+
+        const file = c.g_file_new_for_path(file_path_z.ptr) orelse return error.FilePathToUriFailed;
+        defer c.g_object_unref(file);
+        const uri = c.g_file_get_uri(file);
+        defer c.g_free(uri);
+
+        const portal = c.xdp_portal_initable_new(null) orelse return error.XdpPortalNewFailed;
+        defer c.g_object_unref(portal);
+
+        // Keep each request's callbacks on its own worker thread.
+        const main_context = c.g_main_context_new() orelse return error.GMainContextNewFailed;
+        defer c.g_main_context_unref(main_context);
+        const loop = c.g_main_loop_new(main_context, 0) orelse return error.GMainLoopNewFailed;
+        defer c.g_main_loop_unref(loop);
+
+        var ctx = OpenFileExplorerContext{ .loop = loop };
+        defer if (ctx.g_error) |g_err| c.g_error_free(g_err);
+
+        c.g_main_context_push_thread_default(main_context);
+        defer c.g_main_context_pop_thread_default(main_context);
+
+        c.xdp_portal_open_directory(
+            portal,
+            null,
+            uri,
+            c.XDP_OPEN_URI_FLAG_NONE,
+            null,
+            open_file_explorer_callback,
+            &ctx,
+        );
+        c.g_main_loop_run(loop);
+
+        if (ctx.g_error) |g_err| {
+            if (map_g_error(g_err)) |picker_err| {
+                return picker_err;
+            }
+            log.err("[open_file_explorer] portal request failed: {s}", .{g_err.message.?});
+            return error.OpenFileExplorerFailed;
+        }
+
+        if (!ctx.success) {
+            return error.OpenFileExplorerFailed;
+        }
+    }
+
     pub fn deinit(self: *Self) void {
         c.g_object_unref(self.dbus);
     }
@@ -233,6 +302,7 @@ pub const XdgDesktopPortalFilePicker = struct {
             .ptr = self,
             .vtable = &.{
                 .open_directory_picker = open_directory_picker,
+                .open_file_explorer = open_file_explorer,
             },
         };
     }

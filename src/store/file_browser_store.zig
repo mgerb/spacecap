@@ -33,16 +33,22 @@ pub const FileBrowserStore = struct {
     pub const Message = union(enum) {
         load_files,
         load_files_success: FileList,
+        open_file_explorer: String,
+        delete_file: String,
         select_file: String,
 
         pub const effects = .{
             .load_files = .{effect_load_files},
+            .open_file_explorer = .{effect_open_file_explorer},
+            .delete_file = .{effect_delete_file},
             .select_file = .{VideoEditorStore.effect_open_session},
         };
 
         pub fn deinit(self: *@This()) void {
             switch (self.*) {
                 .load_files_success => |*files| files.deinit(),
+                .open_file_explorer => |*file_path| file_path.deinit(),
+                .delete_file => |*file_path| file_path.deinit(),
                 .select_file => |*file_path| file_path.deinit(),
                 inline else => |payload| {
                     if (@typeInfo(@TypeOf(payload)) == .@"struct" and
@@ -76,6 +82,8 @@ pub const FileBrowserStore = struct {
                         state.file_browser.files.deinit();
                         state.file_browser.files = @constCast(files).*;
                     },
+                    .open_file_explorer => {},
+                    .delete_file => {},
                     .select_file => {},
                 }
             },
@@ -123,6 +131,27 @@ pub const FileBrowserStore = struct {
         std.mem.sort(FileEntry, files.entries.items, {}, less_than_file_name);
 
         store.dispatch(.{ .file_browser = .{ .load_files_success = files } });
+    }
+
+    fn effect_open_file_explorer(store: *Store, file_path: String) !void {
+        defer @constCast(&file_path).deinit();
+        try store.file_picker.open_file_explorer(store.allocator, store.io, file_path.bytes);
+    }
+
+    fn effect_delete_file(store: *Store, file_path: String) !void {
+        defer @constCast(&file_path).deinit();
+
+        try std.Io.Dir.cwd().deleteFile(store.io, file_path.bytes);
+
+        const session_id = blk: {
+            const state_locked = store.state.lock();
+            defer state_locked.unlock();
+            break :blk state_locked.unwrap_ptr().video_editor.get_session_id_for_path(file_path.bytes);
+        };
+        if (session_id) |id| {
+            store.dispatch(.{ .video_editor = .{ .close_session = id } });
+        }
+        store.dispatch(.{ .file_browser = .load_files });
     }
 
     fn less_than_file_name(_: void, lhs: FileEntry, rhs: FileEntry) bool {
