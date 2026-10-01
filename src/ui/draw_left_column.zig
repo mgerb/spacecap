@@ -55,7 +55,18 @@ pub fn draw_left_column(
 
             if (c.ImGui_BeginTabItem(" Files", null, 0)) {
                 defer c.ImGui_EndTabItem();
-                try file_browser.draw(store, &state.file_browser, state.user_settings.user_settings.file_browser_directory.?.bytes);
+                const active_file_path: ?[]const u8 = blk: {
+                    if (state.video_editor.get_active_session()) |active_session| {
+                        break :blk active_session.file_path.bytes;
+                    }
+                    break :blk null;
+                };
+                try file_browser.draw(
+                    store,
+                    &state.file_browser,
+                    state.user_settings.user_settings.file_browser_directory.?.bytes,
+                    active_file_path,
+                );
             }
 
             if (c.ImGui_BeginTabItem(" Settings", null, 0)) {

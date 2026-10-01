@@ -108,7 +108,7 @@ pub const VideoEditorStore = struct {
             self.sessions.deinit(self.allocator);
         }
 
-        fn get_active_session(self: *@This()) ?*VideoEditorSession {
+        pub fn get_active_session(self: *@This()) ?*VideoEditorSession {
             const session_id = self.active_session_id orelse return null;
             const session = self.sessions.get(session_id) orelse return null;
             return session.as_ptr();
