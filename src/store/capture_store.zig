@@ -277,9 +277,11 @@ pub const CaptureStore = struct {
     }
 
     pub fn exit(self: *Self) void {
-        self.stop_recording_to_disk() catch |err| {
+        var saved_file_path = self.stop_recording_to_disk() catch |err| blk: {
             log.err("[exit] stop recording to disk error: {}", .{err});
+            break :blk null;
         };
+        defer if (saved_file_path) |*file_path| file_path.deinit();
         self.audio_capture_session.stop_replay_buffer() catch |err| {
             log.err("[exit] stop audio replay buffer error: {}", .{err});
         };
@@ -682,8 +684,8 @@ pub const CaptureStore = struct {
 
     /// Also called on exit and source changes (when no recording is active).
     /// This is why it checks for the muxer and still is valid when there is no
-    /// muxer.
-    fn stop_recording_to_disk(self: *Self) !void {
+    /// muxer. Returns the file path if a file was written.
+    fn stop_recording_to_disk(self: *Self) !?String {
         // Keep this before locking muxer. The capture thread can hold video_record_mutex
         // and then lock muxer while writing packets, so taking muxer first can deadlock.
         self.video_capture_session.stop_recording_to_disk();
@@ -700,17 +702,20 @@ pub const CaptureStore = struct {
 
             try self.audio_capture_session.stop_recording_to_disk(muxer);
             try muxer.finish();
-            return;
+            return try String.init(muxer.allocator, muxer.file_name);
         }
 
         try self.audio_capture_session.stop_recording_to_disk(null);
+        return null;
     }
 
     fn effect_stop_recording_to_disk(store: *Store, _: anytype) !void {
         var self = &store.capture_store;
         errdefer store.dispatch(.{ .capture = .stop_recording_to_disk_fail });
 
-        try self.stop_recording_to_disk();
+        if (try self.stop_recording_to_disk()) |file_path| {
+            store.dispatch(.{ .file_browser = .{ .mark_file_new = file_path } });
+        }
 
         store.dispatch(.{ .capture = .stop_recording_to_disk_success });
         store.dispatch(.{ .file_browser = .load_files });
@@ -782,7 +787,7 @@ pub const CaptureStore = struct {
         ));
         defer if (video_replay_buffer) |_video_replay_buffer| _video_replay_buffer.deinit();
 
-        try exporter.export_replay_buffers(
+        const output_path = try exporter.export_replay_buffers(
             store.allocator,
             store.io,
             size.width,
@@ -792,9 +797,13 @@ pub const CaptureStore = struct {
             audio_replay_buffer,
             video_output_directory.?.bytes,
         );
+        defer if (output_path) |path| store.allocator.free(path);
 
         store.dispatch(.{ .capture = .save_replay_success });
-        store.dispatch(.{ .file_browser = .load_files });
+        if (output_path) |path| {
+            store.dispatch(.{ .file_browser = .{ .mark_file_new = try String.init(store.allocator, path) } });
+            store.dispatch(.{ .file_browser = .load_files });
+        }
     }
 
     fn effect_screenshot_request(store: *Store, _: anytype) !void {
@@ -837,6 +846,7 @@ pub const CaptureStore = struct {
         defer store.allocator.free(file_path);
 
         log.debug("[effect_screenshot_response] screenshot saved: {s}", .{file_path});
+        store.dispatch(.{ .file_browser = .{ .mark_file_new = try String.init(store.allocator, file_path) } });
         store.dispatch(.{ .file_browser = .load_files });
     }
 
@@ -851,7 +861,9 @@ pub const CaptureStore = struct {
         }
 
         // Stop all capturing.
-        try self.stop_recording_to_disk();
+        if (try self.stop_recording_to_disk()) |file_path| {
+            store.dispatch(.{ .file_browser = .{ .mark_file_new = file_path } });
+        }
         store.dispatch(.{ .file_browser = .load_files });
         try self.audio_capture_session.stop_replay_buffer();
         try self.video_capture_session.stop_replay_buffer();

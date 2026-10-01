@@ -70,6 +70,11 @@ pub fn draw(
     c.ImGui_TableSetupColumnEx("size", c.ImGuiTableColumnFlags_WidthFixed, 80, 0);
 
     for (state.files.entries.items, 0..) |entry, index| {
+        const is_highlighted = state.highlighted_paths.contains(entry.path.bytes);
+        const is_active = if (active_file_path) |path|
+            std.mem.eql(u8, entry.path.bytes, path)
+        else
+            false;
         c.ImGui_TableNextRow();
         _ = c.ImGui_TableNextColumn();
         const icon_pos = c.ImGui_GetCursorPos();
@@ -78,16 +83,18 @@ pub fn draw(
             c.ImGui_PushIDInt(@intCast(index));
             defer c.ImGui_PopID();
 
-            const is_active = if (active_file_path) |path|
-                std.mem.eql(u8, entry.path.bytes, path)
-            else
-                false;
             const row_clicked = c.ImGui_SelectableEx(
                 "##file_row",
                 is_active, // Show as selected (with highlghted background)
                 c.ImGuiSelectableFlags_SpanAllColumns | c.ImGuiSelectableFlags_AllowOverlap,
                 .{ .x = 0, .y = c.ImGui_GetTextLineHeight() },
             );
+            const row_hovered = c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_None);
+            if (is_highlighted and row_hovered) {
+                store.dispatch(.{ .file_browser = .{
+                    .mark_file_seen = try String.init(store.allocator, entry.path.bytes),
+                } });
+            }
             if (row_clicked) {
                 store.dispatch(.{ .file_browser = .{
                     .select_file = try String.init(store.allocator, entry.path.bytes),
@@ -133,7 +140,13 @@ pub fn draw(
         // Column 2: file name
         // ----------------------------------------------------------------------------
         _ = c.ImGui_TableNextColumn();
+        if (is_highlighted) {
+            c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Text, Colors.light_blue.as_vec4());
+        }
         imgui_util.text_unformatted(file_name);
+        if (is_highlighted) {
+            c.ImGui_PopStyleColor();
+        }
         imgui_util.item_tooltip(file_name);
 
         // ----------------------------------------------------------------------------

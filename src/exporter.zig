@@ -48,7 +48,7 @@ pub fn export_trimmed_video(
     return output_path;
 }
 
-/// Export audio/video to a file.
+/// Export audio/video to a file. Returns an owned path when a replay is written.
 pub fn export_replay_buffers(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -58,10 +58,10 @@ pub fn export_replay_buffers(
     video_replay_buffer: *VideoReplayBuffer,
     audio_replay_buffer: ?*AudioReplayBuffer,
     output_directory: []const u8,
-) !void {
+) !?[]u8 {
     if (video_replay_buffer.len <= 0) {
         log.warn("[export_replay_buffers] video replay buffer is empty", .{});
-        return;
+        return null;
     }
 
     // The final output is based on the captured video. We still need to align
@@ -69,7 +69,7 @@ pub fn export_replay_buffers(
     video_replay_buffer.ensure_first_frame_is_idr();
     const replay_window = video_replay_buffer.get_replay_window() orelse {
         log.warn("[export_replay_buffers] replay window is not valid", .{});
-        return;
+        return null;
     };
 
     var audio_codec_context: ?CodecContextInfo = null;
@@ -112,6 +112,7 @@ pub fn export_replay_buffers(
     }
 
     try muxer.finish();
+    return try allocator.dupe(u8, muxer.file_name);
 }
 
 /// Encode raw BGRA image data and save to a file. Currently only supports PNG.
