@@ -17,7 +17,12 @@ const FileIcon = struct {
     color: c.ImVec4,
 };
 
-pub fn draw(store: *Store, state: *const FileBrowserState, directory: []const u8) !void {
+pub fn draw(
+    store: *Store,
+    state: *const FileBrowserState,
+    directory: []const u8,
+    active_file_path: ?[]const u8,
+) !void {
 
     // ----------------------------------------------------------------------------
     // Draw the directory picker at the top.
@@ -73,9 +78,13 @@ pub fn draw(store: *Store, state: *const FileBrowserState, directory: []const u8
             c.ImGui_PushIDInt(@intCast(index));
             defer c.ImGui_PopID();
 
+            const is_active = if (active_file_path) |path|
+                std.mem.eql(u8, entry.path.bytes, path)
+            else
+                false;
             const row_clicked = c.ImGui_SelectableEx(
                 "##file_row",
-                false,
+                is_active, // Show as selected (with highlghted background)
                 c.ImGuiSelectableFlags_SpanAllColumns | c.ImGuiSelectableFlags_AllowOverlap,
                 .{ .x = 0, .y = c.ImGui_GetTextLineHeight() },
             );

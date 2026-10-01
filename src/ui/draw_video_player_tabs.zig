@@ -140,7 +140,11 @@ pub fn draw_video_player_tabs(
             // This will be set to false only when the tab closes.
             var tab_open = true;
             const tab_selected = c.ImGui_BeginTabItem(tab_label.ptr, &tab_open, player_flags);
-            if (tab_open and c.ImGui_IsItemActivated()) {
+            // ImGui also selects a remaining tab when the active tab closes,
+            // without activating it as though the user clicked it.
+            if (tab_open and !is_active and
+                (c.ImGui_IsItemActivated() or (tab_selected and !new_tab_to_select)))
+            {
                 store.dispatch(.{ .video_editor = .{ .set_active_session = session_id } });
             }
             if (tab_selected) {
