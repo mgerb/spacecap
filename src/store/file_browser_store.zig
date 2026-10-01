@@ -36,6 +36,10 @@ pub const FileBrowserStore = struct {
         open_file_explorer: String,
         delete_file: String,
         select_file: String,
+        /// Set a file path to new so that it is highlighted
+        /// in the file browser.
+        mark_file_new: String,
+        mark_file_seen: String,
 
         pub const effects = .{
             .load_files = .{effect_load_files},
@@ -50,6 +54,8 @@ pub const FileBrowserStore = struct {
                 .open_file_explorer => |*file_path| file_path.deinit(),
                 .delete_file => |*file_path| file_path.deinit(),
                 .select_file => |*file_path| file_path.deinit(),
+                .mark_file_new => |*file_path| file_path.deinit(),
+                .mark_file_seen => |*file_path| file_path.deinit(),
                 inline else => |payload| {
                     if (@typeInfo(@TypeOf(payload)) == .@"struct" and
                         @hasDecl(@TypeOf(payload), "deinit"))
@@ -62,14 +68,28 @@ pub const FileBrowserStore = struct {
     };
 
     pub const State = struct {
+        allocator: Allocator,
         files: FileList,
+        /// This is essentially a hash set. Files are highlighted when
+        /// they are new. When mouse overing them they are removed here,
+        /// making not highlighted.
+        highlighted_paths: std.StringHashMap(void),
 
         pub fn init(allocator: Allocator) @This() {
-            return .{ .files = .init(allocator) };
+            return .{
+                .allocator = allocator,
+                .files = .init(allocator),
+                .highlighted_paths = std.StringHashMap(void).init(allocator),
+            };
         }
 
         pub fn deinit(self: *@This()) void {
             self.files.deinit();
+            var iterator = self.highlighted_paths.keyIterator();
+            while (iterator.next()) |path| {
+                self.allocator.free(@constCast(path.*));
+            }
+            self.highlighted_paths.deinit();
         }
     };
 
@@ -81,6 +101,21 @@ pub const FileBrowserStore = struct {
                     .load_files_success => |*files| {
                         state.file_browser.files.deinit();
                         state.file_browser.files = @constCast(files).*;
+                    },
+                    .mark_file_new => |file_path| {
+                        defer @constCast(&file_path).deinit();
+                        const highlighted_paths = &state.file_browser.highlighted_paths;
+                        if (!highlighted_paths.contains(file_path.bytes)) {
+                            const path = try state.file_browser.allocator.dupe(u8, file_path.bytes);
+                            errdefer state.file_browser.allocator.free(path);
+                            try highlighted_paths.put(path, {});
+                        }
+                    },
+                    .mark_file_seen => |file_path| {
+                        defer @constCast(&file_path).deinit();
+                        if (state.file_browser.highlighted_paths.fetchRemove(file_path.bytes)) |removed| {
+                            state.file_browser.allocator.free(@constCast(removed.key));
+                        }
                     },
                     .open_file_explorer => {},
                     .delete_file => {},
@@ -151,6 +186,9 @@ pub const FileBrowserStore = struct {
         if (session_id) |id| {
             store.dispatch(.{ .video_editor = .{ .close_session = id } });
         }
+        store.dispatch(.{
+            .file_browser = .{ .mark_file_seen = try String.init(store.allocator, file_path.bytes) },
+        });
         store.dispatch(.{ .file_browser = .load_files });
     }
 

@@ -340,6 +340,7 @@ pub const VideoEditorStore = struct {
         defer store.allocator.free(output_path);
 
         log.info("[effect_export_trim] exported {s}", .{output_path});
+        store.dispatch(.{ .file_browser = .{ .mark_file_new = try String.init(store.allocator, output_path) } });
         store.dispatch(.{ .file_browser = .load_files });
         store.dispatch(.{ .video_editor = .{ .export_trimmed_video_success = payload.session_id } });
     }
