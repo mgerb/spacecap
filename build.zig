@@ -223,6 +223,7 @@ fn build_unit_tests(
     };
 
     const test_step = b.step("test", "Run unit tests");
+    const test_filter = b.option([]const u8, "test-filter", "Only run tests matching this substring");
 
     for (unit_test_files) |f| {
         const module = b.createModule(.{
@@ -242,6 +243,9 @@ fn build_unit_tests(
         try add_linux_dependencies(allocator, b, exe, target, optimize);
 
         const run_exe_unit_tests = b.addRunArtifact(exe);
+        if (test_filter) |filter| {
+            run_exe_unit_tests.setEnvironmentVariable("TEST_FILTER", filter);
+        }
         // Force tests to use lavapipe, because they need to
         // run on build servers without GPUs.
         if (b.graph.environ_map.get("LAVAPIPE_ICD")) |lavapipe_icd| {
