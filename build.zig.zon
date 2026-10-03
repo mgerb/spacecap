@@ -12,21 +12,21 @@
             .url = "git+https://github.com/Snektron/vulkan-zig#6994c93a6e882bac855aed606cf97a91e3f71d1f",
             .hash = "vulkan-0.0.0-r7Ytx_6DAwDB1QJAbIew5IzR2PiiAtJENX5kdJHf449X",
         },
-        .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#b3e173f6de54f4c2ba2320b297eab7a4b4f318a0",
-            .hash = "imguiz-0.0.0-sI63z8uYegTrrTMgx_fGKVP9IiSkInYkrA9PvnQsVK-W",
-        },
         .ffmpeg = .{
             .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.tar.gz",
             .hash = "N-V-__8AAJpxYgW29IA1MGBOmQ-DaqXIv39OFUDYrokatb7C",
         },
+        .imguiz = .{
+            .url = "git+https://github.com/mgerb/imguiz#cceea12be641bd375697c99fee541788f6b357c5",
+            .hash = "imguiz-0.0.0-sI63z7iYegTRAc4Hz2rYIc6q5AnwpXFcvh-ot2vL1_v-",
+        },
         .pipewire = .{
-            .url = "git+https://github.com/mgerb/pipewire#266d8e3ddcb2f09c475f239bc617cd048d2a8680",
-            .hash = "pipewire-1.6.3-tKslQ7GMAQDta-snC1w81e-MLStcOtbSmgf-ZVldYrvt",
+            .url = "git+https://github.com/mgerb/pipewire#ca79c611a80c6249dcb75d866bc7996805f9a3c1",
+            .hash = "pipewire-1.6.3-tKslQ4CMAQDtkbloslJ3wXpVnqmt4auaEYDzB2AYssit",
         },
         .libportal_zig = .{
-            .url = "git+https://github.com/mgerb/libportal-zig#dbfdd1479855e597e796f473a50896c66f4b57c8",
-            .hash = "libportal_zig-0.10.0-G2meOyIfAACzPKGWbl0vSwRol-kYCeGq-FIhWvUyuRtZ",
+            .url = "git+https://github.com/mgerb/libportal-zig#8d236be3685ac1aa328270c1b7aec1a9fe7e1d7d",
+            .hash = "libportal_zig-0.10.0-G2meOwMfAABcuT8cU0qm8U72qhlzFbC6LN5opHLe4Lza",
         },
     },
     .paths = .{

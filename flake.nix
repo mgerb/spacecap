@@ -100,7 +100,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            zigpkgs.master
+            zigpkgs."0.17.0"
             self.packages.${system}.zls-custom
             self.packages.${system}.linuxdeploy
             self.packages.${system}.appimagetool
