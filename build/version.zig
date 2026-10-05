@@ -47,10 +47,19 @@ pub fn get_package_version(b: *std.Build, allocator: Allocator, ignore_version_c
     );
     defer allocator.free(manifest_source);
 
-    const build_zon_file = try std.zon.parse.fromSliceAlloc(BuildZonFile, allocator, manifest_source, null, .{
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    var diagnostics: std.zon.parse.Diagnostics = undefined;
+    const build_zon_file = std.zon.parse.fromSlice(BuildZonFile, .{
+        .gpa = allocator,
+        .arena = arena.allocator(),
+        .source = manifest_source,
+        .diagnostics = &diagnostics,
         .ignore_unknown_fields = true,
-    });
-    defer std.zon.parse.free(allocator, build_zon_file);
+    }) catch |err| {
+        if (err == error.ParseZon) diagnostics.log(manifest_path.sub_path);
+        return err;
+    };
 
     const release_version = try allocator.dupe(u8, build_zon_file.version);
     errdefer allocator.free(release_version);

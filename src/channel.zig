@@ -653,7 +653,7 @@ test "Channel - close - BufferedChan drains queued items" {
             return item;
         }
 
-        fn deinit(self: *@This()) void {
+        pub fn deinit(self: *@This()) void {
             defer self.allocator.destroy(self);
             self.deinit_count.* += 1;
         }

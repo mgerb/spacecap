@@ -91,7 +91,7 @@ fn add_linux_dependencies(
         .optimize = optimize,
     });
     exe.root_module.addImport("libportal", libportal.module("libportal"));
-    exe.root_module.addObjectFile(libportal.namedLazyPath("portal"));
+    exe.root_module.linkLibrary(libportal.artifact("portal"));
 
     // Vulkan is linked directly, because it is required that the
     // system has the libs installed.
