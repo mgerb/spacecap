@@ -41,6 +41,14 @@ pub const VideoEditorSession = struct {
     width: u32,
     height: u32,
     duration_ns: i64,
+    frame_rate: ?f64,
+    video_codec_name: [:0]const u8,
+    video_bit_rate: i64,
+    audio_codec_name: ?[:0]const u8,
+    audio_sample_rate: ?i32,
+    audio_bit_rate: ?i64,
+    file_size_bytes: ?u64,
+    container_format_name: [:0]const u8,
 
     is_exporting: bool = false,
 
@@ -106,9 +114,8 @@ pub const VideoEditorSession = struct {
             .trim_end_ns = .init(if (duration_ns > 0) duration_ns else std.math.maxInt(i64)),
             .audio = audio,
         });
-        try worker.start();
-
-        return .{
+        const audio_parameters = demuxer.audio_codec_parameters();
+        const session: Self = .{
             .id = @fromBackingInt(next_session_id.fetchAdd(1, .monotonic)),
             .allocator = allocator,
             .vulkan = vulkan,
@@ -118,7 +125,19 @@ pub const VideoEditorSession = struct {
             .width = video_width,
             .height = video_height,
             .duration_ns = duration_ns,
+            .frame_rate = ffmpeg_util.frame_rate(&demuxer.format_context.?.*, demuxer.video_stream_index),
+            .video_codec_name = std.mem.span(c.avcodec_get_name(codec_parameters.*.codec_id)),
+            .audio_codec_name = if (audio_parameters) |parameters| std.mem.span(c.avcodec_get_name(parameters.*.codec_id)) else null,
+            .audio_sample_rate = if (audio_parameters) |parameters| parameters.*.sample_rate else null,
+            .audio_bit_rate = if (audio_parameters) |parameters| parameters.*.bit_rate else null,
+            .file_size_bytes = ffmpeg_util.file_size_bytes(demuxer.format_context),
+            .container_format_name = ffmpeg_util.video_file_format_name(&demuxer.format_context.?.*, demuxer.file_path),
+            .video_bit_rate = codec_parameters.*.bit_rate,
         };
+
+        try worker.start();
+
+        return session;
     }
 
     pub fn deinit(self: *Self) void {

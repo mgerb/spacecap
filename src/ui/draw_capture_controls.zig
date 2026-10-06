@@ -6,7 +6,8 @@ const AudioDevice = @import("../store/audio_capture_session.zig").AudioDevice;
 const UIStorage = @import("./ui_storage.zig").UIStorage;
 const imgui_util = @import("./imgui_util.zig");
 const util = @import("../util.zig");
-const Colors = @import("./theme.zig").Colors;
+const theme = @import("./theme.zig");
+const Colors = theme.Colors;
 
 const AUDIO_GAIN_DB_MIN: f32 = -60.0;
 const AUDIO_GAIN_DB_MAX: f32 = 12.0;
@@ -47,8 +48,7 @@ pub fn draw_capture_controls(allocator: Allocator, ui_storage: *UIStorage, store
             c.ImGui_TableNextRow();
             _ = c.ImGui_TableNextColumn();
 
-            const video_cell_padding = c.ImVec2{ .x = 5, .y = 5 };
-            c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, video_cell_padding);
+            c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_CellPadding, theme.container_padding);
             defer c.ImGui_PopStyleVar();
 
             const video_capture_ready = state.capture.is_video_capture_supported and state.capture.video_capture_active;
@@ -154,7 +154,7 @@ pub fn draw_capture_controls(allocator: Allocator, ui_storage: *UIStorage, store
             if (c.ImGui_BeginTable("##video_2", 1, c.ImGuiTableFlags_SizingStretchProp)) {
                 defer c.ImGui_EndTable();
 
-                const button_height = c.ImGui_GetFrameHeight() * 1.5 + video_cell_padding.y;
+                const button_height = theme.action_button_height();
 
                 c.ImGui_TableNextRow();
                 _ = c.ImGui_TableNextColumn();

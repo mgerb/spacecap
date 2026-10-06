@@ -1,6 +1,12 @@
 const std = @import("std");
 const c = @import("imguiz").imguiz;
 
+pub const container_padding = c.ImVec2{ .x = 5, .y = 5 };
+
+pub fn action_button_height() f32 {
+    return c.ImGui_GetFrameHeight() * 1.5 + container_padding.y;
+}
+
 pub const Colors = struct {
     pub const red = Color.init("#c24d3f");
     pub const light_red = Color.init("#cf625a");
