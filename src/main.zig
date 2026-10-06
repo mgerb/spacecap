@@ -164,5 +164,6 @@ fn gui_app(allocator: std.mem.Allocator, io: std.Io, parsed_args: ?argparse.Arg)
 }
 
 test {
+    _ = @import("test/linked_libraries_test.zig");
     std.testing.refAllDecls(@This());
 }

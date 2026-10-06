@@ -376,7 +376,7 @@ pub const Store = struct {
 };
 
 pub const TestStore = struct {
-    const Test = @import("../test.zig");
+    const Test = @import("../test/test.zig");
     const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
     const AudioCaptureData = @import("../capture/audio/audio_capture_data.zig");
     const AudioDeviceList = @import("../capture/audio/audio_capture.zig").AudioDeviceList;

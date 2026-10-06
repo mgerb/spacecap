@@ -235,7 +235,7 @@ fn build_unit_tests(
         module.addOptions("build_options", options);
         const exe = b.addTest(.{
             .root_module = module,
-            .test_runner = .{ .path = b.path("./src/test_runner.zig"), .mode = .simple },
+            .test_runner = .{ .path = b.path("./src/test/test_runner.zig"), .mode = .simple },
             .use_llvm = USE_LLVM,
         });
 
