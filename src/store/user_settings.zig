@@ -281,7 +281,7 @@ const TestUtil = struct {
 };
 
 test "UserSettings - load" {
-    const Test = @import("../test.zig");
+    const Test = @import("../test/test.zig");
     const allocator = std.testing.allocator;
     try Test.init_temp_app_data_dir();
     defer Test.destroy_temp_app_data_dir();
@@ -322,7 +322,7 @@ test "UserSettings - load" {
 }
 
 test "UserSettings - save" {
-    const Test = @import("../test.zig");
+    const Test = @import("../test/test.zig");
     const allocator = std.testing.allocator;
     try Test.init_temp_app_data_dir();
     defer Test.destroy_temp_app_data_dir();

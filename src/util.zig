@@ -338,7 +338,7 @@ pub fn check_fd(fd: i64) !void {
 /// This function will create the directory if it does not exist.
 pub fn get_app_data_dir(allocator: std.mem.Allocator, io: std.Io) std.mem.Allocator.Error![]u8 {
     if (@import("builtin").is_test) {
-        const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
+        const TEST_APP_DATA_DIR = @import("./test/test.zig").TEST_APP_DATA_DIR;
         // NOTE: See test.zig for usage.
         assert(TEST_APP_DATA_DIR != null);
         return std.testing.allocator.dupe(u8, TEST_APP_DATA_DIR.?);
@@ -400,7 +400,7 @@ pub fn get_default_output_dir(
     output_directory_type: OutputDirectoryType,
 ) ![]u8 {
     if (@import("builtin").is_test) {
-        const TEST_APP_DATA_DIR = @import("./test.zig").TEST_APP_DATA_DIR;
+        const TEST_APP_DATA_DIR = @import("./test/test.zig").TEST_APP_DATA_DIR;
         assert(TEST_APP_DATA_DIR != null);
         return allocator.dupe(u8, TEST_APP_DATA_DIR.?);
     }

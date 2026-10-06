@@ -28,6 +28,16 @@
             })
           ];
         };
+        # The Portal does not need GIO SELinux or libmount support. Disable them
+        # to drop libselinux, libmount, and libblkid runtime dependencies.
+        glibWithOverrides = pkgs.glib.overrideAttrs (old: {
+          mesonFlags =
+            (old.mesonFlags or [])
+            ++ [
+              "-Dselinux=disabled"
+              "-Dlibmount=disabled"
+            ];
+        });
         zigpkgs = zig.packages.${system};
       in {
         packages = {
@@ -112,7 +122,7 @@
             wayland
             libxkbcommon
             zlib
-            glib
+            glibWithOverrides
 
             # Required for unit tests. Tests need to run on
             # Github action servers, which don't have
@@ -148,7 +158,7 @@
           # Required for Github actions or non-NixOS machines.
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.vulkan-loader
-            pkgs.glib
+            glibWithOverrides
             pkgs.zlib
 
             # Required for linux tray icon.
