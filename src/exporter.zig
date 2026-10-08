@@ -23,6 +23,7 @@ pub fn export_trimmed_video(
     output_dir: []const u8,
     trim_start_ns: i64,
     trim_end_ns: i64,
+    include_audio: bool,
 ) ![]u8 {
     try std.Io.Dir.cwd().createDirPath(io, output_dir);
 
@@ -40,7 +41,12 @@ pub fn export_trimmed_video(
         log.err("[export_trimmed_video] failed to delete file: {}", .{err});
     };
 
-    var file_remuxer = try FileRemuxer.init(allocator, input_path, output_path);
+    var file_remuxer = try FileRemuxer.init(
+        allocator,
+        input_path,
+        output_path,
+        .{ .include_audio = include_audio },
+    );
     defer file_remuxer.deinit();
 
     try file_remuxer.remux_range(trim_start_ns, trim_end_ns);

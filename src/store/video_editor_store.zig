@@ -17,6 +17,7 @@ pub const VideoEditorStore = struct {
         session_id: SessionId,
         trim_start_ns: i64,
         trim_end_ns: i64,
+        include_audio: bool,
     };
 
     allocator: Allocator,
@@ -50,6 +51,10 @@ pub const VideoEditorStore = struct {
         },
         step_previous_frame: struct { session_id: SessionId },
         step_next_frame: struct { session_id: SessionId },
+        set_include_audio: struct {
+            session_id: SessionId,
+            include_audio: bool,
+        },
         export_trimmed_video: ExportTrimmedVideoPayload,
         export_trimmed_video_success: SessionId,
         export_trimmed_video_fail: SessionId,
@@ -244,6 +249,11 @@ pub const VideoEditorStore = struct {
                             session.as_ptr().step_next_frame();
                         }
                     },
+                    .set_include_audio => |payload| {
+                        if (state.video_editor.sessions.get(payload.session_id)) |session| {
+                            session.as_ptr().include_audio = payload.include_audio;
+                        }
+                    },
                     .export_trimmed_video => |*payload| {
                         if (state.video_editor.sessions.get(payload.session_id)) |session| {
                             session.as_ptr().is_exporting = true;
@@ -333,6 +343,7 @@ pub const VideoEditorStore = struct {
             output_directory,
             payload.trim_start_ns,
             payload.trim_end_ns,
+            payload.include_audio,
         ) catch |err| {
             log.err("[effect_export_trim] failed to export {s}: {}", .{ input_path.bytes, err });
             return err;

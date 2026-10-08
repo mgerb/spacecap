@@ -49,8 +49,8 @@ pub const VideoEditorSession = struct {
     audio_bit_rate: ?i64,
     file_size_bytes: ?u64,
     container_format_name: [:0]const u8,
-
     is_exporting: bool = false,
+    include_audio: bool = true,
 
     pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan, file_path: []const u8) !Self {
         var owned_file_path = try String.init(allocator, file_path);
