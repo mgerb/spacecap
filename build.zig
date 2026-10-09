@@ -15,6 +15,7 @@ fn compile_shader(
     exe: *std.Build.Step.Compile,
     shader: []const u8,
     importName: []const u8,
+    shader_args: []const []const u8,
 ) !void {
     const vert_cmd = b.addSystemCommand(&.{
         "glslc",
@@ -25,6 +26,7 @@ fn compile_shader(
     defer allocator.free(shaderPath);
 
     const outputFile = vert_cmd.addOutputFileArg(shader);
+    vert_cmd.addArgs(shader_args);
     vert_cmd.addFileArg(b.path(shaderPath));
 
     exe.root_module.addAnonymousImport(importName, .{
@@ -39,8 +41,9 @@ fn add_shared_dependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
-    try compile_shader(allocator, b, exe, "bgr-to-ycbcr.comp", "bgr-to-ycbcr");
-    try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr-to-rgba");
+    try compile_shader(allocator, b, exe, "bgr-to-ycbcr.comp", "bgr-to-ycbcr", &.{});
+    try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr8-to-rgba", &.{"-DYCBCR_BIT_DEPTH=8"});
+    try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr10-to-rgba", &.{"-DYCBCR_BIT_DEPTH=10"});
 
     inline for (.{ "logo_blue.png", "logo_red.png", "logo_green.png" }) |logo_file| {
         exe.root_module.addAnonymousImport(logo_file, .{

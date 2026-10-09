@@ -5,7 +5,9 @@ const check_err = @import("../ffmpeg/util.zig").check_err;
 
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const VulkanRgbYuvConversionPipeline = @import("../vulkan/vulkan_rgb_yuv_conversion_pipeline.zig").VulkanRgbYuvConversionPipeline;
+const VulkanRgbYcbcrConversionPipeline = @import("../vulkan/vulkan_rgb_ycbcr_conversion_pipeline.zig").VulkanRgbYcbcrConversionPipeline;
+
+const YcbcrFormat = VulkanRgbYcbcrConversionPipeline.YcbcrFormat;
 
 /// Converts a decoded FFmpeg video frame to a RGB Vulkan image, which is
 /// stored on the GPU.
@@ -25,7 +27,8 @@ pub const VulkanVideoFrameConverter = struct {
     staging_frame: [*c]c.AVFrame,
     scale_context: [*c]c.SwsContext,
 
-    rgb_yuv_conversion_pipeline: VulkanRgbYuvConversionPipeline,
+    // Lazily initialized when the first frame is converted.
+    rgb_ycbcr_conversion_pipeline: ?VulkanRgbYcbcrConversionPipeline = null,
 
     pub fn init(
         vulkan: *Vulkan,
@@ -98,14 +101,11 @@ pub const VulkanVideoFrameConverter = struct {
         errdefer vulkan.device.freeMemory(software_memory, null);
         try vulkan.device.bindImageMemory(software_image, software_memory, 0);
 
-        const software_views = try VulkanRgbYuvConversionPipeline.create_yuv_plane_views(vulkan, software_image);
+        const software_views = try VulkanRgbYcbcrConversionPipeline.create_ycbcr_plane_views(vulkan, software_image, .nv12);
         errdefer {
             vulkan.device.destroyImageView(software_views[1], null);
             vulkan.device.destroyImageView(software_views[0], null);
         }
-
-        var rgb_yuv_conversion_pipeline = try VulkanRgbYuvConversionPipeline.init(vulkan, .yuv_to_rgb);
-        errdefer rgb_yuv_conversion_pipeline.deinit();
 
         return .{
             .vulkan = vulkan,
@@ -118,12 +118,13 @@ pub const VulkanVideoFrameConverter = struct {
             .staging_memory = staging_memory,
             .staging_frame = staging_frame,
             .scale_context = scale_context,
-            .rgb_yuv_conversion_pipeline = rgb_yuv_conversion_pipeline,
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.rgb_yuv_conversion_pipeline.deinit();
+        if (self.rgb_ycbcr_conversion_pipeline) |*pipeline| {
+            pipeline.deinit();
+        }
         c.sws_free_context(&self.scale_context);
         c.av_frame_free(&self.staging_frame);
 
@@ -137,7 +138,7 @@ pub const VulkanVideoFrameConverter = struct {
         self.vulkan.device.freeMemory(self.staging_memory, null);
     }
 
-    /// Convert a YUV AVFrame to an RGB Vulkan image.
+    /// Convert a YCbCr AVFrame to an RGB Vulkan image.
     pub fn convert(self: *Self, frame: *const c.AVFrame, output: *VulkanImageBuffer) !void {
         const wait_result = try self.vulkan.device.waitForFences(&.{output.fence}, .true, std.math.maxInt(u64));
         if (wait_result != .success) return error.WaitForFences;
@@ -154,9 +155,8 @@ pub const VulkanVideoFrameConverter = struct {
 
         const frames_context: *c.AVHWFramesContext = @ptrCast(@alignCast(frame.*.hw_frames_ctx.*.data));
         const vulkan_frames: *c.AVVulkanFramesContext = @ptrCast(@alignCast(frames_context.hwctx orelse return error.InvalidVideoFrame));
-        if (vulkan_frames.format[0] != c.VK_FORMAT_G8_B8R8_2PLANE_420_UNORM) {
-            return error.UnsupportedVideoFormat;
-        }
+        const image_format: vk.Format = @fromBackingInt(@intCast(vulkan_frames.format[0]));
+        const format = YcbcrFormat.from_vk_format(image_format) orelse return error.UnsupportedVideoFormat;
 
         const vulkan_frame: *c.AVVkFrame = @ptrCast(@alignCast(frame.*.data[0]));
         const lock_frame = vulkan_frames.lock_frame orelse return error.InvalidVideoFrame;
@@ -172,7 +172,7 @@ pub const VulkanVideoFrameConverter = struct {
         }
 
         const image: vk.Image = @fromBackingInt(@intCast(@intFromPtr(vulkan_frame.img[0].?)));
-        const views = try VulkanRgbYuvConversionPipeline.create_yuv_plane_views(self.vulkan, image);
+        const views = try VulkanRgbYcbcrConversionPipeline.create_ycbcr_plane_views(self.vulkan, image, format);
         defer {
             self.vulkan.device.destroyImageView(views[1], null);
             self.vulkan.device.destroyImageView(views[0], null);
@@ -180,6 +180,7 @@ pub const VulkanVideoFrameConverter = struct {
 
         try self.record_commands(.{
             .output = output,
+            .format = format,
             .input_image = image,
             .input_views = views,
             .input_layout = @fromBackingInt(@intCast(vulkan_frame.layout[0])),
@@ -219,6 +220,7 @@ pub const VulkanVideoFrameConverter = struct {
         try check_err(c.sws_scale_frame(self.scale_context, self.staging_frame, frame));
         try self.record_commands(.{
             .output = output,
+            .format = .nv12,
             .input_image = self.software_image,
             .input_views = self.software_views,
             .input_layout = if (self.software_image_initialized) .general else .undefined,
@@ -241,12 +243,21 @@ pub const VulkanVideoFrameConverter = struct {
 
     fn record_commands(self: *Self, args: struct {
         output: *VulkanImageBuffer,
+        format: YcbcrFormat,
         input_image: vk.Image,
         input_views: [2]vk.ImageView,
         input_layout: vk.ImageLayout,
         input_access: vk.AccessFlags2,
         upload_software_frame: bool = false,
     }) !void {
+        if (self.rgb_ycbcr_conversion_pipeline == null) {
+            self.rgb_ycbcr_conversion_pipeline = try VulkanRgbYcbcrConversionPipeline.init(
+                self.vulkan,
+                .ycbcr_to_rgb,
+                args.format,
+            );
+        }
+
         try self.vulkan.device.resetCommandPool(args.output.command_pool, .{});
         try self.vulkan.device.beginCommandBuffer(args.output.command_buffer, &.{
             .flags = .{ .one_time_submit = true },
@@ -352,7 +363,7 @@ pub const VulkanVideoFrameConverter = struct {
             .p_image_memory_barriers = &before_compute,
         });
 
-        self.rgb_yuv_conversion_pipeline.record_commands(
+        self.rgb_ycbcr_conversion_pipeline.?.record_commands(
             args.output.command_buffer,
             args.output.image_view,
             args.input_views[0],

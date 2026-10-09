@@ -1,7 +1,14 @@
 #version 450
 
+#if YCBCR_BIT_DEPTH == 8
 layout(binding = 0, r8) uniform readonly image2D yImage;
 layout(binding = 1, rg8) uniform readonly image2D uvImage;
+#elif YCBCR_BIT_DEPTH == 10
+layout(binding = 0, r16) uniform readonly image2D yImage;
+layout(binding = 1, rg16) uniform readonly image2D uvImage;
+#else
+#error YCBCR_BIT_DEPTH must be 8 or 10
+#endif
 layout(binding = 2, rgba8) uniform writeonly image2D outputImage;
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
@@ -12,8 +19,17 @@ void main() {
         return;
     }
 
-    float y = (imageLoad(yImage, position).r - 16.0 / 255.0) * 255.0 / 219.0;
-    vec2 uv = imageLoad(uvImage, position / 2).rg - vec2(0.5);
+    float ySample = imageLoad(yImage, position).r;
+    vec2 uvSample = imageLoad(uvImage, position / 2).rg;
+#if YCBCR_BIT_DEPTH == 8
+    float y = (ySample - 16.0 / 255.0) * 255.0 / 219.0;
+    vec2 uv = uvSample - vec2(0.5);
+#else
+    float yCode = ySample * (65535.0 / 64.0);
+    vec2 uvCode = uvSample * (65535.0 / 64.0);
+    float y = (yCode - 64.0) / 876.0;
+    vec2 uv = (uvCode - vec2(512.0)) / 896.0;
+#endif
     vec3 rgb = vec3(
         y + 1.5748 * uv.y,
         y - 0.1873 * uv.x - 0.4681 * uv.y,

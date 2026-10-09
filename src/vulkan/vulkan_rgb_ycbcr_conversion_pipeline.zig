@@ -3,19 +3,36 @@ const assert = std.debug.assert;
 const vk = @import("vulkan");
 
 const Vulkan = @import("vulkan.zig").Vulkan;
-const rgb_to_yuv_shader align(@alignOf(u32)) = @embedFile("bgr-to-ycbcr").*;
-const yuv_to_rgb_shader align(@alignOf(u32)) = @embedFile("ycbcr-to-rgba").*;
+const rgb_to_ycbcr_shader align(@alignOf(u32)) = @embedFile("bgr-to-ycbcr").*;
+const ycbcr10_to_rgb_shader align(@alignOf(u32)) = @embedFile("ycbcr10-to-rgba").*;
+const ycbcr8_to_rgb_shader align(@alignOf(u32)) = @embedFile("ycbcr8-to-rgba").*;
 comptime {
-    assert(rgb_to_yuv_shader.len > 0);
-    assert(yuv_to_rgb_shader.len > 0);
+    assert(rgb_to_ycbcr_shader.len > 0);
+    assert(ycbcr8_to_rgb_shader.len > 0);
+    assert(ycbcr10_to_rgb_shader.len > 0);
 }
 
-pub const VulkanRgbYuvConversionPipeline = struct {
+pub const VulkanRgbYcbcrConversionPipeline = struct {
     const Self = @This();
 
-    pub const ConversionType = enum {
-        rgb_to_yuv,
-        yuv_to_rgb,
+    pub const Direction = enum {
+        rgb_to_ycbcr,
+        ycbcr_to_rgb,
+    };
+
+    pub const YcbcrFormat = enum {
+        /// 8 bit
+        nv12,
+        /// 10 bit
+        p010,
+
+        pub fn from_vk_format(format: vk.Format) ?YcbcrFormat {
+            return switch (format) {
+                .g8_b8r8_2plane_420_unorm => .nv12,
+                .g10x6_b10x6r10x6_2plane_420_unorm_3pack16 => .p010,
+                else => null,
+            };
+        }
     };
 
     const PushConstants = extern struct {
@@ -24,14 +41,22 @@ pub const VulkanRgbYuvConversionPipeline = struct {
     };
 
     vulkan: *Vulkan,
-    conversion_type: ConversionType,
+    direction: Direction,
     descriptor_set_layout: vk.DescriptorSetLayout,
     descriptor_pool: vk.DescriptorPool,
     descriptor_set: vk.DescriptorSet,
     pipeline_layout: vk.PipelineLayout,
     pipeline: vk.Pipeline,
 
-    pub fn init(vulkan: *Vulkan, conversion_type: ConversionType) !Self {
+    pub fn init(vulkan: *Vulkan, direction: Direction, format: YcbcrFormat) !Self {
+        const shader: []align(@alignOf(u32)) const u8 = switch (direction) {
+            .rgb_to_ycbcr => if (format == .nv12) &rgb_to_ycbcr_shader else return error.UnsupportedVideoFormat,
+            .ycbcr_to_rgb => switch (format) {
+                .nv12 => &ycbcr8_to_rgb_shader,
+                .p010 => &ycbcr10_to_rgb_shader,
+            },
+        };
+
         var bindings = std.mem.zeroes([3]vk.DescriptorSetLayoutBinding);
         for (&bindings, 0..) |*binding, index| {
             binding.* = .{
@@ -78,11 +103,6 @@ pub const VulkanRgbYuvConversionPipeline = struct {
         }, null);
         errdefer vulkan.device.destroyPipelineLayout(pipeline_layout, null);
 
-        const shader: []align(@alignOf(u32)) const u8 = switch (conversion_type) {
-            .rgb_to_yuv => &rgb_to_yuv_shader,
-            .yuv_to_rgb => &yuv_to_rgb_shader,
-        };
-
         const shader_module = try vulkan.device.createShaderModule(&.{
             .code_size = shader.len,
             .p_code = @ptrCast(shader.ptr),
@@ -104,7 +124,7 @@ pub const VulkanRgbYuvConversionPipeline = struct {
 
         return .{
             .vulkan = vulkan,
-            .conversion_type = conversion_type,
+            .direction = direction,
             .descriptor_set_layout = descriptor_set_layout,
             .descriptor_pool = descriptor_pool,
             .descriptor_set = descriptor_set,
@@ -129,9 +149,9 @@ pub const VulkanRgbYuvConversionPipeline = struct {
         width: u32,
         height: u32,
     ) void {
-        const image_views = switch (self.conversion_type) {
-            .rgb_to_yuv => [3]vk.ImageView{ rgb_view, y_view, uv_view },
-            .yuv_to_rgb => [3]vk.ImageView{ y_view, uv_view, rgb_view },
+        const image_views = switch (self.direction) {
+            .rgb_to_ycbcr => [3]vk.ImageView{ rgb_view, y_view, uv_view },
+            .ycbcr_to_rgb => [3]vk.ImageView{ y_view, uv_view, rgb_view },
         };
         var image_infos: [3]vk.DescriptorImageInfo = undefined;
         var writes = std.mem.zeroes([3]vk.WriteDescriptorSet);
@@ -180,13 +200,13 @@ pub const VulkanRgbYuvConversionPipeline = struct {
         );
     }
 
-    pub fn create_yuv_plane_views(vulkan: *Vulkan, image: vk.Image) ![2]vk.ImageView {
+    pub fn create_ycbcr_plane_views(vulkan: *Vulkan, image: vk.Image, format: YcbcrFormat) ![2]vk.ImageView {
         const view_usage = vk.ImageViewUsageCreateInfo{ .usage = .{ .storage = true } };
         var create_info = vk.ImageViewCreateInfo{
             .p_next = &view_usage,
             .image = image,
             .view_type = .@"2d",
-            .format = .r8_unorm,
+            .format = if (format == .p010) .r16_unorm else .r8_unorm,
             .components = .{
                 .r = .identity,
                 .g = .identity,
@@ -204,7 +224,7 @@ pub const VulkanRgbYuvConversionPipeline = struct {
         const y_view = try vulkan.device.createImageView(&create_info, null);
         errdefer vulkan.device.destroyImageView(y_view, null);
 
-        create_info.format = .r8g8_unorm;
+        create_info.format = if (format == .p010) .r16g16_unorm else .r8g8_unorm;
         create_info.subresource_range.aspect_mask = .{ .plane_1 = true };
         const uv_view = try vulkan.device.createImageView(&create_info, null);
         return .{ y_view, uv_view };
