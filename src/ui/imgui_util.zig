@@ -123,3 +123,53 @@ pub fn push_button_color(color: Colors.Enum) void {
 pub fn pop_button_color() void {
     imguiz.ImGui_PopStyleColorEx(3);
 }
+
+pub fn draw_bit_rate(bit_rate: ?i64) void {
+    if (bit_rate == null or bit_rate.? <= 0) {
+        imguiz.ImGui_TextDisabled("Unknown");
+        return;
+    }
+    const rate: f64 = @floatFromInt(bit_rate.?);
+    if (bit_rate.? >= 1_000_000) {
+        imguiz.ImGui_Text("%.2f Mbps", rate / 1_000_000);
+    } else {
+        imguiz.ImGui_Text("%.1f kbps", rate / 1000);
+    }
+}
+
+pub fn format_play_time(elapsed_ns: i64, trim_duration_ns: i64) [64:0]u8 {
+    const duration_ns = @max(0, trim_duration_ns);
+    const elapsed_ms: u64 = @intCast(@divFloor(std.math.clamp(elapsed_ns, 0, duration_ns), std.time.ns_per_ms));
+    const trim_ms: u64 = @intCast(@divFloor(duration_ns, std.time.ns_per_ms));
+    var buffer: [64:0]u8 = @splat(0);
+    _ = std.fmt.bufPrint(
+        &buffer,
+        "{d}:{d:0>2}.{d:0>3} / {d}:{d:0>2}.{d:0>3}",
+        .{
+            elapsed_ms / 60_000,
+            (elapsed_ms / 1000) % 60,
+            elapsed_ms % 1000,
+            trim_ms / 60_000,
+            (trim_ms / 1000) % 60,
+            trim_ms % 1000,
+        },
+    ) catch @panic("Play time label exceeds its fixed buffer");
+    return buffer;
+}
+
+test "imgui_util - format_play_time" {
+    const cases = .{
+        .{ 0, 32_000, "0:00.000 / 0:32.000" },
+        .{ 1001, 32_005, "0:01.001 / 0:32.005" },
+        .{ 65_123, 150_456, "1:05.123 / 2:30.456" },
+        .{ 3_661_007, 3_725_999, "61:01.007 / 62:05.999" },
+        .{ -1, 32_000, "0:00.000 / 0:32.000" },
+        .{ 40_000, 32_123, "0:32.123 / 0:32.123" },
+        .{ 0, 0, "0:00.000 / 0:00.000" },
+        .{ 59_999, 60_000, "0:59.999 / 1:00.000" },
+    };
+    inline for (cases) |case| {
+        const label = format_play_time(case[0] * std.time.ns_per_ms, case[1] * std.time.ns_per_ms);
+        try std.testing.expectEqualStrings(case[2], std.mem.sliceTo(&label, 0));
+    }
+}

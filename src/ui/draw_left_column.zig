@@ -277,7 +277,11 @@ fn draw_capture_settings(store: *Store, state: *Store.State) !void {
     {
         c.ImGui_Text("Bitrate");
         c.ImGui_SameLine();
-        imgui_util.help_marker("Capture bitrate in Kbps. Higher bitrate increases quality, but also increases size.");
+        imgui_util.help_marker(
+            \\Capture bitrate in Kbps. Higher bitrate increases quality, but also increases size.
+            \\
+            \\Spacecap prefers variable bitrate, so this will typically just be the target bitrate. It is not fixed.
+        );
         imgui_util.set_next_item_width_fill();
         var capture_bit_rate = capture_bit_rate_local orelse current_capture_bit_rate;
         if (c.ImGui_InputIntEx(
