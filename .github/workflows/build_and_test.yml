@@ -50,5 +50,6 @@ jobs:
           path: |
             zig-out/linux/spacecap
             zig-out/linux/spacecap-linux-x86_64.AppImage
+            zig-out/linux/spacecap-linux-x86_64.debug
           retention-days: 7
           if-no-files-found: error
