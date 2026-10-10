@@ -7,14 +7,14 @@ const VideoDecoder = @import("../ffmpeg/video_decoder.zig").VideoDecoder;
 const ffmpeg_util = @import("../ffmpeg/util.zig");
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
-const VulkanImageRingBuffer = @import("../vulkan/vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
+const VulkanImageBufferPool = @import("../vulkan/vulkan_image_buffer_pool.zig").VulkanImageBufferPool;
 const VideoEditorAudio = @import("video_editor_audio.zig").VideoEditorAudio;
 const VulkanVideoFrameConverter = @import("../vulkan/vulkan_video_frame_converter.zig").VulkanVideoFrameConverter;
 const Arc = @import("../arc.zig").Arc;
 const String = @import("../string.zig").String;
 
 /// Manages a single video editor instance, including demuxing, decoding, and
-/// the frame ring buffer. The frames for the video are prepared in the worker.
+/// the image buffer pool. The frames for the video are prepared in the worker.
 pub const VideoEditorSession = struct {
     const Self = @This();
     const log = std.log.scoped(.video_editor_session);
@@ -37,7 +37,7 @@ pub const VideoEditorSession = struct {
     vulkan: *Vulkan,
     file_path: String,
     worker: *Worker,
-    ring_buffer: *VulkanImageRingBuffer,
+    image_buffer_pool: *VulkanImageBufferPool,
     width: u32,
     height: u32,
     duration_ns: i64,
@@ -70,7 +70,7 @@ pub const VideoEditorSession = struct {
         var decoder = try VideoDecoder.init(vulkan, codec_parameters);
         errdefer decoder.deinit();
 
-        const ring_buffer = try VulkanImageRingBuffer.init(.{
+        const image_buffer_pool = try VulkanImageBufferPool.init(.{
             .allocator = allocator,
             .io = vulkan.io,
             .vulkan = vulkan,
@@ -88,7 +88,7 @@ pub const VideoEditorSession = struct {
             },
             .src_queue_family_index = vulkan.graphics_queue.family,
         });
-        errdefer ring_buffer.deinit();
+        errdefer image_buffer_pool.deinit();
 
         var converter = try VulkanVideoFrameConverter.init(vulkan, video_width, video_height);
         errdefer converter.deinit();
@@ -107,7 +107,7 @@ pub const VideoEditorSession = struct {
             .demuxer = demuxer,
             .decoder = decoder,
             .converter = converter,
-            .ring_buffer = ring_buffer,
+            .image_buffer_pool = image_buffer_pool,
             .time_base = demuxer.video_time_base() orelse return error.MissingVideoStream,
             .duration_ns = duration_ns,
             .timeline_start_ns = timeline_start_ns,
@@ -121,7 +121,7 @@ pub const VideoEditorSession = struct {
             .vulkan = vulkan,
             .file_path = owned_file_path,
             .worker = worker,
-            .ring_buffer = ring_buffer,
+            .image_buffer_pool = image_buffer_pool,
             .width = video_width,
             .height = video_height,
             .duration_ns = duration_ns,
@@ -145,7 +145,7 @@ pub const VideoEditorSession = struct {
         self.allocator.destroy(self.worker);
 
         self.vulkan.wait_for_ui_fences();
-        self.ring_buffer.deinit();
+        self.image_buffer_pool.deinit();
         self.file_path.deinit();
     }
 
@@ -208,7 +208,7 @@ pub const VideoEditorSession = struct {
             demuxer: Demuxer,
             decoder: VideoDecoder,
             converter: VulkanVideoFrameConverter,
-            ring_buffer: *VulkanImageRingBuffer,
+            image_buffer_pool: *VulkanImageBufferPool,
             time_base: c.AVRational,
             duration_ns: i64,
             timeline_start_ns: i64,
@@ -223,7 +223,7 @@ pub const VideoEditorSession = struct {
         demuxer: Demuxer,
         decoder: VideoDecoder,
         converter: VulkanVideoFrameConverter,
-        ring_buffer: *VulkanImageRingBuffer,
+        image_buffer_pool: *VulkanImageBufferPool,
 
         time_base: c.AVRational,
         duration_ns: i64,
@@ -273,7 +273,7 @@ pub const VideoEditorSession = struct {
                 .demuxer = args.demuxer,
                 .decoder = args.decoder,
                 .converter = args.converter,
-                .ring_buffer = args.ring_buffer,
+                .image_buffer_pool = args.image_buffer_pool,
                 .time_base = args.time_base,
                 .duration_ns = args.duration_ns,
                 .timeline_start_ns = args.timeline_start_ns,
@@ -506,7 +506,7 @@ pub const VideoEditorSession = struct {
                 if (relative_pts_ns <= self.playback_position_ns.load(.acquire)) {
                     continue;
                 }
-                try self.submit_frame_to_ring_buffer(frame, pts_ns);
+                try self.submit_frame_to_pool(frame, pts_ns);
                 break;
             }
         }
@@ -529,7 +529,7 @@ pub const VideoEditorSession = struct {
 
                 // If it is equal to the target, then present.
                 if (pts_ns == target_pts_ns) {
-                    try self.submit_frame_to_ring_buffer(frame, pts_ns);
+                    try self.submit_frame_to_pool(frame, pts_ns);
                     return;
                 }
 
@@ -537,9 +537,9 @@ pub const VideoEditorSession = struct {
                 // present if there was no previous.
                 if (pts_ns > target_pts_ns) {
                     if (previous_frame != null) {
-                        try self.submit_frame_to_ring_buffer(previous_frame, previous_pts_ns);
+                        try self.submit_frame_to_pool(previous_frame, previous_pts_ns);
                     } else {
-                        try self.submit_frame_to_ring_buffer(frame, pts_ns);
+                        try self.submit_frame_to_pool(frame, pts_ns);
                     }
                     return;
                 }
@@ -559,7 +559,7 @@ pub const VideoEditorSession = struct {
             // We get to this point if there are no more frames to decode.
             // This will be the last frame.
             if (previous_frame != null) {
-                try self.submit_frame_to_ring_buffer(previous_frame, previous_pts_ns);
+                try self.submit_frame_to_pool(previous_frame, previous_pts_ns);
             }
         }
 
@@ -569,7 +569,7 @@ pub const VideoEditorSession = struct {
         /// (e.g. scrubbing, pause, etc.), which will for it to return.
         ///
         /// NOTE: This does play the audio, however, it does not directly play
-        /// the video. It populates a ring buffer, which is then used to
+        /// the video. It populates an image buffer pool, which is then used to
         /// present frames on the UI.
         fn play_audio_and_video(self: *Worker, position_ns: i64) !PlayResult {
             const target_pts_ns = self.timeline_start_ns + position_ns;
@@ -604,7 +604,7 @@ pub const VideoEditorSession = struct {
                 return .interrupted;
             }
 
-            try self.submit_frame_to_ring_buffer(first_frame, first_video_frame_pts_ns);
+            try self.submit_frame_to_pool(first_frame, first_video_frame_pts_ns);
 
             while (!self.stop.load(.acquire)) {
                 if (self.playback_interrupted()) {
@@ -628,7 +628,7 @@ pub const VideoEditorSession = struct {
                     return .interrupted;
                 }
 
-                try self.submit_frame_to_ring_buffer(frame, pts_ns);
+                try self.submit_frame_to_pool(frame, pts_ns);
             }
 
             if (!try self.finish_audio()) {
@@ -756,16 +756,16 @@ pub const VideoEditorSession = struct {
             }
         }
 
-        /// Convert the decoded YUV image to RGB and then add it to the ring buffer.
-        /// The UI then accesses the ring buffer to display the image.
-        fn submit_frame_to_ring_buffer(self: *Worker, frame: *const c.AVFrame, pts_ns: i64) !void {
-            var output_ref = self.ring_buffer.get_available_buffer() orelse return;
+        /// Convert the decoded YUV image to RGB and then add it to the image buffer pool.
+        /// The UI then accesses the image buffer pool to display the image.
+        fn submit_frame_to_pool(self: *Worker, frame: *const c.AVFrame, pts_ns: i64) !void {
+            var output_ref = self.image_buffer_pool.get_available_buffer() orelse return;
             defer output_ref.deinit();
             const output = output_ref.as_ptr();
-            errdefer output.in_use.store(false, .release);
 
             try self.converter.convert(frame, output);
-            self.ring_buffer.set_most_recent_buffer(output, pts_ns);
+            output.pts_ns = pts_ns;
+            self.image_buffer_pool.set_buffer(output);
             self.playback_position_ns.store(
                 std.math.clamp(pts_ns - self.timeline_start_ns, 0, self.duration_ns),
                 .release,

@@ -50,6 +50,11 @@ pub fn Arc(comptime T: type) type {
             return self.*;
         }
 
+        /// If the ref count is 1.
+        pub fn is_unique(self: *const Self) bool {
+            return self.internal.ref_count.load(.acquire) == 1;
+        }
+
         /// Get a pointer to the underlying data.
         pub fn as_ptr(self: *const Self) *T {
             return &self.internal.value;
@@ -88,6 +93,24 @@ test "Arc - clone" {
     cloned_data.deinit();
 
     try std.testing.expectEqual(data.as_ptr(), cloned_data.as_ptr());
+}
+
+test "Arc - is_unique tracks cloned references" {
+    const allocator = std.testing.allocator;
+    const data: Arc(TestUtil.Data) = try .init(allocator, try .init(allocator, "test1"));
+    defer data.deinit();
+
+    try std.testing.expect(data.is_unique());
+
+    {
+        const cloned_data = data.clone();
+        defer cloned_data.deinit();
+
+        try std.testing.expect(!data.is_unique());
+        try std.testing.expect(!cloned_data.is_unique());
+    }
+
+    try std.testing.expect(data.is_unique());
 }
 
 test "Arc - clone on multiple threads (with Mutex)" {

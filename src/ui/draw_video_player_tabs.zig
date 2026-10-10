@@ -4,7 +4,7 @@ const dockspace = @import("./dockspace.zig");
 const imgui_util = @import("./imgui_util.zig");
 const Store = @import("../store/store.zig").Store;
 const Mutex = @import("../mutex.zig").Mutex;
-const VulkanImageRingBuffer = @import("../vulkan/vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
+const VulkanImageBufferPool = @import("../vulkan/vulkan_image_buffer_pool.zig").VulkanImageBufferPool;
 const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const Arc = @import("../arc.zig").Arc;
 const Colors = @import("./theme.zig").Colors;
@@ -30,7 +30,7 @@ var previous_tab_selection_generation_id: u64 = 0;
 pub const CapturePreviewArgs = union(enum) {
     empty,
     capture_not_supported,
-    display_frame: VulkanImageRingBuffer.DisplayFrame,
+    display_frame: VulkanImageBufferPool.DisplayFrame,
 };
 
 /// Draw the video player image, with tabs (capture preview or video editor).
@@ -39,7 +39,7 @@ pub const CapturePreviewArgs = union(enum) {
 pub fn draw_video_player_tabs(
     store: *Store,
     state: *Store.State,
-    capture_preview_ring_buffer: *Mutex(?*VulkanImageRingBuffer),
+    capture_preview_image_buffer_pool: *Mutex(?*VulkanImageBufferPool),
 ) !DrawResult {
     var active_tab: ActiveTab = .none;
     var display_frame_buffer: ?Arc(VulkanImageBuffer) = null;
@@ -94,10 +94,10 @@ pub fn draw_video_player_tabs(
                 if (!state.capture.is_video_capture_supported) {
                     break :blk .capture_not_supported;
                 } else if (state.capture.video_capture_active) {
-                    const capture_preview_ring_buffer_locked = capture_preview_ring_buffer.lock();
-                    defer capture_preview_ring_buffer_locked.unlock();
-                    if (capture_preview_ring_buffer_locked.unwrap()) |_capture_preview_ring_buffer| {
-                        if (try _capture_preview_ring_buffer.get_latest_display_frame()) |display_frame| {
+                    const capture_preview_image_buffer_pool_locked = capture_preview_image_buffer_pool.lock();
+                    defer capture_preview_image_buffer_pool_locked.unlock();
+                    if (capture_preview_image_buffer_pool_locked.unwrap()) |_capture_preview_image_buffer_pool| {
+                        if (try _capture_preview_image_buffer_pool.get_latest_display_frame()) |display_frame| {
                             display_frame_buffer = display_frame.buffer;
                             break :blk .{ .display_frame = display_frame };
                         }
@@ -160,8 +160,8 @@ pub fn draw_video_player_tabs(
                 defer c.ImGui_EndChild();
 
                 if (display_frame_buffer == null) {
-                    const display_frame: ?VulkanImageRingBuffer.DisplayFrame = blk: {
-                        if (try entry.value_ptr.as_ptr().ring_buffer.get_latest_display_frame()) |display_frame| {
+                    const display_frame: ?VulkanImageBufferPool.DisplayFrame = blk: {
+                        if (try entry.value_ptr.as_ptr().image_buffer_pool.get_latest_display_frame()) |display_frame| {
                             display_frame_buffer = display_frame.buffer;
                             break :blk display_frame;
                         }
@@ -221,7 +221,7 @@ fn draw_capture_preview(store: *Store, display_frame: CapturePreviewArgs) !void 
     }
 }
 
-fn draw_display_frame(display_frame: VulkanImageRingBuffer.DisplayFrame) void {
+fn draw_display_frame(display_frame: VulkanImageBufferPool.DisplayFrame) void {
     const container_size = c.ImGui_GetContentRegionAvail();
     const image_width: f32 = @floatFromInt(display_frame.width);
     const image_height: f32 = @floatFromInt(display_frame.height);

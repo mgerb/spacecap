@@ -61,9 +61,11 @@ pub const PipewireVideo = struct {
     pipewire_frame_buffer_manager: ?*PipewireFrameBufferManager = null,
     /// Stores all information about the video stream.
     info: ?pw.spa_video_info_raw = null,
-    /// This channel is used to communicate from the main pipewire thread
-    /// to the worker thread. The worker thread must be separate from the
-    /// main pipewire loop, because it blocks and waits for the consumer.
+    /// This channel is used to communicate from the main pipewire thread to
+    /// the worker thread. The worker thread must be separate from the main
+    /// pipewire loop, because it blocks and waits for the consumer. We use a
+    /// channel here because it has thread safety baked in. However, it does
+    /// only buffer one item so we can thing of it as a single image buffer.
     vulkan_image_buffer_chan: VulkanImageBufferChan,
     previous_frame_timestamp_ns: ?i128 = null,
     // Keep track of the log count so we don't spam the log.
@@ -144,12 +146,12 @@ pub const PipewireVideo = struct {
             self.thread_loop = null;
         }
 
-        self.vulkan.wait_for_capture_ring_buffer_fences();
+        self.vulkan.wait_for_capture_image_buffer_pool_fences();
         if (self.pipewire_frame_buffer_manager) |frame_buffer_manager| {
             frame_buffer_manager.deinit();
         }
 
-        self.vulkan.destroy_capture_ring_buffer();
+        self.vulkan.destroy_capture_image_buffer_pool();
         self.portal.deinit();
     }
 
@@ -451,24 +453,25 @@ pub const PipewireVideo = struct {
         };
 
         const copy_data = blk: {
-            const capture_ring_buffer = self.vulkan.capture_ring_buffer.lock();
-            defer capture_ring_buffer.unlock();
-            const ring_buffer = capture_ring_buffer.unwrap() orelse {
-                // Ring buffer can be temporarily unavailable during format reconfiguration.
+            const capture_image_buffer_pool = self.vulkan.capture_image_buffer_pool.lock();
+            defer capture_image_buffer_pool.unlock();
+            const image_buffer_pool = capture_image_buffer_pool.unwrap() orelse {
+                // Image buffer pool can be temporarily unavailable during format reconfiguration.
                 return;
             };
-            break :blk ring_buffer.copy_image_to_ring_buffer(.{
+            break :blk image_buffer_pool.copy_image_to_pool(.{
                 .src_image = vulkan_image.frame_buffer.frame_buffer_image.?.image,
                 .src_width = self.info.?.size.width,
                 .src_height = self.info.?.size.height,
                 .wait_semaphore = vulkan_image.wait_semaphore,
                 .use_signal_semaphore = false,
-                .timestamp_ns = timestamp_ns,
+                .pts_ns = timestamp_ns,
             }) catch |err| {
-                log.err("[stream_process_callback] copyImageToRingBuffer error: {}", .{err});
+                log.err("[stream_process_callback] copy_image_to_pool error: {}", .{err});
                 return;
             };
         };
+        defer if (copy_data.vulkan_image_buffer) |buffer| buffer.deinit();
 
         if (copy_data.fence) |fence| {
             _ = self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64)) catch |err| {
@@ -477,8 +480,11 @@ pub const PipewireVideo = struct {
         }
 
         if (copy_data.vulkan_image_buffer) |vulkan_image_buffer| {
+            // The chan size is 1 so that we can drain and send here. It will
+            // always be non-blocking - stream_process_callback CANNOT block.
             self.vulkan_image_buffer_chan.drain();
             self.vulkan_image_buffer_chan.send(vulkan_image_buffer.clone()) catch |err| {
+                vulkan_image_buffer.deinit();
                 if (err == ChanError.Closed) {
                     log.debug("[stream_process_callback] vulkan image buffer chan closed", .{});
                 } else {
@@ -631,10 +637,10 @@ pub const PipewireVideo = struct {
             return;
         }
 
-        self.vulkan.destroy_capture_ring_buffer();
+        self.vulkan.destroy_capture_image_buffer_pool();
         // TODO: Figure out how to bubble this error up and display it on the UI.
-        self.vulkan.init_capture_ring_buffer(self.info.?.size.width, self.info.?.size.height) catch |err| {
-            log.err("[stream_param_changed_callback] initCaptureRingBuffer error: {}", .{err});
+        self.vulkan.init_capture_image_buffer_pool(self.info.?.size.width, self.info.?.size.height) catch |err| {
+            log.err("[stream_param_changed_callback] init_capture_image_buffer_pool error: {}", .{err});
             return;
         };
 
