@@ -1100,9 +1100,24 @@ pub const Vulkan = struct {
             .offset = 0,
             .size = size,
         };
+        // Make sure the image is back to its original layout after the copy.
+        const image_restore_barrier = vk.ImageMemoryBarrier2{
+            .src_stage_mask = .{ .all_transfer = true },
+            .src_access_mask = .{ .transfer_read = true },
+            .dst_stage_mask = args.src_stage_mask,
+            .dst_access_mask = args.src_access_mask,
+            .old_layout = .transfer_src_optimal,
+            .new_layout = image_layout,
+            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresource_range = color_subresource_range,
+        };
         const read_dep_info = vk.DependencyInfoKHR{
             .buffer_memory_barrier_count = 1,
             .p_buffer_memory_barriers = @ptrCast(&buffer_read_barrier),
+            .image_memory_barrier_count = 1,
+            .p_image_memory_barriers = @ptrCast(&image_restore_barrier),
         };
         self.device.cmdPipelineBarrier2(command_buffer, &read_dep_info);
 

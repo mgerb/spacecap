@@ -6,6 +6,7 @@ const String = @import("../string.zig").String;
 const VideoEditorSession = @import("./video_editor_session.zig").VideoEditorSession;
 const SessionId = VideoEditorSession.SessionId;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
+const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const VulkanImageBufferPool = @import("../vulkan/vulkan_image_buffer_pool.zig").VulkanImageBufferPool;
 const exporter = @import("../exporter.zig");
 
@@ -58,6 +59,7 @@ pub const VideoEditorStore = struct {
         export_trimmed_video: ExportTrimmedVideoPayload,
         export_trimmed_video_success: SessionId,
         export_trimmed_video_fail: SessionId,
+        screenshot: SessionId,
 
         pub const effects = .{
             .scrub = .{effect_wake_worker},
@@ -68,6 +70,7 @@ pub const VideoEditorStore = struct {
             .step_previous_frame = .{effect_wake_worker},
             .step_next_frame = .{effect_wake_worker},
             .export_trimmed_video = .{effect_export_trimmed_video},
+            .screenshot = .{effect_screenshot},
         };
 
         pub fn deinit(self: *@This()) void {
@@ -264,6 +267,7 @@ pub const VideoEditorStore = struct {
                             session.as_ptr().is_exporting = false;
                         }
                     },
+                    else => {},
                 }
             },
             else => {},
@@ -316,6 +320,46 @@ pub const VideoEditorStore = struct {
         session.as_ptr().wake_worker();
     }
 
+    fn effect_screenshot(store: *Store, session_id: SessionId) !void {
+        var session, var output_directory = blk: {
+            const state_locked = store.state.lock();
+            defer state_locked.unlock();
+            const state = state_locked.unwrap_ptr();
+            const state_session = state.video_editor.sessions.get(session_id) orelse {
+                log.err("[effect_screenshot] unable to get session", .{});
+                return;
+            };
+            const output_directory = try state.user_settings.user_settings.screenshot_output_directory.?.clone(store.allocator);
+            break :blk .{ state_session.clone(), output_directory };
+        };
+        defer session.deinit();
+        defer output_directory.deinit();
+
+        const image_buffer = session.as_ptr().image_buffer_pool.get_most_recent_buffer() orelse {
+            log.err("[effect_screenshot] most recent buffer not available", .{});
+            return;
+        };
+        defer image_buffer.deinit();
+
+        const image = image_buffer.as_ptr();
+        const rgba = try image.copy_image_to_cpu_buffer(store.allocator);
+        defer store.allocator.free(rgba);
+
+        const file_path = try exporter.export_rgba_image_to_file(
+            store.allocator,
+            store.io,
+            image.width,
+            image.height,
+            rgba,
+            output_directory.bytes,
+        );
+        defer store.allocator.free(file_path);
+
+        log.info("[effect_screenshot] screenshot saved: {s}", .{file_path});
+        store.dispatch(.{ .file_browser = .{ .mark_file_new = try .init(store.allocator, file_path) } });
+        store.dispatch(.{ .file_browser = .load_files });
+    }
+
     fn effect_export_trimmed_video(store: *Store, payload: ExportTrimmedVideoPayload) !void {
         errdefer store.dispatch(.{
             .video_editor = .{ .export_trimmed_video_fail = payload.session_id },
@@ -358,11 +402,11 @@ pub const VideoEditorStore = struct {
 };
 
 const TestUtil = struct {
-    const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
+    const imguiz = @import("imguiz").imguiz;
     const Digest = [std.crypto.hash.sha2.Sha256.digest_length]u8;
     const Fixture = struct {
         file_path: []const u8,
-        /// Hash of the raw decoded frame data that we are testing for.
+        /// Hash of the raw decoded RGBA frame data that we are testing for.
         expected_hash: Digest,
     };
     const fixtures = [_]Fixture{
@@ -441,9 +485,28 @@ const TestUtil = struct {
         }
     }
 
-    fn deinit_frame(buffer: *const Arc(VulkanImageBuffer)) void {
-        buffer.as_ptr().in_use.store(false, .release);
-        buffer.deinit();
+    /// Read a screenshot file, decode the RGBA data, and then compare the hash
+    /// to the fixture hash.
+    fn expect_screenshot(path: []const u8, expected_hash: Digest) !void {
+        const path_z = try std.testing.allocator.dupeSentinel(u8, path, 0);
+        defer std.testing.allocator.free(path_z);
+        const surface = imguiz.SDL_LoadPNG(path_z) orelse return error.PngDecodeFailed;
+        defer imguiz.SDL_DestroySurface(surface);
+        const rgba_surface = imguiz.SDL_ConvertSurface(surface, imguiz.SDL_PIXELFORMAT_RGBA32) orelse return error.ImageConversionFailed;
+        defer imguiz.SDL_DestroySurface(rgba_surface);
+
+        try std.testing.expectEqual(320, rgba_surface.*.w);
+        try std.testing.expectEqual(224, rgba_surface.*.h);
+        var hash = std.crypto.hash.sha2.Sha256.init(.{});
+        const row_bytes: usize = @intCast(rgba_surface.*.w * 4);
+        const stride: usize = @intCast(rgba_surface.*.pitch);
+        const pixels: [*]const u8 = @ptrCast(rgba_surface.*.pixels);
+        for (0..@intCast(rgba_surface.*.h)) |row| {
+            hash.update(pixels[row * stride .. row * stride + row_bytes]);
+        }
+        var actual_hash: Digest = undefined;
+        hash.final(&actual_hash);
+        try std.testing.expectEqual(expected_hash, actual_hash);
     }
 };
 
@@ -580,5 +643,55 @@ test "VideoEditorStore - step next, previous, then close session" {
         store.dispatch(.{ .video_editor = .{ .close_session = session.id } });
         store.run(.{ .once = true, .wait_for_effects = true });
         try std.testing.expectEqual(0, state.video_editor.sessions.count());
+    }
+}
+
+test "VideoEditorStore - screenshot exports the requested frame" {
+    const TestStore = @import("./store.zig").TestStore;
+    const allocator = std.testing.allocator;
+    for (TestUtil.fixtures) |fixture| {
+        const test_store = try TestStore.init(allocator);
+        defer test_store.deinit();
+        const store = test_store.store;
+        const state = &store.state.private.value;
+        const output_directory = state.user_settings.user_settings.screenshot_output_directory.?.bytes;
+
+        // Open a test video and scrub to an arbitrary position.
+        store.dispatch(.{ .file_browser = .{ .select_file = try String.init(allocator, fixture.file_path) } });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        const session = state.video_editor.get_active_session().?;
+        const session_id = session.id;
+        store.dispatch(.{ .video_editor = .{ .scrub = .{
+            .session_id = session.id,
+            .position_ns = 10_050 * std.time.ns_per_ms,
+        } } });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        const frame = try TestUtil.wait_for_frame(session, 10 * std.time.ns_per_s);
+        defer frame.deinit();
+
+        // It should work regardless of whether or not the session is active
+        // (selected).
+        store.dispatch(.{ .video_editor = .clear_active_session });
+        store.dispatch(.{ .video_editor = .{ .screenshot = session_id } });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.run(.{ .once = true, .wait_for_effects = true });
+
+        try std.testing.expectEqual(1, state.file_browser.files.entries.items.len);
+        const path = state.file_browser.files.entries.items[0].path.bytes;
+        try std.testing.expectEqualStrings(output_directory, std.fs.path.dirname(path).?);
+        try std.testing.expect(state.file_browser.highlighted_paths.contains(path));
+        try TestUtil.expect_screenshot(path, fixture.expected_hash);
+
+        // No screenshot is saved when the session is closed.
+        store.dispatch(.{ .video_editor = .{ .close_session = session.id } });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.dispatch(.{ .video_editor = .{ .screenshot = session_id } });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        store.run(.{ .once = true, .wait_for_effects = true });
+        try std.testing.expectEqual(1, state.file_browser.files.entries.items.len);
+        try std.testing.expectEqual(1, state.file_browser.highlighted_paths.count());
     }
 }

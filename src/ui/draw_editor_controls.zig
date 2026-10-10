@@ -186,10 +186,10 @@ fn draw_export_controls(store: *Store, session: *const VideoEditorSession) void 
         imgui_util.item_tooltip("Saving creates a copy of the video and does not overwrite the original.");
 
         _ = c.ImGui_TableNextColumn();
-        c.ImGui_BeginDisabled(true);
-        _ = c.ImGui_ButtonEx("󰹑 Screenshot", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = action_button_height });
-        c.ImGui_EndDisabled();
-        imgui_util.item_tooltip("Not implemented yet");
+        if (c.ImGui_ButtonEx("󰹑 Screenshot", .{ .x = c.ImGui_GetContentRegionAvail().x, .y = action_button_height })) {
+            store.dispatch(.{ .video_editor = .{ .screenshot = session.id } });
+        }
+        imgui_util.item_tooltip("Save the current frame in the screenshots output directory.");
     }
 }
 
