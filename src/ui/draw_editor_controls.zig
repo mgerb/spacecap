@@ -131,14 +131,36 @@ fn draw_export_controls(store: *Store, session: *const VideoEditorSession) void 
     // ----------------------------------------------------------------------------
     if (c.ImGui_BeginTable("##editor_export_options", 1, c.ImGuiTableFlags_SizingStretchProp)) {
         defer c.ImGui_EndTable();
+
+        _ = c.ImGui_TableNextColumn();
+        const has_audio = session.audio_codec_name != null;
+        var include_audio = has_audio and session.include_audio;
+
+        {
+            c.ImGui_BeginDisabled(!has_audio);
+            defer c.ImGui_EndDisabled();
+            if (c.ImGui_Checkbox("Audio", &include_audio)) {
+                store.dispatch(.{ .video_editor = .{ .set_include_audio = .{
+                    .session_id = session.id,
+                    .include_audio = include_audio,
+                } } });
+            }
+        }
+
+        const include_audio_tooltip = if (has_audio)
+            "Include audio in the exported video clip."
+        else
+            "This video has no audio.";
+        imgui_util.item_tooltip(include_audio_tooltip);
+
+        _ = c.ImGui_TableNextColumn();
         c.ImGui_BeginDisabled(true);
         defer c.ImGui_EndDisabled();
-        inline for (.{ .{ "Include audio", true }, .{ "Re-encode", false } }) |option| {
-            var checked = option[1];
-            _ = c.ImGui_TableNextColumn();
-            _ = c.ImGui_Checkbox(option[0], &checked);
-            imgui_util.item_tooltip("This export option is not available yet.");
-        }
+
+        // TODO:
+        // var reencode = false;
+        // _ = c.ImGui_Checkbox("Re-encode", &reencode);
+        // imgui_util.item_tooltip("This export option is not available yet.");
     }
 
     // ----------------------------------------------------------------------------
@@ -158,6 +180,7 @@ fn draw_export_controls(store: *Store, session: *const VideoEditorSession) void 
                 .session_id = session.id,
                 .trim_start_ns = session.trim_start_ns(),
                 .trim_end_ns = session.trim_end_ns(),
+                .include_audio = session.include_audio,
             } } });
         }
         imgui_util.item_tooltip("Saving creates a copy of the video and does not overwrite the original.");

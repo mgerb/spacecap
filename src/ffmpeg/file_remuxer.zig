@@ -21,6 +21,9 @@ pub const FileRemuxer = struct {
         allocator: std.mem.Allocator,
         input_path: []const u8,
         output_path: []const u8,
+        options: struct {
+            include_audio: bool = true,
+        },
     ) !Self {
         const input_path_z = try allocator.dupeSentinel(u8, input_path, 0);
         errdefer allocator.free(input_path_z);
@@ -44,14 +47,17 @@ pub const FileRemuxer = struct {
             return error.MissingVideoStream;
         }
 
-        const audio_stream_index = c.av_find_best_stream(
-            input_context,
-            c.AVMEDIA_TYPE_AUDIO,
-            -1,
-            video_stream_index,
-            null,
-            0,
-        );
+        const audio_stream_index: ?c_int = if (options.include_audio) blk: {
+            const index = c.av_find_best_stream(
+                input_context,
+                c.AVMEDIA_TYPE_AUDIO,
+                -1,
+                video_stream_index,
+                null,
+                0,
+            );
+            break :blk if (index >= 0) index else null;
+        } else null;
 
         var output_context: *c.AVFormatContext = undefined;
         try check_err(c.avformat_alloc_output_context2(
@@ -68,8 +74,8 @@ pub const FileRemuxer = struct {
         }
 
         const output_video_stream = try add_output_stream(input_context, output_context, video_stream_index);
-        const output_audio_stream = if (audio_stream_index >= 0)
-            try add_output_stream(input_context, output_context, audio_stream_index)
+        const output_audio_stream = if (audio_stream_index) |index|
+            try add_output_stream(input_context, output_context, index)
         else
             null;
 
@@ -87,7 +93,7 @@ pub const FileRemuxer = struct {
             .input_context = input_context,
             .output_context = output_context,
             .video_stream_index = video_stream_index,
-            .audio_stream_index = if (audio_stream_index >= 0) audio_stream_index else null,
+            .audio_stream_index = audio_stream_index,
             .output_video_stream = output_video_stream,
             .output_audio_stream = output_audio_stream,
         };
@@ -458,7 +464,7 @@ test "FileRemuxer - remuxes and trims on keyframes" {
         defer allocator.free(output_path);
 
         {
-            var muxer = try FileRemuxer.init(allocator, fixture.input_path, output_path);
+            var muxer = try FileRemuxer.init(allocator, fixture.input_path, output_path, .{});
             defer muxer.deinit();
 
             const timeline_start_ns = FileRemuxer.start_time_ns(muxer.input_context.start_time);
@@ -543,6 +549,41 @@ test "FileRemuxer - remuxes and trims on keyframes" {
     }
 }
 
+test "FileRemuxer - remuxes without audio" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    var tmp_dir_path_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const tmp_dir_path_len = try tmp_dir.dir.realPathFile(io, ".", &tmp_dir_path_buffer);
+    const output_path = try std.fs.path.join(
+        allocator,
+        &.{ tmp_dir_path_buffer[0..tmp_dir_path_len], "video_only.mp4" },
+    );
+    defer allocator.free(output_path);
+
+    var muxer = try FileRemuxer.init(allocator, TestUtil.fixtures[0].input_path, output_path, .{ .include_audio = false });
+    defer muxer.deinit();
+    try muxer.remux_range(1_200_000_000, 30_000_000_000);
+
+    const output_path_z = try allocator.dupeSentinel(u8, output_path, 0);
+    defer allocator.free(output_path_z);
+    var output_context: ?*c.AVFormatContext = null;
+    try check_err(c.avformat_open_input(&output_context, output_path_z.ptr, null, null));
+    defer c.avformat_close_input(&output_context);
+    try check_err(c.avformat_find_stream_info(output_context, null));
+
+    // Should only have 1 video stream (no audio)
+    try std.testing.expectEqual(1, output_context.?.nb_streams);
+    try std.testing.expect(c.av_find_best_stream(output_context, c.AVMEDIA_TYPE_VIDEO, -1, -1, null, 0) >= 0);
+
+    var packet = c.av_packet_alloc() orelse return error.FFmpegError;
+    defer c.av_packet_free(&packet);
+    try check_err(c.av_read_frame(output_context, packet));
+    try std.testing.expect(packet.*.size > 0);
+}
+
 test "FileRemuxer - rejects invalid ranges and preserves trims within a GOP" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -557,11 +598,11 @@ test "FileRemuxer - rejects invalid ranges and preserves trims within a GOP" {
     );
     defer allocator.free(output_path);
 
-    var invalid_muxer = try FileRemuxer.init(allocator, TestUtil.fixtures[0].input_path, output_path);
+    var invalid_muxer = try FileRemuxer.init(allocator, TestUtil.fixtures[0].input_path, output_path, .{});
     defer invalid_muxer.deinit();
     try std.testing.expectError(error.InvalidTrimRange, invalid_muxer.remux_range(10, 10));
 
-    var short_muxer = try FileRemuxer.init(allocator, TestUtil.fixtures[0].input_path, output_path);
+    var short_muxer = try FileRemuxer.init(allocator, TestUtil.fixtures[0].input_path, output_path, .{});
     defer short_muxer.deinit();
     try short_muxer.remux_range(10_000_000_000, 11_000_000_000);
     try std.testing.expect(short_muxer.output_context.pb == null);
