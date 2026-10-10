@@ -761,12 +761,18 @@ pub const Vulkan = struct {
         if (candidate.video_decode_h264_supported) {
             try enabled_extensions.appendSlice(allocator, VIDEO_DECODE_H264_EXTENSIONS[0..]);
         }
+
         if (candidate.video_decode_h265_supported) {
             try enabled_extensions.appendSlice(allocator, VIDEO_DECODE_H265_EXTENSIONS[0..]);
         }
 
+        const supported_features = instance.getPhysicalDeviceFeatures(candidate.pdev);
+        const enabled_features = vk.PhysicalDeviceFeatures{
+            .shader_storage_image_extended_formats = supported_features.shader_storage_image_extended_formats,
+        };
         return try instance.createDevice(candidate.pdev, &.{
             .p_next = &dynamic_rendering_features,
+            .p_enabled_features = &enabled_features,
             .queue_create_info_count = @intCast(queue_create_info.items.len),
             .p_queue_create_infos = queue_create_info.items.ptr,
             .enabled_extension_count = @intCast(enabled_extensions.items.len),

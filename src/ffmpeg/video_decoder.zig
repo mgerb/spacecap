@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
 const c = @import("ffmpeg_c");
+const YcbcrFormat = @import("../vulkan/vulkan_rgb_ycbcr_conversion_pipeline.zig").VulkanRgbYcbcrConversionPipeline.YcbcrFormat;
 const check_err = @import("./util.zig").check_err;
 const vulkan_module = @import("../vulkan/vulkan.zig");
 const Vulkan = vulkan_module.Vulkan;
@@ -271,6 +272,13 @@ pub const VideoDecoder = struct {
     ) bool {
         const device_context: *c.AVHWDeviceContext = @ptrCast(@alignCast(codec_context.*.hw_device_ctx.*.data));
         const vulkan: *Vulkan = @ptrCast(@alignCast(device_context.user_opaque.?));
+
+        const image_format: vk.Format = @fromBackingInt(@intCast(vulkan_frames.format[0]));
+        if (YcbcrFormat.from_vk_format(image_format) == null) {
+            log.info("[supports_vulkan_frame_images] video pixel format is unsupported - using software decoding", .{});
+            return false;
+        }
+
         var format_info = vk.PhysicalDeviceImageFormatInfo2{
             .p_next = vulkan_frames.create_pnext,
             .format = @fromBackingInt(@intCast(@as(c_int, @intCast(vulkan_frames.format[0])))),

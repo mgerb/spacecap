@@ -3,7 +3,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const VulkanRgbYuvConversionPipeline = @import("../vulkan/vulkan_rgb_yuv_conversion_pipeline.zig").VulkanRgbYuvConversionPipeline;
+const VulkanRgbYcbcrConversionPipeline = @import("../vulkan/vulkan_rgb_ycbcr_conversion_pipeline.zig").VulkanRgbYcbcrConversionPipeline;
 const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
 const types = @import("../types.zig");
 
@@ -59,7 +59,7 @@ pub const VulkanVideoEncoder = struct {
 
     query_pool: ?vk.QueryPool = null,
 
-    rgb_yuv_pipeline: ?VulkanRgbYuvConversionPipeline = null,
+    rgb_ycbcr_pipeline: ?VulkanRgbYcbcrConversionPipeline = null,
 
     /// Signaled when the rgb to ycb_cr pipeline is done.
     compute_semaphore: vk.Semaphore,
@@ -173,8 +173,8 @@ pub const VulkanVideoEncoder = struct {
         try self.create_output_query_pool();
         errdefer self.vulkan.device.destroyQueryPool(self.query_pool.?, null);
 
-        self.rgb_yuv_pipeline = try VulkanRgbYuvConversionPipeline.init(vulkan, .rgb_to_yuv);
-        errdefer self.rgb_yuv_pipeline.?.deinit();
+        self.rgb_ycbcr_pipeline = try VulkanRgbYcbcrConversionPipeline.init(vulkan, .rgb_to_ycbcr, .nv12);
+        errdefer self.rgb_ycbcr_pipeline.?.deinit();
 
         var command_buffer = std.mem.zeroes(vk.CommandBuffer);
         const alloc_info = vk.CommandBufferAllocateInfo{
@@ -642,7 +642,7 @@ pub const VulkanVideoEncoder = struct {
 
         self.ycbcr_image_view = try self.vulkan.device.createImageView(&view_info, null);
 
-        const plane_views = try VulkanRgbYuvConversionPipeline.create_yuv_plane_views(self.vulkan, self.ycbcr_image.?);
+        const plane_views = try VulkanRgbYcbcrConversionPipeline.create_ycbcr_plane_views(self.vulkan, self.ycbcr_image.?, .nv12);
         try self.ycbcr_image_plane_views.appendSlice(self.allocator, &plane_views);
     }
 
@@ -836,7 +836,7 @@ pub const VulkanVideoEncoder = struct {
 
         self.vulkan.device.cmdPipelineBarrier2(self.compute_command_buffer.?, &dependency_info);
 
-        self.rgb_yuv_pipeline.?.record_commands(
+        self.rgb_ycbcr_pipeline.?.record_commands(
             self.compute_command_buffer.?,
             self.input_image_views.?[current_image_ix],
             self.ycbcr_image_plane_views.items[0],
@@ -1165,7 +1165,7 @@ pub const VulkanVideoEncoder = struct {
     pub fn deinit(self: *Self) void {
         defer self.allocator.destroy(self);
         self.destroy_encode_finished_fence();
-        if (self.rgb_yuv_pipeline) |*pipeline| pipeline.deinit();
+        if (self.rgb_ycbcr_pipeline) |*pipeline| pipeline.deinit();
         if (self.video_session_parameters) |video_session_parameters| {
             self.vulkan.device.destroyVideoSessionParametersKHR(video_session_parameters, null);
         }
