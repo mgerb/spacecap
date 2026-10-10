@@ -21,8 +21,8 @@
             .hash = "imguiz-0.0.0-sI63z7iYegTRAc4Hz2rYIc6q5AnwpXFcvh-ot2vL1_v-",
         },
         .pipewire = .{
-            .url = "git+https://github.com/mgerb/pipewire#ca79c611a80c6249dcb75d866bc7996805f9a3c1",
-            .hash = "pipewire-1.6.3-tKslQ4CMAQDtkbloslJ3wXpVnqmt4auaEYDzB2AYssit",
+            .url = "git+https://github.com/mgerb/pipewire#635337109b9e3fe558430c74ccdd1e7715563bbc",
+            .hash = "pipewire-1.6.3-tKslQ6iMAQAsujLpyeoG_RcnA2hIW0sAo0ELKKadFKhs",
         },
         .libportal_zig = .{
             .url = "git+https://github.com/mgerb/libportal-zig#8d236be3685ac1aa328270c1b7aec1a9fe7e1d7d",
