@@ -4,6 +4,7 @@
 //! can be changed by the SPACECAP_LOG_LEVEL environment variable.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const Env = @import("./env.zig");
 const Util = @import("./util.zig");
@@ -190,19 +191,21 @@ const LoggerInternal = struct {
                 &buffer,
                 \\----------------------------------------------------------------------------
                 \\  PANIC: {s}
+                \\  Spacecap version: {s}
                 \\  address: 0x{x}
                 \\  message: 
             ,
-                .{ &timestamp, addr },
+                .{ &timestamp, build_options.version, addr },
             )
         else
             try std.fmt.bufPrint(
                 &buffer,
                 \\----------------------------------------------------------------------------
                 \\  PANIC: {s}
+                \\  Spacecap version: {s}
                 \\  message: 
             ,
-                .{&timestamp},
+                .{ &timestamp, build_options.version },
             );
 
         try file.writePositionalAll(self.io, header, offset);
