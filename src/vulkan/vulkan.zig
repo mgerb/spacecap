@@ -6,7 +6,7 @@ const imguiz = @import("imguiz").imguiz;
 const vk = @import("vulkan");
 const util = @import("../util.zig");
 const VulkanVideoEncoder = @import("./vulkan_video_encoder.zig").VulkanVideoEncoder;
-const VulkanImageRingBuffer = @import("./vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
+const VulkanImageBufferPool = @import("./vulkan_image_buffer_pool.zig").VulkanImageBufferPool;
 const Mutex = @import("../mutex.zig").Mutex;
 
 const BaseDispatch = vk.BaseWrapper;
@@ -146,11 +146,11 @@ pub const Vulkan = struct {
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
     video_encoder: ?*VulkanVideoEncoder = null,
-    /// Ring buffer that holds the preview images that are rendered on the UI.
-    capture_preview_ring_buffer: Mutex(?*VulkanImageRingBuffer),
-    /// Ring buffer that can be used in the capture method to hold frames
+    /// Image buffer pool that holds the preview images that are rendered on the UI.
+    capture_preview_image_buffer_pool: Mutex(?*VulkanImageBufferPool),
+    /// Image buffer pool that can be used in the capture method to hold frames
     /// in which the encoder can grab from.
-    capture_ring_buffer: Mutex(?*VulkanImageRingBuffer),
+    capture_image_buffer_pool: Mutex(?*VulkanImageBufferPool),
 
     /// The window used to render the UI with imgui
     window: ?imguiz.ImGui_ImplVulkanH_Window = null,
@@ -284,8 +284,8 @@ pub const Vulkan = struct {
             .physical_device = pdev,
             .props = props,
             .mem_props = mem_props,
-            .capture_preview_ring_buffer = .init(io, null),
-            .capture_ring_buffer = .init(io, null),
+            .capture_preview_image_buffer_pool = .init(io, null),
+            .capture_image_buffer_pool = .init(io, null),
         };
 
         return self;
@@ -294,8 +294,8 @@ pub const Vulkan = struct {
     pub fn deinit(self: *Self) void {
         defer self.allocator.destroy(self);
         self.deinit_video_encoder();
-        self.destroy_capture_preview_ring_buffer();
-        self.destroy_capture_ring_buffer();
+        self.destroy_capture_preview_image_buffer_pool();
+        self.destroy_capture_image_buffer_pool();
 
         if (self.debug_messenger) |debug_messenger| {
             self.instance.destroyDebugUtilsMessengerEXT(debug_messenger, null);
@@ -336,8 +336,8 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn init_capture_preview_ring_buffer(self: *Self, width: u32, height: u32) !void {
-        self.capture_preview_ring_buffer.set(try VulkanImageRingBuffer.init(
+    pub fn init_capture_preview_image_buffer_pool(self: *Self, width: u32, height: u32) !void {
+        self.capture_preview_image_buffer_pool.set(try VulkanImageBufferPool.init(
             .{
                 .allocator = self.allocator,
                 .io = self.io,
@@ -359,19 +359,19 @@ pub const Vulkan = struct {
         ));
     }
 
-    pub fn destroy_capture_preview_ring_buffer(self: *Self) void {
+    pub fn destroy_capture_preview_image_buffer_pool(self: *Self) void {
         self.wait_for_ui_fences();
-        var capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
-        defer capture_preview_ring_buffer_locked.unlock();
+        var capture_preview_image_buffer_pool_locked = self.capture_preview_image_buffer_pool.lock();
+        defer capture_preview_image_buffer_pool_locked.unlock();
 
-        if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
-            capture_preview_ring_buffer.deinit();
-            capture_preview_ring_buffer_locked.set(null);
+        if (capture_preview_image_buffer_pool_locked.unwrap()) |capture_preview_image_buffer_pool| {
+            capture_preview_image_buffer_pool.deinit();
+            capture_preview_image_buffer_pool_locked.set(null);
         }
     }
 
-    pub fn init_capture_ring_buffer(self: *Self, width: u32, height: u32) !void {
-        self.capture_ring_buffer.set(try VulkanImageRingBuffer.init(
+    pub fn init_capture_image_buffer_pool(self: *Self, width: u32, height: u32) !void {
+        self.capture_image_buffer_pool.set(try VulkanImageBufferPool.init(
             .{
                 .allocator = self.allocator,
                 .io = self.io,
@@ -393,19 +393,19 @@ pub const Vulkan = struct {
         ));
     }
 
-    pub fn destroy_capture_ring_buffer(self: *Self) void {
-        const capture_ring_buffer = blk: {
-            var capture_ring_buffer_locked = self.capture_ring_buffer.lock();
-            defer capture_ring_buffer_locked.unlock();
+    pub fn destroy_capture_image_buffer_pool(self: *Self) void {
+        const capture_image_buffer_pool = blk: {
+            var capture_image_buffer_pool_locked = self.capture_image_buffer_pool.lock();
+            defer capture_image_buffer_pool_locked.unlock();
 
-            const capture_ring_buffer = capture_ring_buffer_locked.unwrap();
-            capture_ring_buffer_locked.set(null);
-            break :blk capture_ring_buffer;
+            const capture_image_buffer_pool = capture_image_buffer_pool_locked.unwrap();
+            capture_image_buffer_pool_locked.set(null);
+            break :blk capture_image_buffer_pool;
         };
 
-        if (capture_ring_buffer) |_capture_ring_buffer| {
-            _capture_ring_buffer.wait_for_fences();
-            _capture_ring_buffer.deinit();
+        if (capture_image_buffer_pool) |_capture_image_buffer_pool| {
+            _capture_image_buffer_pool.wait_for_fences();
+            _capture_image_buffer_pool.deinit();
         }
     }
 
@@ -917,12 +917,12 @@ pub const Vulkan = struct {
         }
     }
 
-    pub fn wait_for_capture_ring_buffer_fences(self: *Self) void {
-        const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
-        defer capture_ring_buffer_locked.unlock();
+    pub fn wait_for_capture_image_buffer_pool_fences(self: *Self) void {
+        const capture_image_buffer_pool_locked = self.capture_image_buffer_pool.lock();
+        defer capture_image_buffer_pool_locked.unlock();
 
-        if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
-            capture_ring_buffer.wait_for_fences();
+        if (capture_image_buffer_pool_locked.unwrap()) |capture_image_buffer_pool| {
+            capture_image_buffer_pool.wait_for_fences();
         }
     }
 
@@ -936,22 +936,22 @@ pub const Vulkan = struct {
 
         // Collect fences before queue locks to avoid lock-order inversion.
         {
-            const capture_preview_ring_buffer_locked = self.capture_preview_ring_buffer.lock();
-            defer capture_preview_ring_buffer_locked.unlock();
-            if (capture_preview_ring_buffer_locked.unwrap()) |capture_preview_ring_buffer| {
-                for (capture_preview_ring_buffer.buffers) |buffer| {
+            const capture_preview_image_buffer_pool_locked = self.capture_preview_image_buffer_pool.lock();
+            defer capture_preview_image_buffer_pool_locked.unlock();
+            if (capture_preview_image_buffer_pool_locked.unwrap()) |capture_preview_image_buffer_pool| {
+                for (capture_preview_image_buffer_pool.buffers) |buffer| {
                     try wait_fences.append(self.allocator, buffer.as_ptr().fence);
                 }
             }
         }
 
-        // Capture-ring copy command buffers run on the graphics queue and may still be reading
+        // Capture pool copy command buffers run on the graphics queue and may still be reading
         // pipewire dmabuf images during format-change callbacks.
         {
-            const capture_ring_buffer_locked = self.capture_ring_buffer.lock();
-            defer capture_ring_buffer_locked.unlock();
-            if (capture_ring_buffer_locked.unwrap()) |capture_ring_buffer| {
-                for (capture_ring_buffer.buffers) |buffer| {
+            const capture_image_buffer_pool_locked = self.capture_image_buffer_pool.lock();
+            defer capture_image_buffer_pool_locked.unlock();
+            if (capture_image_buffer_pool_locked.unwrap()) |capture_image_buffer_pool| {
+                for (capture_image_buffer_pool.buffers) |buffer| {
                     try wait_fences.append(self.allocator, buffer.as_ptr().fence);
                 }
             }

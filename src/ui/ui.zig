@@ -488,7 +488,6 @@ pub const UI = struct {
                 // Hold onto the buffer until draw/render/present is done.
                 defer {
                     if (preview_buffer) |buffer| {
-                        buffer.as_ptr().in_use.store(false, .release);
                         buffer.deinit();
                     }
                 }
@@ -527,7 +526,7 @@ pub const UI = struct {
                     const player_result = try draw_video_player_tabs(
                         self.store,
                         state,
-                        &self.vulkan.capture_preview_ring_buffer,
+                        &self.vulkan.capture_preview_image_buffer_pool,
                     );
 
                     preview_buffer = player_result.display_frame_buffer;

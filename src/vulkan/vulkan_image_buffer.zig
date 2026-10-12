@@ -4,7 +4,7 @@ const vk = @import("vulkan");
 const Arc = @import("../arc.zig").Arc;
 const VulkanImGuiTexture = @import("./vulkan_imgui_texture.zig").VulkanImGuiTexture;
 
-/// An image buffer that goes in the vulkan image ring buffer.
+/// An image buffer owned by a VulkanImageBufferPool.
 pub const VulkanImageBuffer = struct {
     const log = std.log.scoped(.VulkanImageBuffer);
     const Self = @This();
@@ -24,15 +24,15 @@ pub const VulkanImageBuffer = struct {
     command_pool: vk.CommandPool,
     signal_semaphore: vk.Semaphore,
     fence: vk.Fence,
-    /// Time when the image was last copied.
-    timestamp_ns: i128 = 0,
+    /// Capture or video presentation timestamp of the image.
+    pts_ns: i128 = 0,
+    /// When the image was updated in the pool. This is used to keep track of
+    /// which free buffers should be available first.
+    updated_ns: ?i128 = null,
     src_queue_family_index: u32,
 
     width: u32,
     height: u32,
-    /// In use means that the buffer is occupied and is not free to copy data into it.
-    /// (e.g. encoding, rendering on UI, etc.)
-    in_use: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub const InitArgs = struct {
         allocator: std.mem.Allocator,
@@ -131,7 +131,6 @@ pub const VulkanImageBuffer = struct {
             .width = args.width,
             .height = args.height,
             .src_queue_family_index = args.src_queue_family_index,
-            .in_use = std.atomic.Value(bool).init(false),
         });
     }
 
@@ -165,10 +164,10 @@ pub const VulkanImageBuffer = struct {
             src_height: u32,
             wait_semaphore: ?vk.Semaphore,
             use_signal_semaphore: bool = false,
-            timestamp_ns: i128,
+            pts_ns: i128,
         },
     ) !void {
-        self.timestamp_ns = args.timestamp_ns;
+        self.pts_ns = args.pts_ns;
         const result = try self.vulkan.device.waitForFences(&.{self.fence}, .true, std.math.maxInt(u64));
 
         if (result != .success) {
@@ -224,7 +223,7 @@ pub const VulkanImageBuffer = struct {
             .src_height = self.height,
             .wait_semaphore = null,
             .use_signal_semaphore = true,
-            .timestamp_ns = self.timestamp_ns,
+            .pts_ns = self.pts_ns,
         });
 
         return .{

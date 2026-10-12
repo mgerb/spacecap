@@ -6,7 +6,7 @@ const String = @import("../string.zig").String;
 const VideoEditorSession = @import("./video_editor_session.zig").VideoEditorSession;
 const SessionId = VideoEditorSession.SessionId;
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const VulkanImageRingBuffer = @import("../vulkan/vulkan_image_ring_buffer.zig").VulkanImageRingBuffer;
+const VulkanImageBufferPool = @import("../vulkan/vulkan_image_buffer_pool.zig").VulkanImageBufferPool;
 const exporter = @import("../exporter.zig");
 
 pub const VideoEditorStore = struct {
@@ -121,9 +121,9 @@ pub const VideoEditorStore = struct {
 
         /// Get the latest frame from the active session.
         /// WARNING: The underlying buffer is ref counted and must be freed.
-        pub fn get_latest_display_frame(self: *@This()) !?VulkanImageRingBuffer.DisplayFrame {
+        pub fn get_latest_display_frame(self: *@This()) !?VulkanImageBufferPool.DisplayFrame {
             if (self.get_active_session()) |session| {
-                return session.ring_buffer.get_latest_display_frame();
+                return session.image_buffer_pool.get_latest_display_frame();
             }
             return null;
         }
@@ -412,11 +412,11 @@ const TestUtil = struct {
         store.run(.{ .once = true, .wait_for_effects = true });
 
         const image_buffer = try wait_for_frame(session, expected_frame_pts_ns);
-        defer deinit_frame(&image_buffer);
+        defer image_buffer.deinit();
     }
 
     /// There's currently not a reliable way to wait for a frame to be
-    /// submitted to the ring buffer, so we can just poll it and use a timeout
+    /// submitted to the image buffer pool, so we can just poll it and use a timeout
     /// for now.
     fn wait_for_frame(
         session: *VideoEditorSession,
@@ -426,11 +426,11 @@ const TestUtil = struct {
         const started_at = std.Io.Timestamp.now(std.testing.io, .awake);
 
         while (true) {
-            if (session.ring_buffer.get_most_recent_buffer()) |buffer| {
-                if (buffer.as_ptr().timestamp_ns == expected_frame_pts_ns) {
+            if (session.image_buffer_pool.get_most_recent_buffer()) |buffer| {
+                if (buffer.as_ptr().pts_ns == expected_frame_pts_ns) {
                     return buffer;
                 }
-                deinit_frame(&buffer);
+                buffer.deinit();
             }
 
             const now = std.Io.Timestamp.now(std.testing.io, .awake);
@@ -481,11 +481,11 @@ test "VideoEditorStore - init, scrub, and close all sessions" {
 
         {
             const image_buffer = try TestUtil.wait_for_frame(session, expected_frame_pts_ns);
-            defer TestUtil.deinit_frame(&image_buffer);
+            defer image_buffer.deinit();
 
             try std.testing.expectEqual(320, image_buffer.as_ptr().width);
             try std.testing.expectEqual(224, image_buffer.as_ptr().height);
-            try std.testing.expectEqual(expected_frame_pts_ns, image_buffer.as_ptr().timestamp_ns);
+            try std.testing.expectEqual(expected_frame_pts_ns, image_buffer.as_ptr().pts_ns);
             try std.testing.expectEqual(expected_frame_pts_ns, session.playback_position_ns());
 
             const rgba = try image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator);
@@ -544,7 +544,7 @@ test "VideoEditorStore - step next, previous, then close session" {
 
         {
             const image_buffer = try TestUtil.wait_for_frame(session, scrubbed_frame_pts_ns);
-            defer TestUtil.deinit_frame(&image_buffer);
+            defer image_buffer.deinit();
         }
 
         // Step 2 frames forward, 4 back, then 2 forward again. We should end
@@ -567,7 +567,7 @@ test "VideoEditorStore - step next, previous, then close session" {
 
         {
             const image_buffer = try TestUtil.wait_for_frame(session, scrubbed_frame_pts_ns);
-            defer TestUtil.deinit_frame(&image_buffer);
+            defer image_buffer.deinit();
 
             const rgba = try image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator);
             defer allocator.free(rgba);

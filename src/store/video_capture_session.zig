@@ -141,8 +141,8 @@ pub const VideoCaptureSession = struct {
             return error.VideoCaptureSizeNotFound;
         };
 
-        try self.vulkan.init_capture_preview_ring_buffer(size.width, size.height);
-        errdefer self.vulkan.destroy_capture_preview_ring_buffer();
+        try self.vulkan.init_capture_preview_image_buffer_pool(size.width, size.height);
+        errdefer self.vulkan.destroy_capture_preview_image_buffer_pool();
 
         self.capture_thread = try std.Thread.spawn(.{}, video_capture_thread_handler, .{self});
     }
@@ -160,7 +160,7 @@ pub const VideoCaptureSession = struct {
             self.capture_thread = null;
         }
 
-        self.vulkan.destroy_capture_preview_ring_buffer();
+        self.vulkan.destroy_capture_preview_image_buffer_pool();
 
         try self.video_capture.stop();
     }
@@ -324,10 +324,7 @@ pub const VideoCaptureSession = struct {
                 }
                 return err;
             };
-            defer {
-                vulkan_image_buffer.as_ptr().in_use.store(false, .release);
-                vulkan_image_buffer.deinit();
-            }
+            defer vulkan_image_buffer.deinit();
             self.frame_count += 1;
 
             var image_slc = [_]vk.Image{vulkan_image_buffer.as_ptr().image};
@@ -343,10 +340,10 @@ pub const VideoCaptureSession = struct {
                 break :blk video_replay_buffer != null or muxer_ptr.* != null;
             };
 
-            const copy_data = blk: {
-                const capture_preview_ring_buffer_locked = self.vulkan.capture_preview_ring_buffer.lock();
-                defer capture_preview_ring_buffer_locked.unlock();
-                const _copy_data = try capture_preview_ring_buffer_locked.unwrap().?.copy_image_to_ring_buffer(
+            const capture_preview_data = blk: {
+                const capture_preview_image_buffer_pool_locked = self.vulkan.capture_preview_image_buffer_pool.lock();
+                defer capture_preview_image_buffer_pool_locked.unlock();
+                const copy_data = try capture_preview_image_buffer_pool_locked.unwrap().?.copy_image_to_pool(
                     .{
                         .src_image = image_slc[0],
                         .src_width = vulkan_image_buffer.as_ptr().width,
@@ -354,11 +351,15 @@ pub const VideoCaptureSession = struct {
                         .wait_semaphore = null,
                         // Only signal this semaphore when encode will wait on it.
                         .use_signal_semaphore = should_encode,
-                        .timestamp_ns = vulkan_image_buffer.as_ptr().timestamp_ns,
+                        .pts_ns = vulkan_image_buffer.as_ptr().pts_ns,
                     },
                 );
-                break :blk _copy_data;
+                break :blk copy_data;
             };
+
+            // Keep the ref count > 1 until encoding is done so that it doesn't
+            // return to the pool.
+            defer if (capture_preview_data.vulkan_image_buffer) |buffer| buffer.deinit();
 
             const screenshot_signal_semaphore = if (self.decrement_screenshot_requests()) blk: {
                 break :blk self.take_screenshot(vulkan_image_buffer.as_ptr()) catch |err| {
@@ -370,8 +371,8 @@ pub const VideoCaptureSession = struct {
 
             if (!should_encode) {
                 // In capture-only mode no downstream work waits on the preview copy.
-                // Wait here so the capture-ring source image is not recycled while still in flight.
-                if (copy_data.fence) |fence| {
+                // Wait here so the capture pool source image is not recycled while still in flight.
+                if (capture_preview_data.fence) |fence| {
                     _ = self.vulkan.device.waitForFences(&.{fence}, .true, std.math.maxInt(u64)) catch |err| {
                         log.err("[video_capture_thread_handler] preview copy wait error: {}", .{err});
                     };
@@ -386,7 +387,7 @@ pub const VideoCaptureSession = struct {
 
             var external_wait_semaphore_buffer: [2]vk.Semaphore = undefined;
             var external_wait_semaphores: std.ArrayList(vk.Semaphore) = .initBuffer(&external_wait_semaphore_buffer);
-            if (copy_data.semaphore) |semaphore| {
+            if (capture_preview_data.semaphore) |semaphore| {
                 external_wait_semaphores.appendAssumeCapacity(semaphore);
             }
             if (screenshot_signal_semaphore) |semaphore| {
@@ -414,7 +415,7 @@ pub const VideoCaptureSession = struct {
             if (video_replay_buffer) |vrb| {
                 try vrb.add_frame(
                     encoded_packet,
-                    vulkan_image_buffer.as_ptr().timestamp_ns,
+                    vulkan_image_buffer.as_ptr().pts_ns,
                     encode_result.idr,
                 );
             }
@@ -423,7 +424,7 @@ pub const VideoCaptureSession = struct {
                 var video_record_data = try VideoRecordData.init(
                     self.allocator,
                     encoded_packet,
-                    vulkan_image_buffer.as_ptr().timestamp_ns,
+                    vulkan_image_buffer.as_ptr().pts_ns,
                     encode_result.idr,
                 );
 
