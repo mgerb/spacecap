@@ -835,7 +835,7 @@ pub const CaptureStore = struct {
         };
         defer screenshot_output_directory.deinit();
 
-        const file_path = try exporter.export_image_to_file(
+        const file_path = try exporter.export_bgra_image_to_file(
             store.allocator,
             store.io,
             payload.width,

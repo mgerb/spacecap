@@ -4,7 +4,6 @@ const vk = @import("vulkan");
 const check_err = @import("../ffmpeg/util.zig").check_err;
 
 const Vulkan = @import("../vulkan/vulkan.zig").Vulkan;
-const VulkanImageBuffer = @import("../vulkan/vulkan_image_buffer.zig").VulkanImageBuffer;
 const VulkanRgbYcbcrConversionPipeline = @import("../vulkan/vulkan_rgb_ycbcr_conversion_pipeline.zig").VulkanRgbYcbcrConversionPipeline;
 
 const YcbcrFormat = VulkanRgbYcbcrConversionPipeline.YcbcrFormat;
@@ -13,6 +12,14 @@ const YcbcrFormat = VulkanRgbYcbcrConversionPipeline.YcbcrFormat;
 /// stored on the GPU.
 pub const VulkanVideoFrameConverter = struct {
     const Self = @This();
+
+    pub const OutputContext = struct {
+        image: vk.Image,
+        image_view: vk.ImageView,
+        command_pool: vk.CommandPool,
+        command_buffer: vk.CommandBuffer,
+        fence: vk.Fence,
+    };
 
     vulkan: *Vulkan,
     width: u32,
@@ -139,19 +146,23 @@ pub const VulkanVideoFrameConverter = struct {
     }
 
     /// Convert a YCbCr AVFrame to an RGB Vulkan image.
-    pub fn convert(self: *Self, frame: *const c.AVFrame, output: *VulkanImageBuffer) !void {
-        const wait_result = try self.vulkan.device.waitForFences(&.{output.fence}, .true, std.math.maxInt(u64));
-        if (wait_result != .success) return error.WaitForFences;
+    pub fn convert(self: *Self, frame: *const c.AVFrame, output_context: OutputContext) !void {
+        const wait_result = try self.vulkan.device.waitForFences(&.{output_context.fence}, .true, std.math.maxInt(u64));
+        if (wait_result != .success) {
+            return error.WaitForFences;
+        }
 
         if (frame.*.format == c.AV_PIX_FMT_VULKAN) {
-            try self.convert_vulkan_frame(frame, output);
+            try self.convert_vulkan_frame(frame, output_context);
         } else {
-            try self.convert_software_frame(frame, output);
+            try self.convert_software_frame(frame, output_context);
         }
     }
 
-    fn convert_vulkan_frame(self: *Self, frame: *const c.AVFrame, output: *VulkanImageBuffer) !void {
-        if (frame.*.data[0] == null or frame.*.hw_frames_ctx == null) return error.InvalidVideoFrame;
+    fn convert_vulkan_frame(self: *Self, frame: *const c.AVFrame, output_context: OutputContext) !void {
+        if (frame.*.data[0] == null or frame.*.hw_frames_ctx == null) {
+            return error.InvalidVideoFrame;
+        }
 
         const frames_context: *c.AVHWFramesContext = @ptrCast(@alignCast(frame.*.hw_frames_ctx.*.data));
         const vulkan_frames: *c.AVVulkanFramesContext = @ptrCast(@alignCast(frames_context.hwctx orelse return error.InvalidVideoFrame));
@@ -179,7 +190,7 @@ pub const VulkanVideoFrameConverter = struct {
         }
 
         try self.record_commands(.{
-            .output = output,
+            .output_context = output_context,
             .format = format,
             .input_image = image,
             .input_views = views,
@@ -203,23 +214,23 @@ pub const VulkanVideoFrameConverter = struct {
             .p_wait_semaphores = @ptrCast(&semaphore),
             .p_wait_dst_stage_mask = @ptrCast(&wait_stage),
             .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&output.command_buffer),
+            .p_command_buffers = @ptrCast(&output_context.command_buffer),
             .signal_semaphore_count = 1,
             .p_signal_semaphores = @ptrCast(&semaphore),
-        }}, .{ .fence = output.fence });
+        }}, .{ .fence = output_context.fence });
 
         vulkan_frame.layout[0] = @backingInt(vk.ImageLayout.general);
         vulkan_frame.access[0] = @bitCast(vk.AccessFlags2{ .shader_storage_read = true });
         vulkan_frame.sem_value[0] = signal_value;
 
-        const result = try self.vulkan.device.waitForFences(&.{output.fence}, .true, std.math.maxInt(u64));
+        const result = try self.vulkan.device.waitForFences(&.{output_context.fence}, .true, std.math.maxInt(u64));
         if (result != .success) return error.WaitForFences;
     }
 
-    fn convert_software_frame(self: *Self, frame: *const c.AVFrame, output: *VulkanImageBuffer) !void {
+    fn convert_software_frame(self: *Self, frame: *const c.AVFrame, output_context: OutputContext) !void {
         try check_err(c.sws_scale_frame(self.scale_context, self.staging_frame, frame));
         try self.record_commands(.{
-            .output = output,
+            .output_context = output_context,
             .format = .nv12,
             .input_image = self.software_image,
             .input_views = self.software_views,
@@ -233,16 +244,16 @@ pub const VulkanVideoFrameConverter = struct {
 
         try self.vulkan.queue_submit(.graphics, &.{.{
             .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&output.command_buffer),
-        }}, .{ .fence = output.fence });
+            .p_command_buffers = @ptrCast(&output_context.command_buffer),
+        }}, .{ .fence = output_context.fence });
 
-        const result = try self.vulkan.device.waitForFences(&.{output.fence}, .true, std.math.maxInt(u64));
+        const result = try self.vulkan.device.waitForFences(&.{output_context.fence}, .true, std.math.maxInt(u64));
         if (result != .success) return error.WaitForFences;
         self.software_image_initialized = true;
     }
 
     fn record_commands(self: *Self, args: struct {
-        output: *VulkanImageBuffer,
+        output_context: OutputContext,
         format: YcbcrFormat,
         input_image: vk.Image,
         input_views: [2]vk.ImageView,
@@ -258,8 +269,8 @@ pub const VulkanVideoFrameConverter = struct {
             );
         }
 
-        try self.vulkan.device.resetCommandPool(args.output.command_pool, .{});
-        try self.vulkan.device.beginCommandBuffer(args.output.command_buffer, &.{
+        try self.vulkan.device.resetCommandPool(args.output_context.command_pool, .{});
+        try self.vulkan.device.beginCommandBuffer(args.output_context.command_buffer, &.{
             .flags = .{ .one_time_submit = true },
         });
 
@@ -291,7 +302,7 @@ pub const VulkanVideoFrameConverter = struct {
                 .image = args.input_image,
                 .subresource_range = input_range,
             };
-            self.vulkan.device.cmdPipelineBarrier2(args.output.command_buffer, &.{
+            self.vulkan.device.cmdPipelineBarrier2(args.output_context.command_buffer, &.{
                 .image_memory_barrier_count = 1,
                 .p_image_memory_barriers = @ptrCast(&before_copy),
             });
@@ -327,7 +338,7 @@ pub const VulkanVideoFrameConverter = struct {
                 },
             };
             self.vulkan.device.cmdCopyBufferToImage(
-                args.output.command_buffer,
+                args.output_context.command_buffer,
                 self.staging_buffer,
                 args.input_image,
                 .transfer_dst_optimal,
@@ -354,18 +365,18 @@ pub const VulkanVideoFrameConverter = struct {
             .new_layout = .general,
             .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-            .image = args.output.image,
+            .image = args.output_context.image,
             .subresource_range = output_range,
         };
         const before_compute = [_]vk.ImageMemoryBarrier2{ input_barrier, output_barrier };
-        self.vulkan.device.cmdPipelineBarrier2(args.output.command_buffer, &.{
+        self.vulkan.device.cmdPipelineBarrier2(args.output_context.command_buffer, &.{
             .image_memory_barrier_count = before_compute.len,
             .p_image_memory_barriers = &before_compute,
         });
 
         self.rgb_ycbcr_conversion_pipeline.?.record_commands(
-            args.output.command_buffer,
-            args.output.image_view,
+            args.output_context.command_buffer,
+            args.output_context.image_view,
             args.input_views[0],
             args.input_views[1],
             self.width,
@@ -381,14 +392,14 @@ pub const VulkanVideoFrameConverter = struct {
             .new_layout = .shader_read_only_optimal,
             .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
             .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-            .image = args.output.image,
+            .image = args.output_context.image,
             .subresource_range = output_range,
         };
-        self.vulkan.device.cmdPipelineBarrier2(args.output.command_buffer, &.{
+        self.vulkan.device.cmdPipelineBarrier2(args.output_context.command_buffer, &.{
             .image_memory_barrier_count = 1,
             .p_image_memory_barriers = @ptrCast(&after_compute),
         });
 
-        try self.vulkan.device.endCommandBuffer(args.output.command_buffer);
+        try self.vulkan.device.endCommandBuffer(args.output_context.command_buffer);
     }
 };

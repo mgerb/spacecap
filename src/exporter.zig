@@ -122,7 +122,7 @@ pub fn export_replay_buffers(
 }
 
 /// Encode raw BGRA image data and save to a file. Currently only supports PNG.
-pub fn export_image_to_file(
+pub fn export_bgra_image_to_file(
     allocator: std.mem.Allocator,
     io: std.Io,
     width: u32,
@@ -137,12 +137,30 @@ pub fn export_image_to_file(
     defer allocator.free(rgba);
 
     // Convert to RGBA
+    // TODO: could probably use SIMD here
     var i: usize = 0;
     while (i < rgba.len) : (i += 4) {
         rgba[i] = bgra[i + 2];
         rgba[i + 1] = bgra[i + 1];
         rgba[i + 2] = bgra[i];
         rgba[i + 3] = 255;
+    }
+
+    return export_rgba_image_to_file(allocator, io, width, height, rgba, output_directory);
+}
+
+/// Encode raw RGBA image data and save to a PNG file.
+pub fn export_rgba_image_to_file(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    width: u32,
+    height: u32,
+    rgba: []const u8,
+    output_directory: []const u8,
+) ![]u8 {
+    const expected_len: usize = width * height * 4;
+    if (rgba.len != expected_len) {
+        return error.InvalidScreenshotPixelData;
     }
 
     const encoded_data = try Png.encode(allocator, width, height, rgba);
@@ -163,7 +181,7 @@ pub fn export_image_to_file(
     defer file.close(io);
 
     try file.writeStreamingAll(io, encoded_data);
-    log.info("[export_image_to_file] wrote {s}", .{file_path});
+    log.info("[export_rgba_image_to_file] wrote {s}", .{file_path});
     return file_path;
 }
 
@@ -178,7 +196,7 @@ test "Exporter - export_image_to_file writes to the output directory" {
     const output_directory = try std.fs.path.join(allocator, &.{ tmp_dir_path_buffer[0..tmp_dir_path_len], "screenshots" });
     defer allocator.free(output_directory);
 
-    const file_path = try export_image_to_file(
+    const file_path = try export_bgra_image_to_file(
         allocator,
         io,
         1,

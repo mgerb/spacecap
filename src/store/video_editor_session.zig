@@ -763,7 +763,13 @@ pub const VideoEditorSession = struct {
             defer output_ref.deinit();
             const output = output_ref.as_ptr();
 
-            try self.converter.convert(frame, output);
+            try self.converter.convert(frame, .{
+                .image = output.image,
+                .image_view = output.image_view,
+                .command_pool = output.command_pool,
+                .command_buffer = output.command_buffer,
+                .fence = output.fence,
+            });
             output.pts_ns = pts_ns;
             self.image_buffer_pool.set_buffer(output);
             self.playback_position_ns.store(
