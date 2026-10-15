@@ -539,12 +539,15 @@ pub const TestStore = struct {
 
         fn show_in_file_explorer(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) anyerror!void {}
 
+        fn open_file_with_default_app(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) anyerror!void {}
+
         fn file_picker(self: *@This()) FilePicker {
             return .{
                 .ptr = self,
                 .vtable = &.{
                     .open_directory_picker = open_directory_picker,
                     .show_in_file_explorer = show_in_file_explorer,
+                    .open_file_with_default_app = open_file_with_default_app,
                 },
             };
         }
