@@ -16,7 +16,11 @@ pub const WindowsFilePicker = struct {
         return error.NotImplemented;
     }
 
-    pub fn open_file_explorer(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) !void {
+    pub fn show_in_file_explorer(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) !void {
+        return error.NotImplemented;
+    }
+
+    pub fn open_file_with_default_app(_: *anyopaque, _: Allocator, _: std.Io, _: []const u8) !void {
         return error.NotImplemented;
     }
 
@@ -27,7 +31,8 @@ pub const WindowsFilePicker = struct {
             .ptr = self,
             .vtable = &.{
                 .open_directory_picker = open_directory_picker,
-                .open_file_explorer = open_file_explorer,
+                .show_in_file_explorer = show_in_file_explorer,
+                .open_file_with_default_app = open_file_with_default_app,
             },
         };
     }

@@ -224,23 +224,23 @@ pub const XdgDesktopPortalFilePicker = struct {
         return selected_directory_from_result(allocator, result);
     }
 
-    const OpenFileExplorerContext = struct {
+    const ShowInFileExplorerContext = struct {
         loop: *c.GMainLoop,
         success: bool = false,
         g_error: ?*c.GError = null,
     };
 
-    fn open_file_explorer_callback(
+    fn show_in_file_explorer_callback(
         source_object: ?*c.GObject,
         result: ?*c.GAsyncResult,
         user_data: ?*anyopaque,
     ) callconv(.c) void {
-        const ctx: *OpenFileExplorerContext = @ptrCast(@alignCast(user_data));
+        const ctx: *ShowInFileExplorerContext = @ptrCast(@alignCast(user_data));
         ctx.success = c.xdp_portal_open_directory_finish(@ptrCast(source_object), result, &ctx.g_error) != 0;
         c.g_main_loop_quit(ctx.loop);
     }
 
-    pub fn open_file_explorer(
+    pub fn show_in_file_explorer(
         _: *anyopaque,
         allocator: Allocator,
         _: std.Io,
@@ -263,7 +263,7 @@ pub const XdgDesktopPortalFilePicker = struct {
         const loop = c.g_main_loop_new(main_context, 0) orelse return error.GMainLoopNewFailed;
         defer c.g_main_loop_unref(loop);
 
-        var ctx = OpenFileExplorerContext{ .loop = loop };
+        var ctx = ShowInFileExplorerContext{ .loop = loop };
         defer if (ctx.g_error) |g_err| c.g_error_free(g_err);
 
         c.g_main_context_push_thread_default(main_context);
@@ -275,7 +275,7 @@ pub const XdgDesktopPortalFilePicker = struct {
             uri,
             c.XDP_OPEN_URI_FLAG_NONE,
             null,
-            open_file_explorer_callback,
+            show_in_file_explorer_callback,
             &ctx,
         );
         c.g_main_loop_run(loop);
@@ -284,12 +284,36 @@ pub const XdgDesktopPortalFilePicker = struct {
             if (map_g_error(g_err)) |picker_err| {
                 return picker_err;
             }
-            log.err("[open_file_explorer] portal request failed: {s}", .{g_err.message.?});
-            return error.OpenFileExplorerFailed;
+            log.err("[show_in_file_explorer] portal request failed: {s}", .{g_err.message.?});
+            return error.ShowInFileExplorerFailed;
         }
 
         if (!ctx.success) {
-            return error.OpenFileExplorerFailed;
+            return error.ShowInFileExplorerFailed;
+        }
+    }
+
+    pub fn open_file_with_default_app(
+        _: *anyopaque,
+        allocator: Allocator,
+        _: std.Io,
+        file_path: []const u8,
+    ) !void {
+        const file_path_z = try allocator.dupeSentinel(u8, file_path, 0);
+        defer allocator.free(file_path_z);
+
+        const file = c.g_file_new_for_path(file_path_z.ptr) orelse return error.FilePathToUriFailed;
+        defer c.g_object_unref(file);
+        const uri = c.g_file_get_uri(file) orelse return error.FilePathToUriFailed;
+        defer c.g_free(uri);
+
+        var g_err: ?*c.GError = null;
+        if (c.g_app_info_launch_default_for_uri(uri, null, &g_err) == 0) {
+            defer if (g_err) |err| c.g_error_free(err);
+            if (g_err) |err| {
+                log.err("[open_file_with_default_app] failed to launch default app: {s}", .{err.message.?});
+            }
+            return error.OpenFileWithDefaultAppFailed;
         }
     }
 
@@ -302,7 +326,8 @@ pub const XdgDesktopPortalFilePicker = struct {
             .ptr = self,
             .vtable = &.{
                 .open_directory_picker = open_directory_picker,
-                .open_file_explorer = open_file_explorer,
+                .show_in_file_explorer = show_in_file_explorer,
+                .open_file_with_default_app = open_file_with_default_app,
             },
         };
     }

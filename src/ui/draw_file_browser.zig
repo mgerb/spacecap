@@ -105,9 +105,16 @@ pub fn draw(
             // Right click menu.
             // ----------------------------------------------------------------------------
             if (c.ImGui_BeginPopupContextItem()) {
-                if (c.ImGui_MenuItem("Show in system explorer")) {
+                if (comptime util.is_linux()) {
+                    if (c.ImGui_MenuItem("Open")) {
+                        store.dispatch(.{ .file_browser = .{
+                            .open_file_with_default_app = try String.init(store.allocator, entry.path.bytes),
+                        } });
+                    }
+                }
+                if (c.ImGui_MenuItem("Show in File Explorer")) {
                     store.dispatch(.{ .file_browser = .{
-                        .open_file_explorer = try String.init(store.allocator, entry.path.bytes),
+                        .show_in_file_explorer = try String.init(store.allocator, entry.path.bytes),
                     } });
                 }
                 if (c.ImGui_MenuItem("Copy file path")) {
