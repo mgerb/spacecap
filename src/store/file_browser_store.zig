@@ -33,7 +33,8 @@ pub const FileBrowserStore = struct {
     pub const Message = union(enum) {
         load_files,
         load_files_success: FileList,
-        open_file_explorer: String,
+        show_in_file_explorer: String,
+        open_file_with_default_app: String,
         delete_file: String,
         select_file: String,
         /// Set a file path to new so that it is highlighted
@@ -43,7 +44,8 @@ pub const FileBrowserStore = struct {
 
         pub const effects = .{
             .load_files = .{effect_load_files},
-            .open_file_explorer = .{effect_open_file_explorer},
+            .show_in_file_explorer = .{effect_show_in_file_explorer},
+            .open_file_with_default_app = .{effect_open_file_with_default_app},
             .delete_file = .{effect_delete_file},
             .select_file = .{VideoEditorStore.effect_open_session},
         };
@@ -51,7 +53,8 @@ pub const FileBrowserStore = struct {
         pub fn deinit(self: *@This()) void {
             switch (self.*) {
                 .load_files_success => |*files| files.deinit(),
-                .open_file_explorer => |*file_path| file_path.deinit(),
+                .show_in_file_explorer => |*file_path| file_path.deinit(),
+                .open_file_with_default_app => |*file_path| file_path.deinit(),
                 .delete_file => |*file_path| file_path.deinit(),
                 .select_file => |*file_path| file_path.deinit(),
                 .mark_file_new => |*file_path| file_path.deinit(),
@@ -117,7 +120,8 @@ pub const FileBrowserStore = struct {
                             state.file_browser.allocator.free(@constCast(removed.key));
                         }
                     },
-                    .open_file_explorer => {},
+                    .show_in_file_explorer => {},
+                    .open_file_with_default_app => {},
                     .delete_file => {},
                     .select_file => {},
                 }
@@ -168,9 +172,14 @@ pub const FileBrowserStore = struct {
         store.dispatch(.{ .file_browser = .{ .load_files_success = files } });
     }
 
-    fn effect_open_file_explorer(store: *Store, file_path: String) !void {
+    fn effect_show_in_file_explorer(store: *Store, file_path: String) !void {
         defer @constCast(&file_path).deinit();
-        try store.file_picker.open_file_explorer(store.allocator, store.io, file_path.bytes);
+        try store.file_picker.show_in_file_explorer(store.allocator, store.io, file_path.bytes);
+    }
+
+    fn effect_open_file_with_default_app(store: *Store, file_path: String) !void {
+        defer @constCast(&file_path).deinit();
+        try store.file_picker.open_file_with_default_app(store.allocator, store.io, file_path.bytes);
     }
 
     fn effect_delete_file(store: *Store, file_path: String) !void {
