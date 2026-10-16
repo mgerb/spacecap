@@ -177,6 +177,7 @@ fn build_linux(
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = false,
     });
     module.addOptions("build_options", options);
 
@@ -198,10 +199,27 @@ fn build_linux(
     try add_shared_dependencies(allocator, b, exe, target, optimize);
     try add_linux_dependencies(allocator, b, exe, target, optimize);
 
-    const install_step = b.addInstallArtifact(exe, .{
-        .dest_dir = .{ .override = .{ .custom = "linux" } },
-    });
-    b.getInstallStep().dependOn(&install_step.step);
+    const install_step: *std.Build.Step = if (optimize == .debug)
+        &b.addInstallArtifact(exe, .{
+            .dest_dir = .{ .override = .{ .custom = "linux" } },
+        }).step
+    else install: {
+        // zig objcopy is a thing, but most stripping features are not implemented yet.
+        const extract_debug = b.addSystemCommand(&.{ "objcopy", "--only-keep-debug" });
+        extract_debug.addFileArg(exe.getEmittedBin());
+        const debug_file = extract_debug.addOutputFileArg(EXE_NAME ++ "-linux-x86_64.debug");
+
+        const strip_binary = b.addSystemCommand(&.{ "objcopy", "--strip-all" });
+        strip_binary.addPrefixedFileArg("--add-gnu-debuglink=", debug_file);
+        strip_binary.addFileArg(exe.getEmittedBin());
+        const stripped_binary = strip_binary.addOutputFileArg(EXE_NAME);
+
+        const install_debug = b.addInstallFile(debug_file, "linux/" ++ EXE_NAME ++ "-linux-x86_64.debug");
+        const install_binary = b.addInstallFile(stripped_binary, "linux/" ++ EXE_NAME);
+        install_binary.step.dependOn(&install_debug.step);
+        break :install &install_binary.step;
+    };
+    b.getInstallStep().dependOn(install_step);
 
     const run_cmd = b.addRunFile(b.graph.path(.install_prefix, "linux/" ++ EXE_NAME));
     run_cmd.step.dependOn(b.getInstallStep());
@@ -211,7 +229,7 @@ fn build_linux(
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    return &install_step.step;
+    return install_step;
 }
 
 fn build_unit_tests(

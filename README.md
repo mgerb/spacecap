@@ -120,6 +120,18 @@ nix develop -c zig build run -Dnix
 nix develop -c zig build test -Dnix
 ```
 
+### Release debug information
+
+Debug info is stripped from release builds. However, debug info is still
+published separately in `spacecap-linux-x86_64.debug`. An address in a crash log
+can be cross referenced with the following:
+
+NOTE: The versions must be an exact match.
+
+```sh
+addr2line -e spacecap-linux-x86_64.debug -f -C -i 0x1234567
+```
+
 ## Logging
 
 By default, Spacecap only writes error logs to `error.log`. Set the
