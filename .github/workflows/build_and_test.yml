@@ -34,14 +34,20 @@ jobs:
       - name: Enable Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@main
 
+      - name: Build Nix package
+        run: nix build .#spacecap
+
+      - name: Check installed CLI
+        run: ./result/bin/spacecap -h
+
       - name: Build
-        run: nix develop -c zig build -Dnix
+        run: nix develop -c zig build
 
       - name: Test
-        run: nix develop -c zig build test -Dnix
+        run: nix develop -c zig build test
 
       - name: Build AppImage
-        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseSafe
+        run: nix develop -c zig build -Dappimage -Doptimize=ReleaseSafe -Drelease-target
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

@@ -5,6 +5,7 @@ const build_linux_app_image = @import("./build/app_image.zig").build_linux_app_i
 
 const EXE_NAME = "spacecap";
 const PackageVersion = version.PackageVersion;
+const Platform = enum { all, linux, windows };
 
 // TODO: There are still some issues with the Zig backend. Use LLMV for now...
 const USE_LLVM = true;
@@ -63,12 +64,53 @@ fn add_shared_dependencies(
     exe.root_module.addImport("vulkan", vulkan);
     exe.root_module.addIncludePath(vulkan_headers.path("include"));
 
+    // We don't need any of this extra SDL stuff.
+    const sdl_common_overrides = [_][]const u8{
+        "-DSDL_HIDAPI_DISABLED",
+        "-DSDL_CAMERA_DISABLED",
+        "-DSDL_GPU_DISABLED",
+        "-DSDL_RENDER_DISABLED",
+        "-USDL_JOYSTICK_HIDAPI",
+        "-USDL_JOYSTICK_VIRTUAL",
+        "-USDL_VIDEO_DRIVER_OFFSCREEN",
+        "-USDL_VIDEO_OPENGL",
+        "-USDL_VIDEO_OPENGL_ES",
+        "-USDL_VIDEO_OPENGL_ES2",
+        "-USDL_VIDEO_OPENGL_EGL",
+        "-USDL_AUDIO_DRIVER_DISK",
+    };
+    const sdl_overrides: []const []const u8 = switch (target.result.os.tag) {
+        .linux => &(sdl_common_overrides ++ [_][]const u8{
+            "-DSDL_SENSOR_DISABLED",
+            "-USDL_JOYSTICK_LINUX",
+            "-UHAVE_LIBUSB",
+            "-UHAVE_LIBURING_H",
+            "-USDL_VIDEO_DRIVER_KMSDRM",
+            "-USDL_VIDEO_OPENGL_GLX",
+            "-USDL_AUDIO_DRIVER_ALSA",
+            "-USDL_AUDIO_DRIVER_JACK",
+            "-USDL_AUDIO_DRIVER_PULSEAUDIO",
+            "-USDL_AUDIO_DRIVER_SNDIO",
+        }),
+        .windows => &(sdl_common_overrides ++ [_][]const u8{
+            // SDL's haptic implementation requires the DirectInput joystick backend.
+            "-USDL_SENSOR_WINDOWS",
+            "-USDL_JOYSTICK_XINPUT",
+            "-USDL_JOYSTICK_RAWINPUT",
+            "-USDL_JOYSTICK_WGI",
+            "-USDL_JOYSTICK_GAMEINPUT",
+            "-USDL_VIDEO_OPENGL_WGL",
+            "-USDL_AUDIO_DRIVER_DSOUND",
+        }),
+        else => &sdl_common_overrides,
+    };
     // NOTE: SDL3 is statically linked by imguiz.
     const imguiz = b.dependency("imguiz", .{
         .target = target,
         .optimize = optimize,
         .freetype = true,
         .pipewire_linkage = .static,
+        .sdl_build_config_h_overrides = sdl_overrides,
     }).module("imguiz");
     exe.root_module.addImport("imguiz", imguiz);
 }
@@ -137,6 +179,7 @@ fn build_windows(
         .os_tag = .windows,
         .abi = .gnu,
         .cpu_arch = .x86_64,
+        .cpu_model = .baseline,
     });
 
     const module = b.createModule(.{
@@ -168,7 +211,7 @@ fn build_linux(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    nix: bool,
+    release_target: bool,
     package_version: PackageVersion,
     options: *std.Build.Step.Options,
 ) !*std.Build.Step {
@@ -187,7 +230,7 @@ fn build_linux(
         .use_llvm = USE_LLVM,
     });
 
-    if (!nix) {
+    if (release_target) {
         // This prevents linker errors when building for generic Linux target on NixOS.
         exe.linker_allow_shlib_undefined = true;
         // NixOS can't run dynamically linked executables, so there
@@ -268,7 +311,8 @@ pub fn build(b: *std.Build) !void {
     const allocator = b.allocator;
 
     // Build Options
-    const nix_option = b.option(bool, "nix", "If on NixOS, use this flag to run") orelse false;
+    const release_target = b.option(bool, "release-target", "Build release targets") orelse false;
+    const platform = b.option(Platform, "platform", "Platforms to build (all, linux, windows). Defaults to all.") orelse .all;
     const appimage_option = b.option(bool, "appimage", "Build Linux AppImage after install") orelse false;
     const release_version_option = b.option(bool, "release-version", "Build the stable Spacecap version from build.zig.zon instead of a git-derived dev version.") orelse false;
     const ignore_version_check = b.option(
@@ -291,8 +335,8 @@ pub fn build(b: *std.Build) !void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", resolved_version);
 
-    if (appimage_option and nix_option == true) {
-        std.log.err("AppImage builds require generic linux target. Run without -Dnix.", .{});
+    if (appimage_option and !release_target) {
+        std.log.err("AppImage builds require generic linux target. Run with -Drelease-target.", .{});
         return error.InvalidBuildConfig;
     }
 
@@ -302,40 +346,51 @@ pub fn build(b: *std.Build) !void {
         return error.InvalidBuildConfig;
     }
 
-    try build_windows(
-        allocator,
-        b,
-        optimize,
-        package_version,
-        options,
-    );
-
-    const linux_target = if (nix_option == true) b.standardTargetOptions(.{}) else b.resolveTargetQuery(.{
-        .os_tag = .linux,
-        .abi = .gnu,
-        .cpu_arch = .x86_64,
-    });
-
-    const linux_install_step = try build_linux(
-        allocator,
-        b,
-        linux_target,
-        optimize,
-        nix_option,
-        package_version,
-        options,
-    );
-
-    if (appimage_option) {
-        const appimage_step = build_linux_app_image(b, linux_install_step);
-        b.getInstallStep().dependOn(appimage_step);
+    // ----------------------------------------------------------------------------
+    // Build for Windows
+    // ----------------------------------------------------------------------------
+    if (platform != .linux) {
+        try build_windows(
+            allocator,
+            b,
+            optimize,
+            package_version,
+            options,
+        );
     }
 
-    try build_unit_tests(
-        allocator,
-        b,
-        linux_target,
-        optimize,
-        options,
-    );
+    // ----------------------------------------------------------------------------
+    // Build for Linux
+    // ----------------------------------------------------------------------------
+    if (platform != .windows) {
+        const linux_target = if (release_target) b.resolveTargetQuery(.{
+            .os_tag = .linux,
+            .abi = .gnu,
+            .cpu_arch = .x86_64,
+            .cpu_model = .baseline,
+        }) else b.standardTargetOptions(.{});
+
+        const linux_install_step = try build_linux(
+            allocator,
+            b,
+            linux_target,
+            optimize,
+            release_target,
+            package_version,
+            options,
+        );
+
+        if (appimage_option) {
+            const appimage_step = build_linux_app_image(b, linux_install_step);
+            b.getInstallStep().dependOn(appimage_step);
+        }
+
+        try build_unit_tests(
+            allocator,
+            b,
+            linux_target,
+            optimize,
+            options,
+        );
+    }
 }

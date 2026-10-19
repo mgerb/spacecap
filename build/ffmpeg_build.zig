@@ -1,5 +1,4 @@
 const std = @import("std");
-const build_util = @import("./build_util.zig");
 
 pub fn build_linux(
     b: *std.Build,
@@ -44,15 +43,9 @@ pub fn build_windows(
     const mingw_zlib_path = b.graph.environ_map.get("MINGW_ZLIB_PATH") orelse
         @panic("MINGW_ZLIB_PATH must be set when building the Windows target");
     exe.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mingw_zlib_path, "lib" }) });
-    try build_util.install_and_link_system_library(.{
-        .allocator = b.allocator,
-        .b = b,
-        .exe = exe,
-        .source_dir = b.pathJoin(&.{ mingw_zlib_path, "bin" }),
-        .lib_name = "z.dll",
-        .target = .windows,
-        .file_name_override = "zlib1.dll",
-        .link_options = .{ .use_pkg_config = .no },
+    exe.root_module.linkSystemLibrary("z", .{
+        .preferred_link_mode = .static,
+        .use_pkg_config = .no,
     });
 }
 
