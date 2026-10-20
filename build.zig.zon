@@ -1,6 +1,6 @@
 .{
     .name = .spacecap,
-    .version = "0.7.0",
+    .version = "0.8.0",
     .fingerprint = 0xdc2511c12abe6e80,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
@@ -17,8 +17,8 @@
             .hash = "N-V-__8AAJpxYgW29IA1MGBOmQ-DaqXIv39OFUDYrokatb7C",
         },
         .imguiz = .{
-            .url = "git+https://github.com/mgerb/imguiz#cceea12be641bd375697c99fee541788f6b357c5",
-            .hash = "imguiz-0.0.0-sI63z7iYegTRAc4Hz2rYIc6q5AnwpXFcvh-ot2vL1_v-",
+            .url = "git+https://github.com/mgerb/imguiz#41e07b3e703e742d255c3827c96e7493b36cc2a2",
+            .hash = "imguiz-0.0.0-sI63z32aegS5JHK8FS8bfBagcrWWVlZAmTeWuntf3O5M",
         },
         .pipewire = .{
             .url = "git+https://github.com/mgerb/pipewire#635337109b9e3fe558430c74ccdd1e7715563bbc",

@@ -6,7 +6,7 @@ const imguiz = @import("imguiz").imguiz;
 
 const log = std.log.scoped(.sdl);
 
-const SDL_INIT_FLAGS = imguiz.SDL_INIT_VIDEO | imguiz.SDL_INIT_GAMEPAD;
+const SDL_INIT_FLAGS = imguiz.SDL_INIT_VIDEO;
 
 pub const SDLVulkanExtensions = struct {
     allocator: std.mem.Allocator,
@@ -55,6 +55,8 @@ pub fn init() !void {
     }
 
     if (util.is_linux()) {
+        // Keep Wayland windows free of client-side title bars.
+        _ = imguiz.SDL_SetHint(imguiz.SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR, "0");
         if (try try_sdl_init_with_hint("wayland")) {
             log.info("[sdl_init] using wayland", .{});
         } else if (try try_sdl_init_with_hint("x11")) {

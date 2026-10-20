@@ -10,22 +10,7 @@ High performance screen recording software for Linux. _Still pre-alpha (see feat
 - UI built with [imgui](https://github.com/ocornut/imgui) and [SDL3](https://github.com/allyourcodebase/SDL3)
 - Muxing/Audio encoding with [FFmpeg](https://www.ffmpeg.org/)
 
-![screenshot5](./docs/screenshot_6.png)
-
-## Installation
-
-```sh
-# Spacecap will be installed to ~/.local/bin/spacecap
-
-# Install the latest stable release
-curl -LsSf https://spacecap.org/install | sh
-
-# Install the latest nightly build, which is in sync with main
-curl -LsSf https://spacecap.org/install | sh -s -- --nightly
-
-# Uninstall
-curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
-```
+![screenshot6](./docs/screenshot_6.png)
 
 ## Features
 
@@ -37,6 +22,44 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 - Capture preview
 - File browser
 - Video editor (trim and export clips)
+
+## Installation
+
+```sh
+# Install the latest stable release
+curl -LsSf https://spacecap.org/install | sh
+
+# Install the latest nightly build, which is in sync with main
+curl -LsSf https://spacecap.org/install | sh -s -- --nightly
+
+# Uninstall
+curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
+
+# NOTE: This only (un)installs the following files (appimage, desktop file, icon):
+# ~/.local/bin/spacecap
+# ~/.local/share/applications/org.spacecap.spacecap.desktop
+# ~/.local/share/icons/hicolor/scalable/apps/spacecap.svg
+```
+
+### Nix
+
+```nix
+# Tracks the main branch (nightly).
+
+# flake.nix
+{...}: {
+  inputs = {
+    spacecap.url = "github:mgerb/spacecap";
+  };
+}
+
+# configuration.nix
+{ inputs, pkgs, ... }: {
+  environment.systemPackages = [
+    inputs.spacecap.packages.${pkgs.stdenv.hostPlatform.system}.spacecap
+  ];
+}
+```
 
 ## Roadmap
 
@@ -111,13 +134,13 @@ hl.bind(
 
 ```sh
 # Build
-nix develop -c zig build -Dnix
+nix develop -c zig build
 
 # Run
-nix develop -c zig build run -Dnix
+nix develop -c zig build run
 
 # Test
-nix develop -c zig build test -Dnix
+nix develop -c zig build test
 ```
 
 ## Logging
