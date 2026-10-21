@@ -93,6 +93,7 @@ jobs:
         run: |
           sha256sum zig-out/linux/spacecap-linux-x86_64 > SHA256SUMS.txt
           sha256sum zig-out/linux/spacecap-linux-x86_64.AppImage >> SHA256SUMS.txt
+          sha256sum zig-out/linux/spacecap-linux-x86_64.debug >> SHA256SUMS.txt
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v4
@@ -101,6 +102,7 @@ jobs:
           path: |
             zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
+            zig-out/linux/spacecap-linux-x86_64.debug
             SHA256SUMS.txt
 
       - name: Move Nightly Tag
@@ -138,6 +140,7 @@ jobs:
           files: |
             zig-out/linux/spacecap-linux-x86_64
             zig-out/linux/spacecap-linux-x86_64.AppImage
+            zig-out/linux/spacecap-linux-x86_64.debug
             SHA256SUMS.txt
 
       - name: Test Install Script
