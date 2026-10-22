@@ -26,18 +26,24 @@ pub const PipewireVideo = struct {
     const SpaPodParams = struct {
         allocator: Allocator,
         // This should be plenty of room.
-        buffer: [8192]u8 = @splat(0),
+        // POD pointers must survive returning/moving SpaPodParams by value.
+        buffer: []align(@alignOf(u64)) u8,
         params: std.ArrayList(*pw.spa_pod),
 
         fn init(allocator: Allocator) !@This() {
+            const buffer = try allocator.alignedAlloc(u8, .of(u64), 8192);
+            errdefer allocator.free(buffer);
+            @memset(buffer, 0);
             return .{
                 .allocator = allocator,
+                .buffer = buffer,
                 .params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0),
             };
         }
 
         fn deinit(self: *@This()) void {
             self.params.deinit(self.allocator);
+            self.allocator.free(self.buffer);
         }
     };
 
@@ -806,3 +812,22 @@ pub const PipewireVideo = struct {
         }
     }
 };
+
+test "SpaPodParams return preserves POD backing storage" {
+    const Factory = struct {
+        noinline fn make(allocator: Allocator) !PipewireVideo.SpaPodParams {
+            var params = try PipewireVideo.SpaPodParams.init(allocator);
+            errdefer params.deinit();
+            const pod: *pw.spa_pod = @ptrCast(@alignCast(params.buffer[0..].ptr));
+            try params.params.append(allocator, pod);
+            return params;
+        }
+    };
+
+    var params = try Factory.make(std.testing.allocator);
+    defer params.deinit();
+    try std.testing.expectEqual(
+        @intFromPtr(params.buffer[0..].ptr),
+        @intFromPtr(params.params.items[0]),
+    );
+}

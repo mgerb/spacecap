@@ -7,7 +7,77 @@ const VulkanRgbYcbcrConversionPipeline = @import("../vulkan/vulkan_rgb_ycbcr_con
 const vulkan_h264_parameters = @import("./vulkan_h264_parameters.zig");
 const types = @import("../types.zig");
 
-const REFERENCE_IMAGE_COUNT = 2;
+const REFERENCE_PICTURE_COUNT = 2;
+const REFERENCE_SUBRESOURCE_RANGE = vk.ImageSubresourceRange{
+    .aspect_mask = .{ .color = true },
+    .base_mip_level = 0,
+    .level_count = 1,
+    .base_array_layer = 0,
+    .layer_count = REFERENCE_PICTURE_COUNT,
+};
+
+const ReferencePictureLimits = struct {
+    max_dpb_slots: u32 = REFERENCE_PICTURE_COUNT,
+    max_active_reference_pictures: u32 = 1,
+
+    fn from_capabilities(capabilities: vk.VideoCapabilitiesKHR) !@This() {
+        const limits = @This(){};
+        if (capabilities.max_dpb_slots < limits.max_dpb_slots or
+            capabilities.max_active_reference_pictures < limits.max_active_reference_pictures)
+        {
+            return error.VideoEncodeReferencePicturesUnsupported;
+        }
+        return limits;
+    }
+};
+
+fn reference_image_create_info(
+    profile_list: *const vk.VideoProfileListInfoKHR,
+    format: vk.Format,
+    size: types.Size,
+    queue_family: *const u32,
+) vk.ImageCreateInfo {
+    return .{
+        .p_next = profile_list,
+        .image_type = .@"2d",
+        .format = format,
+        .extent = .{ .height = size.height, .width = size.width, .depth = 1 },
+        .mip_levels = 1,
+        .array_layers = REFERENCE_PICTURE_COUNT,
+        .samples = .{ .@"1" = true },
+        .tiling = .optimal,
+        .usage = .{ .video_encode_dpb_khr = true },
+        .sharing_mode = .exclusive,
+        .queue_family_index_count = 1,
+        .p_queue_family_indices = @ptrCast(queue_family),
+        .initial_layout = .undefined,
+    };
+}
+
+fn reference_image_view_create_info(image: vk.Image, format: vk.Format) vk.ImageViewCreateInfo {
+    return .{
+        .image = image,
+        .view_type = .@"2d_array",
+        .format = format,
+        .subresource_range = REFERENCE_SUBRESOURCE_RANGE,
+        .components = std.mem.zeroes(vk.ComponentMapping),
+    };
+}
+
+fn reference_picture_resources(image_view: vk.ImageView, size: types.Size, frame_count: u32) struct {
+    reconstructed: vk.VideoPictureResourceInfoKHR,
+    reference: vk.VideoPictureResourceInfoKHR,
+} {
+    const reconstructed = vk.VideoPictureResourceInfoKHR{
+        .image_view_binding = image_view,
+        .coded_offset = .{ .x = 0, .y = 0 },
+        .coded_extent = .{ .width = size.width, .height = size.height },
+        .base_array_layer = frame_count & 1,
+    };
+    var reference = reconstructed;
+    reference.base_array_layer ^= 1;
+    return .{ .reconstructed = reconstructed, .reference = reference };
+}
 
 pub const EncodeResult = struct {
     idr: bool,
@@ -163,7 +233,7 @@ pub const VulkanVideoEncoder = struct {
             }
         }
 
-        try self.allocate_reference_images(REFERENCE_IMAGE_COUNT);
+        try self.allocate_reference_images();
         errdefer self.destroy_images();
 
         try self.allocate_intermediate_image();
@@ -256,6 +326,8 @@ pub const VulkanVideoEncoder = struct {
         capabilities.p_next = &encode_capabilities;
 
         try self.vulkan.instance.getPhysicalDeviceVideoCapabilitiesKHR(self.vulkan.physical_device, &self.video_profile.?, &capabilities);
+
+        const reference_limits = try ReferencePictureLimits.from_capabilities(capabilities);
 
         self.chosen_rate_control_mode = std.mem.zeroes(vk.VideoEncodeRateControlModeFlagsKHR);
         if (encode_capabilities.rate_control_modes.vbr_khr) {
@@ -385,8 +457,8 @@ pub const VulkanVideoEncoder = struct {
         create_info.queue_family_index = self.vulkan.video_encode_h264_queue.?.family;
         create_info.picture_format = self.chosen_src_image_format.?;
         create_info.max_coded_extent = .{ .width = self.width, .height = self.height };
-        create_info.max_dpb_slots = 16;
-        create_info.max_active_reference_pictures = 16;
+        create_info.max_dpb_slots = reference_limits.max_dpb_slots;
+        create_info.max_active_reference_pictures = reference_limits.max_active_reference_pictures;
         create_info.reference_picture_format = self.chosen_dpb_image_format.?;
         create_info.p_std_header_version = &h264_std_extension_version;
         create_info.p_video_profile = &self.video_profile.?;
@@ -543,49 +615,26 @@ pub const VulkanVideoEncoder = struct {
         self.bit_stream_data = @ptrCast(try self.vulkan.device.mapMemory(self.bit_stream_memory.?, 0, memory_reqs.size, .{}));
     }
 
-    fn allocate_reference_images(self: *Self, count: u32) !void {
+    fn allocate_reference_images(self: *Self) !void {
         errdefer self.destroy_images();
-        for (0..count) |_| {
-            const image_create_info = vk.ImageCreateInfo{
-                .p_next = &self.video_profile_list.?,
-                .image_type = .@"2d",
-                .format = self.chosen_dpb_image_format.?,
-                .extent = .{ .height = self.height, .width = self.width, .depth = 1 },
-                .mip_levels = 1,
-                .array_layers = 1,
-                .samples = .{ .@"1" = true },
-                .tiling = .optimal,
-                .usage = .{ .video_encode_dpb_khr = true },
-                .sharing_mode = .exclusive,
-                .queue_family_index_count = 1,
-                .p_queue_family_indices = @ptrCast(&self.vulkan.video_encode_h264_queue.?.family),
-                .initial_layout = .undefined,
-                .flags = .{},
-            };
+        // A layered image also works on devices without separate_reference_images.
+        const image_create_info = reference_image_create_info(
+            &self.video_profile_list.?,
+            self.chosen_dpb_image_format.?,
+            .{ .width = self.width, .height = self.height },
+            &self.vulkan.video_encode_h264_queue.?.family,
+        );
 
-            const image = try self.vulkan.device.createImage(&image_create_info, null);
-            try self.dpb_images.append(self.allocator, image);
-            const memory_reqs = self.vulkan.device.getImageMemoryRequirements(image);
-            const memory = try self.vulkan.allocate(memory_reqs, .{}, null);
-            try self.dpb_image_memory.append(self.allocator, memory);
-            try self.vulkan.device.bindImageMemory(image, memory, 0);
+        const image = try self.vulkan.device.createImage(&image_create_info, null);
+        try self.dpb_images.append(self.allocator, image);
+        const memory_reqs = self.vulkan.device.getImageMemoryRequirements(image);
+        const memory = try self.vulkan.allocate(memory_reqs, .{}, null);
+        try self.dpb_image_memory.append(self.allocator, memory);
+        try self.vulkan.device.bindImageMemory(image, memory, 0);
 
-            const view_info = vk.ImageViewCreateInfo{
-                .image = image,
-                .view_type = .@"2d",
-                .format = self.chosen_dpb_image_format.?,
-                .subresource_range = .{
-                    .aspect_mask = .{ .color = true },
-                    .base_mip_level = 0,
-                    .level_count = 1,
-                    .base_array_layer = 0,
-                    .layer_count = 1,
-                },
-                .components = std.mem.zeroes(vk.ComponentMapping),
-            };
-            const image_view = try self.vulkan.device.createImageView(&view_info, null);
-            try self.dpb_image_views.append(self.allocator, image_view);
-        }
+        const view_info = reference_image_view_create_info(image, self.chosen_dpb_image_format.?);
+        const image_view = try self.vulkan.device.createImageView(&view_info, null);
+        try self.dpb_image_views.append(self.allocator, image_view);
     }
 
     fn allocate_intermediate_image(self: *Self) !void {
@@ -753,13 +802,7 @@ pub const VulkanVideoEncoder = struct {
                 .src_stage_mask = .{ .bottom_of_pipe = true },
                 .dst_stage_mask = .{ .top_of_pipe = true },
                 .old_layout = .undefined,
-                .subresource_range = .{
-                    .aspect_mask = .{ .color = true },
-                    .base_mip_level = 0,
-                    .level_count = 1,
-                    .base_array_layer = 0,
-                    .layer_count = 1,
-                },
+                .subresource_range = REFERENCE_SUBRESOURCE_RANGE,
                 .image = dpb_image,
                 .new_layout = .video_encode_dpb_khr,
                 .src_queue_family_index = 0,
@@ -915,20 +958,15 @@ pub const VulkanVideoEncoder = struct {
 
         // start a video encode session
         // set an image view as DPB (decoded output picture)
-        const dpb_pic_resource = vk.VideoPictureResourceInfoKHR{
-            .image_view_binding = self.dpb_image_views.items[gop_frame_count & 1],
-            .coded_offset = .{ .x = 0, .y = 0 },
-            .coded_extent = .{ .height = self.height, .width = self.width },
-            .base_array_layer = 0,
-        };
+        const resources = reference_picture_resources(
+            self.dpb_image_views.items[0],
+            .{ .width = self.width, .height = self.height },
+            gop_frame_count,
+        );
+        const dpb_pic_resource = resources.reconstructed;
 
         // set an image view as reference picture
-        const ref_pic_resource = vk.VideoPictureResourceInfoKHR{
-            .image_view_binding = self.dpb_image_views.items[@intFromBool((gop_frame_count & 1) == 0)],
-            .coded_offset = .{ .x = 0, .y = 0 },
-            .coded_extent = .{ .height = self.height, .width = self.width },
-            .base_array_layer = 0,
-        };
+        const ref_pic_resource = resources.reference;
 
         const max_pic_order_cnt_lsb: u32 = @as(u32, 1) << @as(u5, @intCast(self.sps.?.log_2_max_pic_order_cnt_lsb_minus_4 + 4));
 
@@ -1211,3 +1249,95 @@ pub const VulkanVideoEncoder = struct {
         self.ycbcr_image_plane_views.deinit(self.allocator);
     }
 };
+
+test "VulkanVideoEncoder reference limits accept the minimum supported capabilities" {
+    // RADV RENOIR does not support separate reference images and allows one
+    // active reference. Devices with higher limits should use the same layout.
+    const Case = struct { slots: u32, active: u32, separate_images: bool = false };
+    for ([_]Case{
+        .{ .slots = 2, .active = 1 },
+        .{ .slots = 17, .active = 1 },
+        .{ .slots = 16, .active = 16, .separate_images = true },
+    }) |case| {
+        const capabilities = std.mem.zeroInit(vk.VideoCapabilitiesKHR, .{
+            .flags = .{ .separate_reference_images_khr = case.separate_images },
+            .max_dpb_slots = case.slots,
+            .max_active_reference_pictures = case.active,
+        });
+        const limits = try ReferencePictureLimits.from_capabilities(capabilities);
+        try std.testing.expectEqual(@as(u32, 2), limits.max_dpb_slots);
+        try std.testing.expectEqual(@as(u32, 1), limits.max_active_reference_pictures);
+        try std.testing.expect(limits.max_dpb_slots <= capabilities.max_dpb_slots);
+        try std.testing.expect(limits.max_active_reference_pictures <= capabilities.max_active_reference_pictures);
+    }
+}
+
+test "VulkanVideoEncoder reference limits reject insufficient capabilities" {
+    const Case = struct { slots: u32, active: u32 };
+    for ([_]Case{
+        .{ .slots = 0, .active = 1 },
+        .{ .slots = 1, .active = 1 },
+        .{ .slots = 2, .active = 0 },
+    }) |case| {
+        const capabilities = std.mem.zeroInit(vk.VideoCapabilitiesKHR, .{
+            .max_dpb_slots = case.slots,
+            .max_active_reference_pictures = case.active,
+        });
+        try std.testing.expectError(
+            error.VideoEncodeReferencePicturesUnsupported,
+            ReferencePictureLimits.from_capabilities(capabilities),
+        );
+    }
+}
+
+test "VulkanVideoEncoder DPB image and view cover both reference layers" {
+    const profiles = vk.VideoProfileListInfoKHR{};
+    const queue_family: u32 = 2;
+    const format: vk.Format = .g8_b8r8_2plane_420_unorm;
+    const image: vk.Image = @fromBackingInt(7);
+    const create_info = reference_image_create_info(&profiles, format, .{ .width = 3840, .height = 2160 }, &queue_family);
+    const view_info = reference_image_view_create_info(image, format);
+
+    try std.testing.expectEqual(vk.ImageType.@"2d", create_info.image_type);
+    try std.testing.expectEqual(@as(u32, 2), create_info.array_layers);
+    try std.testing.expectEqualDeep(vk.Extent3D{ .width = 3840, .height = 2160, .depth = 1 }, create_info.extent);
+    try std.testing.expect(create_info.usage.video_encode_dpb_khr);
+    try std.testing.expectEqual(image, view_info.image);
+    try std.testing.expectEqual(vk.ImageViewType.@"2d_array", view_info.view_type);
+    try std.testing.expectEqual(format, view_info.format);
+    try std.testing.expectEqual(@as(u32, 0), view_info.subresource_range.base_array_layer);
+    try std.testing.expectEqual(create_info.array_layers, view_info.subresource_range.layer_count);
+    // The initial transition uses this same range, including the second layer.
+    try std.testing.expectEqualDeep(REFERENCE_SUBRESOURCE_RANGE, view_info.subresource_range);
+}
+
+test "VulkanVideoEncoder reference pictures alternate layers of a shared view across GOPs" {
+    const view: vk.ImageView = @fromBackingInt(11);
+    const size = types.Size{ .width = 3840, .height = 2160 };
+    const vui = vulkan_h264_parameters.get_std_video_h264_sequence_parameter_set_vui(60);
+    const sps = vulkan_h264_parameters.get_std_video_h264_sequence_parameter_set(size.width, size.height, &vui);
+    const pps = vulkan_h264_parameters.get_std_video_h264_picture_parameter_set();
+    var previous_layer: u32 = 1;
+    for (0..48) |frame| {
+        const gop_frame: u32 = @intCast(frame % 16);
+        const resources = reference_picture_resources(view, size, gop_frame);
+        try std.testing.expectEqual(view, resources.reconstructed.image_view_binding);
+        try std.testing.expectEqual(view, resources.reference.image_view_binding);
+        try std.testing.expectEqual(@as(u32, @intCast(frame % 2)), resources.reconstructed.base_array_layer);
+        try std.testing.expectEqual(previous_layer, resources.reference.base_array_layer);
+        try std.testing.expect(resources.reconstructed.base_array_layer != resources.reference.base_array_layer);
+        try std.testing.expect(resources.reconstructed.base_array_layer < REFERENCE_PICTURE_COUNT);
+        try std.testing.expect(resources.reference.base_array_layer < REFERENCE_PICTURE_COUNT);
+        try std.testing.expectEqualDeep(vk.Extent2D{ .width = size.width, .height = size.height }, resources.reconstructed.coded_extent);
+        try std.testing.expectEqualDeep(resources.reconstructed.coded_extent, resources.reference.coded_extent);
+        if (gop_frame > 0) {
+            var frame_info = vulkan_h264_parameters.FrameInfo{};
+            vulkan_h264_parameters.FrameInfo.init(&frame_info, gop_frame, sps, pps, false);
+            try std.testing.expectEqual(
+                resources.reference.base_array_layer,
+                @as(u32, frame_info.reference_lists.ref_pic_list_0[0]),
+            );
+        }
+        previous_layer = resources.reconstructed.base_array_layer;
+    }
+}
