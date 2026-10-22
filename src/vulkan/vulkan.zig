@@ -430,6 +430,16 @@ pub const Vulkan = struct {
         var modifiers = try std.ArrayList(u64).initCapacity(allocator, 0);
 
         for (format_mod_props) |modifier| {
+            // Compatibility workaround: xdg-desktop-portal-hyprland 1.4.1
+            // advertises one buffer block even for AMD DCC modifiers requiring
+            // an auxiliary memory plane. Do not negotiate layouts it cannot send.
+            if (modifier.drm_format_modifier_plane_count != 1) {
+                log.debug("[query_format_modifiers] skipping modifier {x}: requires {} memory planes", .{
+                    modifier.drm_format_modifier,
+                    modifier.drm_format_modifier_plane_count,
+                });
+                continue;
+            }
             if (self.supports_importable_modifier(format, modifier.drm_format_modifier)) {
                 try modifiers.append(allocator, modifier.drm_format_modifier);
             }
