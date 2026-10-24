@@ -25,19 +25,25 @@ pub const PipewireVideo = struct {
     /// that maintain the same lifetime.
     const SpaPodParams = struct {
         allocator: Allocator,
-        // This should be plenty of room.
-        buffer: [8192]u8 = @splat(0),
+        // NOTE: Pipewire POD (plain old data) requires 8 byte aligned data:
+        // https://docs.pipewire.org/page_spa_pod.html
+        buffer: []align(@alignOf(u64)) u8,
         params: std.ArrayList(*pw.spa_pod),
 
         fn init(allocator: Allocator) !@This() {
+            // Size is arbitrary - it should be enough...
+            const buffer = try allocator.alignedAlloc(u8, .of(u64), 8192);
+            errdefer allocator.free(buffer);
             return .{
                 .allocator = allocator,
+                .buffer = buffer,
                 .params = try std.ArrayList(*pw.spa_pod).initCapacity(allocator, 0),
             };
         }
 
         fn deinit(self: *@This()) void {
             self.params.deinit(self.allocator);
+            self.allocator.free(self.buffer);
         }
     };
 
