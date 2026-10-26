@@ -8,6 +8,7 @@ const pipewire_util = @import("./pipewire_util.zig");
 
 const PipewireFrameBufferImage = struct {
     image: vk.Image,
+    format: vk.Format,
     image_view: vk.ImageView,
     device_memory: vk.DeviceMemory,
     fd: i64,
@@ -108,30 +109,24 @@ pub const PipewireFrameBufferManager = struct {
             try subresource_layouts.append(self.allocator, subresource_layout);
         }
 
+        const fd = frame_buffer.pwb.buffer[0].datas[0].fd;
+        if (frame_buffer.frame_buffer_image) |*buffer_image| {
+            if (buffer_image.fd != fd) {
+                self.destroy_buffer_image(buffer_image);
+                frame_buffer.frame_buffer_image = null;
+            }
+        }
+        if (frame_buffer.frame_buffer_image == null) {
+            frame_buffer.frame_buffer_image = self.create_vulkan_image(info, fd, subresource_layouts.items) catch |err| {
+                log.err("[get_vulkan_image] DMA-BUF image import failed: {}", .{err});
+                return error.DmaBufImportFailed;
+            };
+        }
+
         if (self.vk_foreign_semaphore == null) {
             self.vk_foreign_semaphore = try self.vulkan.device.createSemaphore(&.{}, null);
         }
-
-        const fd = frame_buffer.pwb.buffer[0].datas[0].fd;
         try pipewire_util.dmabuf_export_sync_file(self.vulkan, fd, self.vk_foreign_semaphore.?);
-
-        // First, check if vulkan images have not yet been created for a buffer.
-        if (frame_buffer.frame_buffer_image == null) {
-            frame_buffer.frame_buffer_image = try self.create_vulkan_image(info, fd, subresource_layouts.items);
-        }
-
-        assert(frame_buffer.frame_buffer_image != null);
-
-        var buffer_image = frame_buffer.frame_buffer_image.?;
-
-        // Next, check if the file descriptor matches, then return if so.
-        if (buffer_image.fd != fd) {
-            // Finally, if the FD doesn't match, destroy the buffer image and create a new one.
-            self.destroy_buffer_image(&buffer_image);
-
-            frame_buffer.frame_buffer_image = try self.create_vulkan_image(info, fd, subresource_layouts.items);
-            assert(frame_buffer.frame_buffer_image != null);
-        }
 
         return .{
             .frame_buffer = frame_buffer,
@@ -184,10 +179,15 @@ pub const PipewireFrameBufferManager = struct {
 
         const mem_reqs = self.vulkan.device.getImageMemoryRequirements(image);
 
+        const import_fd = std.os.linux.fcntl(@intCast(fd), std.os.linux.F.DUPFD_CLOEXEC, 0);
+
+        if (std.posix.errno(import_fd) != .SUCCESS) {
+            return error.DupDmaBufFd;
+        }
+
         var import_fd_info = vk.ImportMemoryFdInfoKHR{
             .handle_type = .{ .dma_buf_ext = true },
-            // TODO: This could error (-1). We should probably handle this scenario.
-            .fd = @intCast(std.os.linux.fcntl(@intCast(fd), std.os.linux.F.DUPFD_CLOEXEC, 0)),
+            .fd = @intCast(import_fd),
         };
 
         // NOTE: This is critical for Nvidia cards. Causes buffer to be empty without it.
@@ -198,7 +198,10 @@ pub const PipewireFrameBufferManager = struct {
         import_fd_info.p_next = &memory_dedicated_allocate_info;
 
         // CRITICAL: If this call succeeds, Vulkan owns the FD.
-        const device_memory = try self.vulkan.allocate(mem_reqs, .{ .device_local = true }, @ptrCast(&import_fd_info));
+        const device_memory = self.vulkan.allocate(mem_reqs, .{ .device_local = true }, @ptrCast(&import_fd_info)) catch |err| {
+            _ = std.os.linux.close(import_fd_info.fd);
+            return err;
+        };
         errdefer self.vulkan.device.freeMemory(device_memory, null);
 
         try self.vulkan.device.bindImageMemory(image, device_memory, 0);
@@ -227,6 +230,7 @@ pub const PipewireFrameBufferManager = struct {
 
         return .{
             .image = image,
+            .format = image_create_info.format,
             .image_view = image_view,
             .device_memory = device_memory,
             .fd = fd,

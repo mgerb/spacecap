@@ -53,7 +53,7 @@ pub const CaptureStore = struct {
         };
         const ScreenshotReadyPayload = struct {
             allocator: Allocator,
-            /// Raw bgra data. Must be heap allocated. Takes ownership.
+            /// Raw RGBA data. Must be heap allocated. Takes ownership.
             data: []const u8,
             width: u32,
             height: u32,
@@ -835,7 +835,7 @@ pub const CaptureStore = struct {
         };
         defer screenshot_output_directory.deinit();
 
-        const file_path = try exporter.export_bgra_image_to_file(
+        const file_path = try exporter.export_rgba_image_to_file(
             store.allocator,
             store.io,
             payload.width,

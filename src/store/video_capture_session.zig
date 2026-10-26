@@ -346,6 +346,7 @@ pub const VideoCaptureSession = struct {
                 const copy_data = try capture_preview_image_buffer_pool_locked.unwrap().?.copy_image_to_pool(
                     .{
                         .src_image = image_slc[0],
+                        .src_format = VulkanImageBuffer.image_format,
                         .src_width = vulkan_image_buffer.as_ptr().width,
                         .src_height = vulkan_image_buffer.as_ptr().height,
                         .wait_semaphore = null,
@@ -485,17 +486,22 @@ pub const VideoCaptureSession = struct {
                 image_buffer: Arc(VulkanImageBuffer),
             ) void {
                 defer image_buffer.deinit();
-                const bgra = image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator) catch |err| {
+                const rgba = image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator) catch |err| {
                     log.err("[take_screenshot] copy_image_to_buffer error: {}", .{err});
                     store.dispatch(.{ .capture = .screenshot_fail });
                     return;
                 };
 
+                // TODO: Could use SIMD here.
+                // Capture alpha can be unused (RGBx/BGRx). Screenshots are opaque.
+                var alpha_index: usize = 3;
+                while (alpha_index < rgba.len) : (alpha_index += 4) rgba[alpha_index] = 255;
+
                 store.dispatch(.{
                     .capture = .{
                         .screenshot_response = .{
                             .allocator = allocator,
-                            .data = bgra,
+                            .data = rgba,
                             .width = image_buffer.as_ptr().width,
                             .height = image_buffer.as_ptr().height,
                         },

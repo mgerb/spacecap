@@ -3,7 +3,7 @@ const assert = std.debug.assert;
 const vk = @import("vulkan");
 
 const Vulkan = @import("vulkan.zig").Vulkan;
-const rgb_to_ycbcr_shader align(@alignOf(u32)) = @embedFile("bgr-to-ycbcr").*;
+const rgb_to_ycbcr_shader align(@alignOf(u32)) = @embedFile("rgba-to-ycbcr").*;
 const ycbcr10_to_rgb_shader align(@alignOf(u32)) = @embedFile("ycbcr10-to-rgba").*;
 const ycbcr8_to_rgb_shader align(@alignOf(u32)) = @embedFile("ycbcr8-to-rgba").*;
 comptime {

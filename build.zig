@@ -42,7 +42,7 @@ fn add_shared_dependencies(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) !void {
-    try compile_shader(allocator, b, exe, "bgr-to-ycbcr.comp", "bgr-to-ycbcr", &.{});
+    try compile_shader(allocator, b, exe, "rgba-to-ycbcr.comp", "rgba-to-ycbcr", &.{});
     try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr8-to-rgba", &.{"-DYCBCR_BIT_DEPTH=8"});
     try compile_shader(allocator, b, exe, "ycbcr-to-rgba.comp", "ycbcr10-to-rgba", &.{"-DYCBCR_BIT_DEPTH=10"});
 

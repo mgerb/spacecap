@@ -345,9 +345,9 @@ pub const Vulkan = struct {
                 .dst_access_mask = .{ .shader_read = true },
                 .dst_stage_mask = .{ .fragment_shader = true },
                 .image_component_mapping = .{
-                    .r = .b,
+                    .r = .identity,
                     .g = .identity,
-                    .b = .r,
+                    .b = .identity,
                     .a = .one,
                 },
                 .image_layout = .shader_read_only_optimal,
@@ -411,7 +411,12 @@ pub const Vulkan = struct {
 
     /// Caller owns the memory - must free.
     /// Query format modifiers on the device that support importing the buffer with Vulkan.
-    pub fn query_format_modifiers(self: *const Self, allocator: Allocator, format: vk.Format) !std.ArrayList(u64) {
+    pub fn query_format_modifiers(
+        self: *const Self,
+        allocator: Allocator,
+        format: vk.Format,
+        require_blit: bool,
+    ) !std.ArrayList(u64) {
         var modifiers_list = vk.DrmFormatModifierPropertiesListEXT{};
         var props = vk.FormatProperties2{
             .p_next = @ptrCast(&modifiers_list),
@@ -428,8 +433,12 @@ pub const Vulkan = struct {
         self.instance.getPhysicalDeviceFormatProperties2KHR(self.physical_device, format, &props);
 
         var modifiers = try std.ArrayList(u64).initCapacity(allocator, 0);
+        errdefer modifiers.deinit(allocator);
 
         for (format_mod_props) |modifier| {
+            if (require_blit and !modifier.drm_format_modifier_tiling_features.blit_src) {
+                continue;
+            }
             if (self.supports_importable_modifier(format, modifier.drm_format_modifier)) {
                 try modifiers.append(allocator, modifier.drm_format_modifier);
             }
@@ -1002,7 +1011,7 @@ pub const Vulkan = struct {
             src_access_mask: vk.AccessFlags2,
         },
     ) ![]u8 {
-        const size: u64 = width * height * 4; // bgra
+        const size: u64 = width * height * 4; // RGBA8
 
         const buffer_create_info = vk.BufferCreateInfo{
             .size = size,
@@ -1148,7 +1157,8 @@ pub const Vulkan = struct {
         return data;
     }
 
-    /// Copy a vulkan image on the GPU.
+    /// Copy a vulkan image on the GPU. Uses blit if src/dst image formats
+    /// differ.
     /// NOTE: This is only for the graphics queue.
     pub fn copy_image(
         self: *Self,
@@ -1161,6 +1171,8 @@ pub const Vulkan = struct {
         dst_height: u32,
         args: struct {
             new_layout: vk.ImageLayout,
+            src_format: vk.Format,
+            dst_format: vk.Format,
             dst_stage_mask: vk.PipelineStageFlags2,
             dst_access_mask: vk.AccessFlags2,
             src_queue_family_index: u32,
@@ -1248,14 +1260,45 @@ pub const Vulkan = struct {
             .extent = .{ .width = copy_width, .height = copy_height, .depth = 1 },
         };
 
-        self.device.cmdCopyImage(
-            command_buffer,
-            src_image,
-            .transfer_src_optimal,
-            dst_image,
-            .transfer_dst_optimal,
-            &.{copy_region},
-        );
+        // Different formats need conversion, such as BGRA to RGBA.
+        if (args.src_format != args.dst_format) {
+            // Finish clearing the destination before the blit writes into it.
+            const clear_barrier = vk.MemoryBarrier2{
+                .src_stage_mask = .{ .all_transfer = true },
+                .src_access_mask = .{ .transfer_write = true },
+                .dst_stage_mask = .{ .all_transfer = true },
+                .dst_access_mask = .{ .transfer_write = true },
+            };
+            self.device.cmdPipelineBarrier2(command_buffer, &.{
+                .memory_barrier_count = 1,
+                .p_memory_barriers = @ptrCast(&clear_barrier),
+            });
+            const end = vk.Offset3D{ .x = @intCast(copy_width), .y = @intCast(copy_height), .z = 1 };
+            const blit_region = vk.ImageBlit{
+                .src_subresource = copy_region.src_subresource,
+                .src_offsets = .{ .{ .x = 0, .y = 0, .z = 0 }, end },
+                .dst_subresource = copy_region.dst_subresource,
+                .dst_offsets = .{ .{ .x = 0, .y = 0, .z = 0 }, end },
+            };
+            self.device.cmdBlitImage(
+                command_buffer,
+                src_image,
+                .transfer_src_optimal,
+                dst_image,
+                .transfer_dst_optimal,
+                &.{blit_region},
+                .nearest,
+            );
+        } else {
+            self.device.cmdCopyImage(
+                command_buffer,
+                src_image,
+                .transfer_src_optimal,
+                dst_image,
+                .transfer_dst_optimal,
+                &.{copy_region},
+            );
+        }
 
         // Transfer the source image back to its original layout.
         const src_restore_barrier = vk.ImageMemoryBarrier2{

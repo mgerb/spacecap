@@ -121,34 +121,6 @@ pub fn export_replay_buffers(
     return try allocator.dupe(u8, muxer.file_name);
 }
 
-/// Encode raw BGRA image data and save to a file. Currently only supports PNG.
-pub fn export_bgra_image_to_file(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    width: u32,
-    height: u32,
-    bgra: []const u8,
-    output_directory: []const u8,
-) ![]u8 {
-    const expected_len: usize = width * height * 4;
-    if (bgra.len != expected_len) return error.InvalidScreenshotPixelData;
-
-    const rgba = try allocator.alloc(u8, bgra.len);
-    defer allocator.free(rgba);
-
-    // Convert to RGBA
-    // TODO: could probably use SIMD here
-    var i: usize = 0;
-    while (i < rgba.len) : (i += 4) {
-        rgba[i] = bgra[i + 2];
-        rgba[i + 1] = bgra[i + 1];
-        rgba[i + 2] = bgra[i];
-        rgba[i + 3] = 255;
-    }
-
-    return export_rgba_image_to_file(allocator, io, width, height, rgba, output_directory);
-}
-
 /// Encode raw RGBA image data and save to a PNG file.
 pub fn export_rgba_image_to_file(
     allocator: std.mem.Allocator,
@@ -196,7 +168,7 @@ test "Exporter - export_image_to_file writes to the output directory" {
     const output_directory = try std.fs.path.join(allocator, &.{ tmp_dir_path_buffer[0..tmp_dir_path_len], "screenshots" });
     defer allocator.free(output_directory);
 
-    const file_path = try export_bgra_image_to_file(
+    const file_path = try export_rgba_image_to_file(
         allocator,
         io,
         1,
