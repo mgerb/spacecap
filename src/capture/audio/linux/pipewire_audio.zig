@@ -325,7 +325,7 @@ pub const PipewireAudio = struct {
     }
 
     fn connect_stream(stream_data: *AudioStream) !void {
-        var format_buffer = std.mem.zeroes([512]u8);
+        var format_buffer: [512]u8 align(@alignOf(u64)) = @splat(0);
         var builder = pw.spa_pod_builder{
             .data = @ptrCast(&format_buffer),
             .size = format_buffer.len,
@@ -354,7 +354,7 @@ pub const PipewireAudio = struct {
         ) orelse return error.PwFormatBuild;
 
         // Metadata is required to get the buffer timestamp.
-        var meta_buffer = std.mem.zeroes([512]u8);
+        var meta_buffer: [512]u8 align(@alignOf(u64)) = @splat(0);
         var meta_builder = pw.spa_pod_builder{
             .data = @ptrCast(&meta_buffer),
             .size = meta_buffer.len,
