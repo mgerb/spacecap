@@ -47,6 +47,8 @@ pub const VulkanVideoEncoder = struct {
 
     // images
     chosen_dpb_image_format: ?vk.Format = null,
+    /// Determined by GPU capabilities.
+    use_separate_ref_images: bool = false,
     dpb_images: std.ArrayList(vk.Image),
     dpb_image_memory: std.ArrayList(vk.DeviceMemory),
     dpb_image_views: std.ArrayList(vk.ImageView),
@@ -257,6 +259,12 @@ pub const VulkanVideoEncoder = struct {
 
         try self.vulkan.instance.getPhysicalDeviceVideoCapabilitiesKHR(self.vulkan.physical_device, &self.video_profile.?, &capabilities);
 
+        self.use_separate_ref_images = capabilities.flags.separate_reference_images_khr;
+
+        if (capabilities.max_dpb_slots < REFERENCE_IMAGE_COUNT or capabilities.max_active_reference_pictures < 1) {
+            return error.UnsupportedVideoReferenceLimits;
+        }
+
         self.chosen_rate_control_mode = std.mem.zeroes(vk.VideoEncodeRateControlModeFlagsKHR);
         if (encode_capabilities.rate_control_modes.vbr_khr) {
             self.chosen_rate_control_mode = .{ .vbr_khr = true };
@@ -385,8 +393,8 @@ pub const VulkanVideoEncoder = struct {
         create_info.queue_family_index = self.vulkan.video_encode_h264_queue.?.family;
         create_info.picture_format = self.chosen_src_image_format.?;
         create_info.max_coded_extent = .{ .width = self.width, .height = self.height };
-        create_info.max_dpb_slots = 16;
-        create_info.max_active_reference_pictures = 16;
+        create_info.max_dpb_slots = REFERENCE_IMAGE_COUNT;
+        create_info.max_active_reference_pictures = 1;
         create_info.reference_picture_format = self.chosen_dpb_image_format.?;
         create_info.p_std_header_version = &h264_std_extension_version;
         create_info.p_video_profile = &self.video_profile.?;
@@ -545,14 +553,16 @@ pub const VulkanVideoEncoder = struct {
 
     fn allocate_reference_images(self: *Self, count: u32) !void {
         errdefer self.destroy_images();
-        for (0..count) |_| {
+        const image_count: u32 = if (self.use_separate_ref_images) count else 1;
+        const layer_count: u32 = if (self.use_separate_ref_images) 1 else count;
+        for (0..image_count) |_| {
             const image_create_info = vk.ImageCreateInfo{
                 .p_next = &self.video_profile_list.?,
                 .image_type = .@"2d",
                 .format = self.chosen_dpb_image_format.?,
                 .extent = .{ .height = self.height, .width = self.width, .depth = 1 },
                 .mip_levels = 1,
-                .array_layers = 1,
+                .array_layers = layer_count,
                 .samples = .{ .@"1" = true },
                 .tiling = .optimal,
                 .usage = .{ .video_encode_dpb_khr = true },
@@ -572,14 +582,14 @@ pub const VulkanVideoEncoder = struct {
 
             const view_info = vk.ImageViewCreateInfo{
                 .image = image,
-                .view_type = .@"2d",
+                .view_type = if (self.use_separate_ref_images) .@"2d" else .@"2d_array",
                 .format = self.chosen_dpb_image_format.?,
                 .subresource_range = .{
                     .aspect_mask = .{ .color = true },
                     .base_mip_level = 0,
                     .level_count = 1,
                     .base_array_layer = 0,
-                    .layer_count = 1,
+                    .layer_count = layer_count,
                 },
                 .components = std.mem.zeroes(vk.ComponentMapping),
             };
@@ -758,7 +768,7 @@ pub const VulkanVideoEncoder = struct {
                     .base_mip_level = 0,
                     .level_count = 1,
                     .base_array_layer = 0,
-                    .layer_count = 1,
+                    .layer_count = vk.REMAINING_ARRAY_LAYERS,
                 },
                 .image = dpb_image,
                 .new_layout = .video_encode_dpb_khr,
@@ -893,6 +903,8 @@ pub const VulkanVideoEncoder = struct {
     fn encode_video_frame(self: *Self) !EncodeResult {
         const GOP_LENGTH: u32 = 16;
         const gop_frame_count: u32 = @intCast(self.frame_count % GOP_LENGTH);
+        const dpb_slot = gop_frame_count & 1;
+        const ref_slot = dpb_slot ^ 1;
 
         const alloc_info = vk.CommandBufferAllocateInfo{
             .level = .primary,
@@ -916,18 +928,18 @@ pub const VulkanVideoEncoder = struct {
         // start a video encode session
         // set an image view as DPB (decoded output picture)
         const dpb_pic_resource = vk.VideoPictureResourceInfoKHR{
-            .image_view_binding = self.dpb_image_views.items[gop_frame_count & 1],
+            .image_view_binding = self.dpb_image_views.items[if (self.use_separate_ref_images) dpb_slot else 0],
             .coded_offset = .{ .x = 0, .y = 0 },
             .coded_extent = .{ .height = self.height, .width = self.width },
-            .base_array_layer = 0,
+            .base_array_layer = if (self.use_separate_ref_images) 0 else dpb_slot,
         };
 
         // set an image view as reference picture
         const ref_pic_resource = vk.VideoPictureResourceInfoKHR{
-            .image_view_binding = self.dpb_image_views.items[@intFromBool((gop_frame_count & 1) == 0)],
+            .image_view_binding = self.dpb_image_views.items[if (self.use_separate_ref_images) ref_slot else 0],
             .coded_offset = .{ .x = 0, .y = 0 },
             .coded_extent = .{ .height = self.height, .width = self.width },
-            .base_array_layer = 0,
+            .base_array_layer = if (self.use_separate_ref_images) 0 else ref_slot,
         };
 
         const max_pic_order_cnt_lsb: u32 = @as(u32, 1) << @as(u5, @intCast(self.sps.?.log_2_max_pic_order_cnt_lsb_minus_4 + 4));
@@ -957,7 +969,7 @@ pub const VulkanVideoEncoder = struct {
         referense_slots[0].p_picture_resource = &dpb_pic_resource;
         referense_slots[1].s_type = .video_reference_slot_info_khr;
         referense_slots[1].p_next = &ref_slot_info;
-        referense_slots[1].slot_index = @intFromBool((gop_frame_count & 1) == 0);
+        referense_slots[1].slot_index = @intCast(ref_slot);
         referense_slots[1].p_picture_resource = &ref_pic_resource;
 
         const encode_begin_info = vk.VideoBeginCodingInfoKHR{
@@ -1022,7 +1034,7 @@ pub const VulkanVideoEncoder = struct {
             .preceding_externally_encoded_bytes = 0,
         };
 
-        referense_slots[0].slot_index = @as(i32, @intCast(gop_frame_count & 1));
+        referense_slots[0].slot_index = @intCast(dpb_slot);
         video_encode_info.p_setup_reference_slot = &referense_slots[0];
 
         if (gop_frame_count > 0) {
