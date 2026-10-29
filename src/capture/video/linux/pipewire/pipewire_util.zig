@@ -48,16 +48,12 @@ pub fn dmabuf_export_sync_file(vulkan: *Vulkan, dmabuf_fd: i64, semaphore: vk.Se
 
 pub fn spa_to_vk_format(spa_format: u32) vk.Format {
     return switch (spa_format) {
-        // NOTE: This may seem odd, but we will swizzle rgb
-        // values in the compute shader and set the format
-        // as opposite here. This is done to prevent vulkan
-        // validation errors.
-        pw.SPA_VIDEO_FORMAT_BGRx => vk.Format.r8g8b8a8_unorm,
-        pw.SPA_VIDEO_FORMAT_BGRA => vk.Format.r8g8b8a8_unorm,
+        pw.SPA_VIDEO_FORMAT_BGRx => vk.Format.b8g8r8a8_unorm,
+        pw.SPA_VIDEO_FORMAT_BGRA => vk.Format.b8g8r8a8_unorm,
         pw.SPA_VIDEO_FORMAT_BGR => vk.Format.r8g8b8_srgb,
 
-        pw.SPA_VIDEO_FORMAT_RGBx => vk.Format.r8g8b8a8_srgb,
-        pw.SPA_VIDEO_FORMAT_RGBA => vk.Format.r8g8b8a8_srgb,
+        pw.SPA_VIDEO_FORMAT_RGBx => vk.Format.r8g8b8a8_unorm,
+        pw.SPA_VIDEO_FORMAT_RGBA => vk.Format.r8g8b8a8_unorm,
         pw.SPA_VIDEO_FORMAT_RGB => vk.Format.r8g8b8_srgb,
 
         pw.SPA_VIDEO_FORMAT_ARGB => vk.Format.b8g8r8a8_srgb,

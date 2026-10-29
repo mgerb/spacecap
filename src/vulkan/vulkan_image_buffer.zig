@@ -4,10 +4,12 @@ const vk = @import("vulkan");
 const Arc = @import("../arc.zig").Arc;
 const VulkanImGuiTexture = @import("./vulkan_imgui_texture.zig").VulkanImGuiTexture;
 
-/// An image buffer owned by a VulkanImageBufferPool.
+/// An RGBA image buffer owned by a VulkanImageBufferPool.
 pub const VulkanImageBuffer = struct {
     const log = std.log.scoped(.VulkanImageBuffer);
     const Self = @This();
+
+    pub const image_format: vk.Format = .r8g8b8a8_unorm;
 
     allocator: std.mem.Allocator,
     vulkan: *Vulkan,
@@ -58,7 +60,7 @@ pub const VulkanImageBuffer = struct {
 
         const image_create_info = vk.ImageCreateInfo{
             .image_type = .@"2d",
-            .format = .r8g8b8a8_unorm,
+            .format = image_format,
             .extent = .{ .width = args.width, .height = args.height, .depth = 1 },
             .mip_levels = 1,
             .array_layers = 1,
@@ -79,7 +81,7 @@ pub const VulkanImageBuffer = struct {
         const image_view_create_info = vk.ImageViewCreateInfo{
             .image = image,
             .view_type = .@"2d",
-            .format = .r8g8b8a8_unorm,
+            .format = image_format,
             .components = args.image_component_mapping,
             .subresource_range = .{
                 .aspect_mask = .{ .color = true },
@@ -162,6 +164,7 @@ pub const VulkanImageBuffer = struct {
             src_image: vk.Image,
             src_width: u32,
             src_height: u32,
+            src_format: vk.Format,
             wait_semaphore: ?vk.Semaphore,
             use_signal_semaphore: bool = false,
             pts_ns: i128,
@@ -187,6 +190,8 @@ pub const VulkanImageBuffer = struct {
             self.height,
             .{
                 .new_layout = self.image_layout,
+                .src_format = args.src_format,
+                .dst_format = image_format,
                 .dst_stage_mask = self.dst_stage_mask,
                 .dst_access_mask = self.dst_access_mask,
                 .src_queue_family_index = self.src_queue_family_index,
@@ -219,6 +224,7 @@ pub const VulkanImageBuffer = struct {
 
         try image_buffer.as_ptr().copy_image_into(.{
             .src_image = self.image,
+            .src_format = image_format,
             .src_width = self.width,
             .src_height = self.height,
             .wait_semaphore = null,

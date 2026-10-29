@@ -21,6 +21,22 @@ pub const PipewireVideo = struct {
     const log = std.log.scoped(.PipewireVideo);
     const Self = @This();
 
+    const supported_formats = [_]u32{
+        pw.SPA_VIDEO_FORMAT_BGRx,
+        pw.SPA_VIDEO_FORMAT_BGRA,
+        pw.SPA_VIDEO_FORMAT_RGBx,
+        pw.SPA_VIDEO_FORMAT_RGBA,
+        // NOTE: These are not supported yet.
+        // pw.SPA_VIDEO_FORMAT_RGB,
+        // pw.SPA_VIDEO_FORMAT_BGR,
+        // pw.SPA_VIDEO_FORMAT_ARGB,
+        // pw.SPA_VIDEO_FORMAT_ABGR,
+        // pw.SPA_VIDEO_FORMAT_xRGB_210LE,
+        // pw.SPA_VIDEO_FORMAT_xBGR_210LE,
+        // pw.SPA_VIDEO_FORMAT_ARGB_210LE,
+        // pw.SPA_VIDEO_FORMAT_ABGR_210LE,
+    };
+
     /// The spa_pod_builder requires a buffer and a params list
     /// that maintain the same lifetime.
     const SpaPodParams = struct {
@@ -58,7 +74,6 @@ pub const PipewireVideo = struct {
     stream: ?*pw.pw_stream = null,
     stream_listener: pw.spa_hook = undefined,
     has_format: bool = false,
-    format_changed: bool = false,
     // Send messages to Pipewire on this channel.
     rx_chan: Chan(bool),
     // Receive messages from Pipewire on this channel.
@@ -161,10 +176,10 @@ pub const PipewireVideo = struct {
         self.portal.deinit();
     }
 
+    /// This will initialize things for the stream, but won't clean up on failure.
+    /// It is expected to use self.deinit to clean up remaining resources.
     pub fn select_source(self: *Self, selection: VideoCaptureSelection, fps: u32) (VideoCaptureError || anyerror)!void {
         const pipewire_node = try self.portal.select_source(selection);
-        const pipewire_fd = try self.portal.open_pipewire_remote();
-        errdefer _ = pw.close(pipewire_fd);
 
         self.has_format = false;
         self.info = null;
@@ -175,7 +190,6 @@ pub const PipewireVideo = struct {
             "spacecap-pipewire-capture-video",
             null,
         ) orelse return error.PwThreadLoopNew;
-        errdefer pw.pw_thread_loop_destroy(self.thread_loop);
 
         self.context = pw.pw_context_new(
             pw.pw_thread_loop_get_loop(self.thread_loop),
@@ -194,6 +208,7 @@ pub const PipewireVideo = struct {
         pw.pw_thread_loop_lock(self.thread_loop);
         defer pw.pw_thread_loop_unlock(self.thread_loop);
 
+        const pipewire_fd = try self.portal.open_pipewire_remote();
         self.core = pw.pw_context_connect_fd(
             self.context,
             pipewire_fd,
@@ -253,15 +268,16 @@ pub const PipewireVideo = struct {
         _ = pw.spa_pod_builder_add(spa_pod_builder, @as(u32, pw.SPA_FORMAT_mediaSubtype), "I", @as(i32, pw.SPA_MEDIA_SUBTYPE_raw), @as(i32, 0));
         _ = pw.spa_pod_builder_add(spa_pod_builder, @as(u32, pw.SPA_FORMAT_VIDEO_format), "I", @as(u32, format), @as(i32, 0));
 
-        // TODO: Need to update this to handle single modifiers - see fixate example.
         if (modifiers.len > 0) {
             var modifier_frame = std.mem.zeroes(pw.spa_pod_frame);
 
             _ = pw.spa_pod_builder_prop(spa_pod_builder, pw.SPA_FORMAT_VIDEO_modifier, pw.SPA_POD_PROP_FLAG_MANDATORY | pw.SPA_POD_PROP_FLAG_DONT_FIXATE);
             _ = pw.spa_pod_builder_push_choice(spa_pod_builder, &modifier_frame, pw.SPA_CHOICE_Enum, 0);
 
+            // This is necessary to add a default.
+            _ = pw.spa_pod_builder_long(spa_pod_builder, @bitCast(modifiers[0]));
             for (modifiers) |mod| {
-                _ = pw.spa_pod_builder_long(spa_pod_builder, @intCast(mod));
+                _ = pw.spa_pod_builder_long(spa_pod_builder, @bitCast(mod));
             }
 
             _ = pw.spa_pod_builder_pop(spa_pod_builder, &modifier_frame);
@@ -319,6 +335,8 @@ pub const PipewireVideo = struct {
     pub fn update_fps(self: *Self, fps: u32) !void {
         const stream = self.stream orelse return;
         const thread_loop = self.thread_loop orelse return;
+        pw.pw_thread_loop_lock(thread_loop);
+        defer pw.pw_thread_loop_unlock(thread_loop);
 
         var spa_pod_params = try self.build_stream_format_params(self.allocator, fps);
         defer spa_pod_params.deinit();
@@ -326,9 +344,6 @@ pub const PipewireVideo = struct {
         if (spa_pod_params.params.items.len == 0) {
             return error.PwStreamUpdateParamsNoFormats;
         }
-
-        pw.pw_thread_loop_lock(thread_loop);
-        defer pw.pw_thread_loop_unlock(thread_loop);
 
         const status = pw.pw_stream_update_params(
             stream,
@@ -354,24 +369,24 @@ pub const PipewireVideo = struct {
             .size = @intCast(spa_pod_params.buffer[0..].len),
         };
 
-        const formats = [_]u32{
-            pw.SPA_VIDEO_FORMAT_RGBx,
-            pw.SPA_VIDEO_FORMAT_BGRx,
-            pw.SPA_VIDEO_FORMAT_RGBA,
-            pw.SPA_VIDEO_FORMAT_BGRA,
-            pw.SPA_VIDEO_FORMAT_RGB,
-            pw.SPA_VIDEO_FORMAT_BGR,
-            pw.SPA_VIDEO_FORMAT_ARGB,
-            pw.SPA_VIDEO_FORMAT_ABGR,
-            pw.SPA_VIDEO_FORMAT_xRGB_210LE,
-            pw.SPA_VIDEO_FORMAT_xBGR_210LE,
-            pw.SPA_VIDEO_FORMAT_ARGB_210LE,
-            pw.SPA_VIDEO_FORMAT_ABGR_210LE,
-        };
+        const destination_properties = self.vulkan.instance.getPhysicalDeviceFormatProperties(
+            self.vulkan.physical_device,
+            VulkanImageBuffer.image_format,
+        );
 
-        for (formats) |format| {
+        // Import each format with its native format. BGRA/BGRx are converted
+        // to RGBA further down the pipeline (denoted by needs_blit).
+        for (supported_formats) |format| {
             const vk_format = pipewire_util.spa_to_vk_format(format);
-            var modifiers = try self.vulkan.query_format_modifiers(self.allocator, vk_format);
+            // We will need to convert with blit if the source image format is
+            // not RGBA. All of our internal buffers are RGBA.
+            const needs_blit = vk_format != VulkanImageBuffer.image_format;
+
+            if (needs_blit and !destination_properties.optimal_tiling_features.blit_dst) {
+                continue;
+            }
+
+            var modifiers = try self.vulkan.query_format_modifiers(self.allocator, vk_format, needs_blit);
             defer modifiers.deinit(self.allocator);
             if (modifiers.items.len == 0) {
                 continue;
@@ -469,6 +484,7 @@ pub const PipewireVideo = struct {
                 .src_image = vulkan_image.frame_buffer.frame_buffer_image.?.image,
                 .src_width = self.info.?.size.width,
                 .src_height = self.info.?.size.height,
+                .src_format = vulkan_image.frame_buffer.frame_buffer_image.?.format,
                 .wait_semaphore = vulkan_image.wait_semaphore,
                 .use_signal_semaphore = false,
                 .pts_ns = timestamp_ns,
@@ -505,8 +521,7 @@ pub const PipewireVideo = struct {
     fn get_dmabuf_plane_count(buffer: ?[*c]pw.spa_buffer) u32 {
         const _buffer = buffer orelse return 0;
         if (_buffer[0].n_datas == 0 or
-            _buffer[0].datas[0].chunk == null or
-            _buffer[0].datas[0].chunk[0].size == 0)
+            _buffer[0].datas[0].chunk == null)
         {
             return 0;
         }
@@ -601,7 +616,7 @@ pub const PipewireVideo = struct {
         });
 
         if (new_state == pw.PW_STREAM_STATE_ERROR) {
-            log.debug("[stream_state_changed_callback] pipewire stream error: {s}", .{error_});
+            log.err("[stream_state_changed_callback] pipewire stream error: {s}", .{error_});
             self.negotiation_failed = true;
             self.negotiation_error_code = -1;
             if (self.thread_loop) |thread_loop| {
@@ -623,8 +638,9 @@ pub const PipewireVideo = struct {
             return;
         }
 
-        var media_type: u32 = undefined;
-        var media_subtype: u32 = undefined;
+        self.has_format = false;
+        var media_type: u32 = 0;
+        var media_subtype: u32 = 0;
 
         const fmt = pw.spa_format_parse(param, &media_type, &media_subtype);
 
@@ -632,17 +648,39 @@ pub const PipewireVideo = struct {
             media_type != pw.SPA_MEDIA_TYPE_video or
             media_subtype != pw.SPA_MEDIA_SUBTYPE_raw)
         {
-            log.debug("[stream_param_changed_callback] media_type: {}, media_subtype: {}", .{ media_type, media_subtype });
+            _ = pw.pw_stream_set_error(self.stream, -pw.EINVAL, "Expected raw video format");
             return;
         }
 
-        self.info = std.mem.zeroes(pw.spa_video_info_raw);
+        var info = std.mem.zeroes(pw.spa_video_info_raw);
 
-        if (pw.spa_format_video_raw_parse(param, @ptrCast(&self.info)) < 0) {
-            log.debug("[stream_param_changed_callback] failed to parse video info", .{});
+        if (pw.spa_format_video_raw_parse(param, &info) < 0) {
+            _ = pw.pw_stream_set_error(self.stream, -pw.EINVAL, "Invalid raw video format");
             return;
         }
 
+        const supported = blk: {
+            inline for (supported_formats) |format| {
+                if (info.format == format) break :blk true;
+            }
+            break :blk false;
+        };
+        if (!supported) {
+            _ = pw.pw_stream_set_error(self.stream, -pw.EINVAL, "Unsupported pixel format");
+            return;
+        }
+
+        if (info.size.width == 0 or info.size.height == 0) {
+            _ = pw.pw_stream_set_error(self.stream, -pw.EINVAL, "Invalid video size");
+            return;
+        }
+
+        if (info.flags & pw.SPA_VIDEO_FLAG_MODIFIER == 0) {
+            _ = pw.pw_stream_set_error(self.stream, -pw.EINVAL, "DMA-BUF modifier was not negotiated");
+            return;
+        }
+
+        self.info = info;
         self.vulkan.destroy_capture_image_buffer_pool();
         // TODO: Figure out how to bubble this error up and display it on the UI.
         self.vulkan.init_capture_image_buffer_pool(self.info.?.size.width, self.info.?.size.height) catch |err| {
@@ -654,7 +692,6 @@ pub const PipewireVideo = struct {
 
         log.debug("[stream_param_changed_callback] stream format: {}", .{self.info.?.format});
         self.has_format = true;
-        self.format_changed = false;
 
         pw.pw_thread_loop_signal(self.thread_loop, false);
     }

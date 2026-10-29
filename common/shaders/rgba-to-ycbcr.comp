@@ -40,8 +40,7 @@ void main() {
 
     vec3 rgb = vec3(0.0);
     if (inBounds) {
-        vec4 bgra = imageLoad(inputImage, gid);
-        rgb = vec3(bgra.b, bgra.g, bgra.r);
+        rgb = imageLoad(inputImage, gid).rgb;
     }
 
     rgbTile[lid.y][lid.x] = rgb;
