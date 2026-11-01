@@ -48,6 +48,12 @@ pub const XdgDesktopPortalAppRegistration = struct {
     }
 
     fn register(dbus: *c.GDBusConnection) void {
+        // Flatpak does this automatically so we need to skip if running under
+        // flatpak.
+        if (c.xdp_portal_running_under_flatpak() != 0) {
+            return;
+        }
+
         var options: c.GVariantBuilder = undefined;
         c.g_variant_builder_init(&options, variant_type("a{sv}"));
         const payload = c.g_variant_new(

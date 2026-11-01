@@ -13,7 +13,7 @@ LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" linuxdeploy \
   --appdir AppDir \
   --executable zig-out/linux/spacecap \
   --desktop-file packaging/linux/org.spacecap.spacecap.desktop \
-  --icon-file packaging/spacecap.svg \
+  --icon-file packaging/org.spacecap.spacecap.svg \
   --exclude-library libvulkan.so.1 \
   --exclude-library libxkbcommon.so.0 \
   --library "$GTK3_LIB" \

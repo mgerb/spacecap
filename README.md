@@ -38,7 +38,7 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 # NOTE: This only (un)installs the following files (appimage, desktop file, icon):
 # ~/.local/bin/spacecap
 # ~/.local/share/applications/org.spacecap.spacecap.desktop
-# ~/.local/share/icons/hicolor/scalable/apps/spacecap.svg
+# ~/.local/share/icons/hicolor/scalable/apps/org.spacecap.spacecap.svg
 ```
 
 ### Nix
@@ -56,7 +56,7 @@ curl -LsSf https://spacecap.org/install | sh -s -- --uninstall
 # configuration.nix
 { inputs, pkgs, ... }: {
   environment.systemPackages = [
-    inputs.spacecap.packages.${pkgs.stdenv.hostPlatform.system}.spacecap
+    inputs.spacecap.packages.${pkgs.stdenv.hostPlatform.system}.default
   ];
 }
 ```
