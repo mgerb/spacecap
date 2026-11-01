@@ -165,6 +165,9 @@ fn draw_misc_settings() void {
             \\  See all available commands:
             \\    spacecap -h
             \\
+            \\  If you installed with flatpak, then execute Spacecap like this:
+            \\    flatpak run org.spacecap.spacecap -h
+            \\
             \\  Examples:
             \\
             \\    Niri:

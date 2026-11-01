@@ -63,7 +63,7 @@ in
       runHook preInstall
       install -Dm755 zig-out/linux/spacecap "$out/bin/spacecap"
       install -Dm644 packaging/linux/org.spacecap.spacecap.desktop "$out/share/applications/org.spacecap.spacecap.desktop"
-      install -Dm644 packaging/spacecap.svg "$out/share/icons/hicolor/scalable/apps/spacecap.svg"
+      install -Dm644 packaging/org.spacecap.spacecap.svg "$out/share/icons/hicolor/scalable/apps/org.spacecap.spacecap.svg"
       runHook postInstall
     '';
 
