@@ -39,7 +39,7 @@ pub fn draw_editor_controls(
             @max(0, session.trim_end_ns() - trim_start_ns)
         else
             0;
-        const elapsed_ns = session.playback_position_ns() - trim_start_ns;
+        const elapsed_ns = session.timeline_position_ns() - trim_start_ns;
         const play_time_label = imgui_util.format_play_time(elapsed_ns, trim_duration_ns);
 
         // ----------------------------------------------------------------------------
@@ -282,7 +282,7 @@ const Timeline = struct {
         const duration_ns = session.duration_ns;
         const trim_start_ns = session.trim_start_ns();
         const trim_end_ns = session.trim_end_ns();
-        const playback_position_ns = session.playback_position_ns();
+        const playback_position_ns = session.timeline_position_ns();
 
         const size = c.ImVec2{
             .x = c.ImGui_GetContentRegionAvail().x,
@@ -410,9 +410,10 @@ const Timeline = struct {
     ) i64 {
         const width = @max(max_x - min_x, 1);
         const fraction = std.math.clamp((mouse_x - min_x) / width, 0, 1);
-        const position_ns: i64 = @intFromFloat(
-            @as(f64, @floatCast(fraction)) * @as(f64, @floatFromInt(duration_ns)),
-        );
+        const position_ms: i64 = @intFromFloat(@round(
+            @as(f64, @floatCast(fraction)) * @as(f64, @floatFromInt(duration_ns)) / std.time.ns_per_ms,
+        ));
+        const position_ns = position_ms * std.time.ns_per_ms;
         return switch (target) {
             .trim_start => std.math.clamp(position_ns, 0, trim_end_ns),
             .playhead => std.math.clamp(position_ns, trim_start_ns, trim_end_ns),

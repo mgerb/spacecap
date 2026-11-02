@@ -457,6 +457,7 @@ const TestUtil = struct {
 
         const image_buffer = try wait_for_frame(session, expected_frame_pts_ns);
         defer image_buffer.deinit();
+        try std.testing.expectEqual(expected_frame_pts_ns, session.timeline_position_ns());
     }
 
     /// There's currently not a reliable way to wait for a frame to be
@@ -549,7 +550,8 @@ test "VideoEditorStore - init, scrub, and close all sessions" {
             try std.testing.expectEqual(320, image_buffer.as_ptr().width);
             try std.testing.expectEqual(224, image_buffer.as_ptr().height);
             try std.testing.expectEqual(expected_frame_pts_ns, image_buffer.as_ptr().pts_ns);
-            try std.testing.expectEqual(expected_frame_pts_ns, session.playback_position_ns());
+            try std.testing.expectEqual(expected_frame_pts_ns, session.worker.playback_position_ns.load(.acquire));
+            try std.testing.expectEqual(scrub_position_ns, session.timeline_position_ns());
 
             const rgba = try image_buffer.as_ptr().copy_image_to_cpu_buffer(allocator);
             defer allocator.free(rgba);

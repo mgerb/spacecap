@@ -51,6 +51,8 @@ pub const VideoEditorSession = struct {
     container_format_name: [:0]const u8,
     is_exporting: bool = false,
     include_audio: bool = true,
+    /// Null when not scrubbing.
+    scrub_position_ns: ?i64 = null,
 
     pub fn init(allocator: std.mem.Allocator, vulkan: *Vulkan, file_path: []const u8) !Self {
         var owned_file_path = try String.init(allocator, file_path);
@@ -149,8 +151,12 @@ pub const VideoEditorSession = struct {
         self.file_path.deinit();
     }
 
-    pub fn playback_position_ns(self: *const Self) i64 {
-        return self.worker.playback_position_ns.load(.acquire);
+    /// The position of the play head. If scrubbing, then return the scrub
+    /// time, otherwise the current playback position. This is done so that the
+    /// play head always exactly tracks the position of scrubbing as the user
+    /// is dragging the mouse.
+    pub fn timeline_position_ns(self: *const Self) i64 {
+        return self.scrub_position_ns orelse self.worker.playback_position_ns.load(.acquire);
     }
 
     pub fn is_playing(self: *const Self) bool {
@@ -166,14 +172,21 @@ pub const VideoEditorSession = struct {
     }
 
     pub fn scrub_to(self: *Self, position_ns: i64) void {
+        self.scrub_position_ns = position_ns;
         self.worker.scrub_to(position_ns);
     }
 
     pub fn set_scrubbing(self: *Self, scrubbing: bool) void {
+        if (!scrubbing and self.is_playing()) {
+            self.scrub_position_ns = null;
+        }
         self.worker.set_scrubbing(scrubbing);
     }
 
     pub fn set_playing(self: *Self, playing: bool) void {
+        if (playing) {
+            self.scrub_position_ns = null;
+        }
         self.worker.set_playing(playing);
     }
 
@@ -183,17 +196,21 @@ pub const VideoEditorSession = struct {
 
     pub fn set_trim_start(self: *Self, position_ns: i64) void {
         self.worker.set_trim_start(position_ns);
+        self.scrub_position_ns = self.trim_start_ns();
     }
 
     pub fn set_trim_end(self: *Self, position_ns: i64) void {
         self.worker.set_trim_end(position_ns);
+        self.scrub_position_ns = self.trim_end_ns();
     }
 
     pub fn step_previous_frame(self: *Self) void {
+        self.scrub_position_ns = null;
         self.worker.set_step_previous_frame_request();
     }
 
     pub fn step_next_frame(self: *Self) void {
+        self.scrub_position_ns = null;
         self.worker.set_step_next_frame_request();
     }
 
