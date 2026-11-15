@@ -330,6 +330,7 @@ pub const PipewireAudio = struct {
             .data = @ptrCast(&format_buffer),
             .size = format_buffer.len,
         };
+        const positions = [_]u32{ pw.SPA_AUDIO_CHANNEL_FL, pw.SPA_AUDIO_CHANNEL_FR };
         const format = c_def.spa_pod_builder_add_object(
             &builder,
             pw.SPA_TYPE_OBJECT_Format,
@@ -350,6 +351,12 @@ pub const PipewireAudio = struct {
                 pw.SPA_FORMAT_AUDIO_channels,
                 "i",
                 @as(i32, CHANNELS),
+                pw.SPA_FORMAT_AUDIO_position,
+                "a",
+                @as(u32, @sizeOf(u32)),
+                @as(u32, pw.SPA_TYPE_Id),
+                @as(u32, positions.len),
+                &positions,
             },
         ) orelse return error.PwFormatBuild;
 
