@@ -133,10 +133,16 @@ hl.bind(
 [Nix](https://nixos.org/download/#download-nix) is required for development.
 
 ```sh
-# Build
+# Build the Nix package
+nix build
+
+# Run the Nix package
+nix run
+
+# Build with Zig
 nix develop -c zig build
 
-# Run
+# Run and run with Zig
 nix develop -c zig build run
 
 # Test
