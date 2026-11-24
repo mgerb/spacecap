@@ -13,8 +13,8 @@
             .hash = "vulkan-0.0.0-r7Ytx_6DAwDB1QJAbIew5IzR2PiiAtJENX5kdJHf449X",
         },
         .ffmpeg = .{
-            .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.tar.gz",
-            .hash = "N-V-__8AAJpxYgW29IA1MGBOmQ-DaqXIv39OFUDYrokatb7C",
+            .url = "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.1.tar.gz",
+            .hash = "N-V-__8AAMvclAUqdfownlct-o9QU8ml4wgcrGxjBYGsAFJe",
         },
         .imguiz = .{
             .url = "git+https://github.com/mgerb/imguiz#41e07b3e703e742d255c3827c96e7493b36cc2a2",

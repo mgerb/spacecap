@@ -21,7 +21,7 @@
     inherit version;
     inherit src;
     fetchAll = true;
-    hash = "sha256-YdiGQDBjXEKmglunpH8f5tFqFpYu1hsqKxi669GInSE=";
+    hash = "sha256-gOpxcwU08w7gge2Bjcwnr8cSj2jRPQbRmhS1O/Y0iGI=";
   };
 in
   stdenv.mkDerivation {

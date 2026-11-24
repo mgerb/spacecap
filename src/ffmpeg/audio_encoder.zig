@@ -57,7 +57,7 @@ pub const AudioEncoder = struct {
     ) !Self {
         assert(channels > 0);
         assert(sample_rate > 0);
-        const audio_codec = c.avcodec_find_encoder(c.AV_CODEC_ID_AAC) orelse return error.MissingAudioEncoder;
+        const audio_codec = c.avcodec_find_encoder_by_name("aac") orelse return error.MissingAudioEncoder;
         var audio_codec_ctx = c.avcodec_alloc_context3(audio_codec) orelse return error.FFmpegError;
         errdefer c.avcodec_free_context(&audio_codec_ctx);
 
@@ -69,8 +69,11 @@ pub const AudioEncoder = struct {
         audio_codec_ctx.*.sample_fmt = c.AV_SAMPLE_FMT_FLTP;
         audio_codec_ctx.*.profile = c.AV_PROFILE_AAC_LOW;
 
-        _ = c.av_opt_set(audio_codec_ctx.*.priv_data, "aac_coder", "fast", 0);
-        _ = c.av_opt_set_int(audio_codec_ctx.*.priv_data, "aac_pns", 0, 0);
+        try check_err(c.av_opt_set(audio_codec_ctx.*.priv_data, "aac_coder", "nmr", 0));
+        // See FFmpeg source docs for this here: https://github.com/FFmpeg/FFmpeg/blob/46dd03dabacea4b35ef1b3853c80920ec67efb43/libavcodec/aacenc.c#L2056
+        // "NMR coder speed level: 0 = slowest/best, higher trades quality for speed"
+        // 4 being the max - we'll use middle of the road.
+        try check_err(c.av_opt_set_int(audio_codec_ctx.*.priv_data, "aac_nmr_speed", 2, 0));
 
         var ret = c.avcodec_open2(audio_codec_ctx, audio_codec, null);
         try check_err(ret);
