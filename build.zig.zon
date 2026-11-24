@@ -2,7 +2,7 @@
     .name = .spacecap,
     .version = "0.8.0",
     .fingerprint = 0xdc2511c12abe6e80,
-    .minimum_zig_version = "0.17.0",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.315.tar.gz",
