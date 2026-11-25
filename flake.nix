@@ -2,26 +2,31 @@
   description = "Spacecap screen recorder and development environment";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
   };
 
   outputs = {
     self,
-    nixpkgs,
+    nixpkgs-unstable,
+    nixpkgs-stable,
     ...
   }: let
     system = "x86_64-linux";
-    pkgs = import nixpkgs {
+    pkgs-stable = import nixpkgs-stable {
+      inherit system;
+    };
+    pkgs-unstable = import nixpkgs-unstable {
       inherit system;
     };
     # NOTE: This can be removed with: https://github.com/mgerb/spacecap/issues/144
     # GTK's optional file-search integration pulls TinySPARQL into the
     # AppImage, which then tries to link sqlite3. This can be avoided
     # by disabling it here.
-    gtk3WithOverrides = pkgs.gtk3.override {trackerSupport = false;};
+    gtk3WithOverrides = pkgs-stable.gtk3.override {trackerSupport = false;};
     # The Portal does not need GIO SELinux or libmount support. Disable them
     # to drop libselinux, libmount, and libblkid runtime dependencies.
-    glibWithOverrides = pkgs.glib.overrideAttrs (old: {
+    glibWithOverrides = pkgs-stable.glib.overrideAttrs (old: {
       mesonFlags =
         (old.mesonFlags or [])
         ++ [
@@ -29,10 +34,11 @@
           "-Dlibmount=disabled"
         ];
     });
-    spacecap = pkgs.callPackage ./package.nix {
+    spacecap = pkgs-stable.callPackage ./package.nix {
+      zig_0_17 = pkgs-unstable.zig_0_17;
       glibWithOverrides = glibWithOverrides;
       gtk3WithOverrides = gtk3WithOverrides;
-      src = pkgs.lib.cleanSource self;
+      src = pkgs-stable.lib.cleanSource self;
       version = builtins.head (builtins.elemAt (builtins.split ''\.version = "([^"]+)",'' (builtins.readFile ./build.zig.zon)) 1);
     };
   in {
@@ -40,10 +46,10 @@
       inherit spacecap;
       default = spacecap;
 
-      zls-custom = pkgs.stdenv.mkDerivation {
+      zls-custom = pkgs-stable.stdenv.mkDerivation {
         pname = "zls";
         version = "0.17.0-dev.44+8da87d4f";
-        src = pkgs.fetchurl {
+        src = pkgs-stable.fetchurl {
           url = "https://builds.zigtools.org/zls-x86_64-linux-0.17.0-dev.44+8da87d4f.tar.xz";
           sha256 = "sha256-nqIj+ohCRnFVWRG+ul1okZGuCApOgn71x2yPZOOf8pY=";
         };
@@ -53,10 +59,10 @@
           mv zls $out/bin/
         '';
       };
-      linuxdeploy = pkgs.stdenv.mkDerivation {
+      linuxdeploy = pkgs-stable.stdenv.mkDerivation {
         pname = "linuxdeploy";
         version = "continuous";
-        src = pkgs.fetchurl {
+        src = pkgs-stable.fetchurl {
           url = "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage";
           sha256 = "sha256-wgzXHjpOO4DDSDzveTzaP06ZCsoUAU0jxUTKPOEnC00=";
         };
@@ -72,17 +78,17 @@
           set -e
           appimage="$out/libexec/linuxdeploy-x86_64.AppImage"
           if [ -r /etc/os-release ] && grep -Eq '(^ID=nixos$|^ID_LIKE=.*nixos)' /etc/os-release; then
-            exec ${pkgs.appimage-run}/bin/appimage-run "\$appimage" "\$@"
+            exec ${pkgs-stable.appimage-run}/bin/appimage-run "\$appimage" "\$@"
           fi
           exec "\$appimage" "\$@"
           EOF
           chmod +x "$out/bin/linuxdeploy"
         '';
       };
-      appimagetool = pkgs.stdenv.mkDerivation {
+      appimagetool = pkgs-stable.stdenv.mkDerivation {
         pname = "appimagetool";
         version = "1.9.1";
-        src = pkgs.fetchurl {
+        src = pkgs-stable.fetchurl {
           url = "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage";
           sha256 = "sha256-7UzoTw2cr/ZvULzKb/bzWq5UzoE1QIs/ozq/w8s4TrA=";
         };
@@ -98,7 +104,7 @@
           set -e
           appimage="$out/libexec/appimagetool-x86_64.AppImage"
           if [ -r /etc/os-release ] && grep -Eq '(^ID=nixos$|^ID_LIKE=.*nixos)' /etc/os-release; then
-            exec ${pkgs.appimage-run}/bin/appimage-run "\$appimage" "\$@"
+            exec ${pkgs-stable.appimage-run}/bin/appimage-run "\$appimage" "\$@"
           fi
           exec "\$appimage" "\$@"
           EOF
@@ -107,9 +113,9 @@
       };
     };
 
-    devShells.${system}.default = pkgs.mkShell {
-      buildInputs = with pkgs; [
-        pkgs.zig_0_17
+    devShells.${system}.default = pkgs-stable.mkShell {
+      buildInputs = with pkgs-stable; [
+        pkgs-unstable.zig_0_17
         # self.packages.${system}.zls-custom
         self.packages.${system}.linuxdeploy
         self.packages.${system}.appimagetool
@@ -147,26 +153,26 @@
         pkgsCross.mingwW64.stdenv.cc
       ];
 
-      VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-      LAVAPIPE_ICD = "${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
-      VULKAN_SDK_PATH_WINDOWS = "${pkgs.pkgsCross.mingwW64.vulkan-loader}/bin";
-      MINGW_ZLIB_PATH = "${pkgs.pkgsCross.mingwW64.zlib}";
+      VK_LAYER_PATH = "${pkgs-stable.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+      LAVAPIPE_ICD = "${pkgs-stable.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
+      VULKAN_SDK_PATH_WINDOWS = "${pkgs-stable.pkgsCross.mingwW64.vulkan-loader}/bin";
+      MINGW_ZLIB_PATH = "${pkgs-stable.pkgsCross.mingwW64.zlib}";
       GTK3_LIB = "${gtk3WithOverrides}/lib/libgtk-3.so.0";
-      APPINDICATOR_LIB = "${pkgs.libayatana-appindicator}/lib/libayatana-appindicator3.so.1";
+      APPINDICATOR_LIB = "${pkgs-stable.libayatana-appindicator}/lib/libayatana-appindicator3.so.1";
 
       # Required for Github actions or non-NixOS machines.
-      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-        pkgs.vulkan-loader
+      LD_LIBRARY_PATH = pkgs-stable.lib.makeLibraryPath [
+        pkgs-stable.vulkan-loader
         glibWithOverrides
-        pkgs.zlib
+        pkgs-stable.zlib
 
         # Required for linux tray icon.
         gtk3WithOverrides
-        pkgs.libayatana-appindicator
+        pkgs-stable.libayatana-appindicator
 
         # SDL runtime libs
-        pkgs.wayland
-        pkgs.libxkbcommon
+        pkgs-stable.wayland
+        pkgs-stable.libxkbcommon
       ];
     };
   };
