@@ -48,10 +48,10 @@
 
       zls-custom = pkgs-stable.stdenv.mkDerivation {
         pname = "zls";
-        version = "0.17.0-dev.44+8da87d4f";
+        version = "0.17.0";
         src = pkgs-stable.fetchurl {
-          url = "https://builds.zigtools.org/zls-x86_64-linux-0.17.0-dev.44+8da87d4f.tar.xz";
-          sha256 = "sha256-nqIj+ohCRnFVWRG+ul1okZGuCApOgn71x2yPZOOf8pY=";
+          url = "https://builds.zigtools.org/zls-x86_64-linux-0.17.0.tar.xz";
+          sha256 = "sha256-36RRThhogD/fKuVoMsiLnUAAlNcOprsTa1e8yRrxAlg=";
         };
         sourceRoot = ".";
         installPhase = ''
@@ -116,7 +116,7 @@
     devShells.${system}.default = pkgs-stable.mkShell {
       buildInputs = with pkgs-stable; [
         pkgs-unstable.zig_0_17
-        # self.packages.${system}.zls-custom
+        self.packages.${system}.zls-custom
         self.packages.${system}.linuxdeploy
         self.packages.${system}.appimagetool
 
